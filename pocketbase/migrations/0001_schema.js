@@ -49,7 +49,7 @@ migrate(
         { name: 'description', type: 'text' },
         { name: 'price', type: 'number', required: true, min: 0 },
         { name: 'cost', type: 'number', min: 0 },
-        { name: 'stock_quantity', type: 'number', required: true, min: 0 },
+        { name: 'stock_quantity', type: 'number', min: 0 },
         { name: 'min_stock', type: 'number', min: 0 },
         { name: 'external_id', type: 'text' },
         { name: 'created', type: 'autodate', onCreate: true, onUpdate: false },
