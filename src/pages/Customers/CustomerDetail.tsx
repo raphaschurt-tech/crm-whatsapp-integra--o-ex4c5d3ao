@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, MessageCircle, Plus, FileText } from 'lucide-react'
 import { getCustomer } from '@/services/customers'
 import { getQuotes } from '@/services/quotes'
