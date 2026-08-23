@@ -27,6 +27,7 @@ export default function Layout() {
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
     { label: 'Orçamentos', path: '/orcamentos', icon: FileText },
     { label: 'Clientes', path: '/clientes', icon: Users },
+    ...(isAdmin ? [{ label: 'Usuários', path: '/usuarios', icon: Users }] : []),
     { label: 'Estoque', path: '/estoque', icon: Package },
     ...(isAdmin ? [{ label: 'Configurações', path: '/configuracoes', icon: Settings }] : []),
   ]
@@ -53,6 +54,7 @@ export default function Layout() {
     if (path.startsWith('/clientes') && path.includes('/editar')) return 'Editar Cliente'
     if (path.startsWith('/clientes/')) return 'Detalhes do Cliente'
     if (path.startsWith('/clientes')) return 'Clientes'
+    if (path.startsWith('/usuarios')) return 'Usuários'
     if (path.startsWith('/estoque/novo')) return 'Novo Produto'
     if (path.startsWith('/estoque') && path.includes('/editar')) return 'Editar Produto'
     if (path.startsWith('/estoque')) return 'Estoque'

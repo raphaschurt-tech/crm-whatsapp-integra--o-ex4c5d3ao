@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-08-23T22:18:35.393Z",
+  "generatedAt": "2026-08-23T23:49:51.032Z",
   "collections": [
     {
       "name": "users",
       "type": "auth",
       "apiRules": {
-        "list": "id = @request.auth.id",
-        "view": "id = @request.auth.id",
-        "create": "",
-        "update": "id = @request.auth.id",
-        "delete": "id = @request.auth.id"
+        "list": "id = @request.auth.id || @request.auth.role = 'admin'",
+        "view": "id = @request.auth.id || @request.auth.role = 'admin'",
+        "create": "@request.auth.role = 'admin' || @request.auth.id = ''",
+        "update": "id = @request.auth.id || @request.auth.role = 'admin'",
+        "delete": "@request.auth.role = 'admin'"
       },
       "fields": [
         {
@@ -48,6 +48,12 @@
         {
           "name": "phone",
           "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "blocked",
+          "type": "bool",
           "required": false,
           "system": false
         }
@@ -462,6 +468,42 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "ai_enabled",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "openai_api_key",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "zapi_instance_id",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "zapi_token",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "zapi_client_token",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ai_system_prompt",
+          "type": "editor",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": []

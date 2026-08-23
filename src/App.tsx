@@ -19,6 +19,7 @@ import CustomerDetail from '@/pages/Customers/CustomerDetail'
 import ProductList from '@/pages/Stock/ProductList'
 import ProductForm from '@/pages/Stock/ProductForm'
 import ProductDetail from '@/pages/Stock/ProductDetail'
+import UserList from '@/pages/Users/UserList'
 import SettingsPage from '@/pages/Settings/SettingsPage'
 import PaymentPage from '@/pages/Payment/PaymentPage'
 import NotFound from '@/pages/NotFound'
@@ -40,29 +41,29 @@ const App = () => (
           <Route element={<ProtectedRoute />}>
             <Route element={<Layout />}>
               <Route path="/" element={<Dashboard />} />
-
               {/* Orçamentos */}
               <Route path="/orcamentos" element={<QuoteList />} />
               <Route path="/orcamentos/novo" element={<QuoteForm />} />
               <Route path="/orcamentos/:id" element={<QuoteDetail />} />
               <Route path="/orcamentos/:id/editar" element={<QuoteForm />} />
-
               {/* Clientes */}
               <Route path="/clientes" element={<CustomerList />} />
               <Route path="/clientes/novo" element={<CustomerForm />} />
               <Route path="/clientes/:id" element={<CustomerDetail />} />
               <Route path="/clientes/:id/editar" element={<CustomerForm />} />
-
+              {/* Gestão de Usuários (Admin) */}
+              <Route element={<ProtectedRoute adminOnly />}>
+                <Route path="/usuarios" element={<UserList />} />
+              </Route>
               {/* Estoque / Produtos */}
               <Route path="/estoque" element={<ProductList />} />
               <Route path="/estoque/novo" element={<ProductForm />} />
               <Route path="/estoque/:id" element={<ProductDetail />} />
               <Route path="/estoque/:id/editar" element={<ProductForm />} />
-
               {/* Configurações (Admin) */}
               <Route element={<ProtectedRoute adminOnly />}>
                 <Route path="/configuracoes" element={<SettingsPage />} />
-              </Route>
+              </Route>{' '}
             </Route>
           </Route>
 

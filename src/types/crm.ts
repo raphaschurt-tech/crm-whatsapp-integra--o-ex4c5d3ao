@@ -6,6 +6,7 @@ export interface User extends RecordModel {
   role?: 'admin' | 'colaborador'
   phone?: string
   avatar?: string
+  blocked?: boolean
 }
 
 export interface Customer extends RecordModel {
@@ -74,4 +75,10 @@ export interface Settings extends RecordModel {
   whatsapp_number?: string
   stock_api_url?: string
   payment_link_template?: string
+  ai_enabled?: boolean
+  openai_api_key?: string
+  zapi_instance_id?: string
+  zapi_token?: string
+  zapi_client_token?: string
+  ai_system_prompt?: string
 }
