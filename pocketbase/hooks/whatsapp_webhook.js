@@ -1,6 +1,74 @@
+// Auto-configurar o webhook na Z-API na inicialização do hook
+try {
+  const defaultInstanceId = '3F82053E374BF28959D38ADBF15570D8'
+  const defaultToken = '4B6B187E17D2D3514CBD75CC'
+  const webhookUrl = 'https://crm-whatsapp-integracao-aee3e.goskip.app/backend/v1/whatsapp/webhook'
+
+  let zInstance = defaultInstanceId
+  let zToken = defaultToken
+  let zClientToken = ''
+
+  try {
+    const list = $app.findRecordsByFilter('settings', '', '-created', 1, 0)
+    if (list && list.length > 0) {
+      zInstance = list[0].getString('zapi_instance_id') || defaultInstanceId
+      zToken = list[0].getString('zapi_token') || defaultToken
+      zClientToken = list[0].getString('zapi_client_token') || ''
+    }
+  } catch (_) {}
+
+  const configHeaders = { 'Content-Type': 'application/json' }
+  if (zClientToken) {
+    configHeaders['Client-Token'] = zClientToken
+  }
+
+  const setWebhookRes = $http.send({
+    url:
+      'https://api.z-api.io/instances/' +
+      zInstance +
+      '/token/' +
+      zToken +
+      '/update-webhook-received',
+    method: 'PUT',
+    headers: configHeaders,
+    body: JSON.stringify({ value: webhookUrl }),
+    timeout: 15,
+  })
+
+  console.log('[WEBHOOK-INIT] Configurando Webhook Z-API para:', webhookUrl)
+  console.log(
+    '[WEBHOOK-INIT] Resultado configuração Z-API:',
+    setWebhookRes.statusCode,
+    JSON.stringify(setWebhookRes.json || setWebhookRes.body),
+  )
+} catch (initErr) {
+  console.log('[WEBHOOK-INIT] Erro ao configurar webhook Z-API na inicialização:', String(initErr))
+}
+
+// Handler GET para testar se a rota do webhook está ativa e funcional
+routerAdd('GET', '/backend/v1/whatsapp/webhook', (e) => {
+  return e.json(200, {
+    status: 'ok',
+    message: 'WhatsApp webhook is running',
+  })
+})
+
 // Webhook para receber mensagens do WhatsApp (Z-API ou Evolution API), processar com IA e responder
 routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
-  const body = e.requestInfo().body || {}
+  let rawBody = e.requestInfo().body
+  let body = {}
+
+  if (typeof rawBody === 'string') {
+    try {
+      body = JSON.parse(rawBody)
+    } catch (_) {
+      body = {}
+    }
+  } else if (rawBody && typeof rawBody === 'object') {
+    body = rawBody
+  }
+
+  console.log('[WEBHOOK] Body recebido:', JSON.stringify(body))
 
   // 1. Verificar configurações do sistema
   let settingsRec
@@ -66,6 +134,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   if (!fromPhone || !incomingText || isFromMe) {
     return e.json(200, { status: 'ignored', reason: 'empty_or_from_me' })
   }
+
+  console.log('[WEBHOOK] Mensagem recebida de:', fromPhone, 'texto:', incomingText)
 
   // 3. Buscar contexto no banco de dados (produtos em estoque e informações da empresa)
   let productsInfo = ''
@@ -188,10 +258,13 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       'Olá! Recebemos sua mensagem, mas nosso assistente inteligente está temporariamente indisponível. Em breve um de nossos consultores humanos entrará em contato com você!'
   }
 
+  console.log('[WEBHOOK] AI Response:', aiReplyText ? aiReplyText.substring(0, 100) : '')
+
   // 6. Enviar a resposta de volta pelo WhatsApp (Z-API ou Evolution API)
   let sent = false
   if (zapiInstance && zapiToken) {
     try {
+      console.log('[WEBHOOK] Enviando resposta via Z-API para:', fromPhone)
       const zapiUrl =
         'https://api.z-api.io/instances/' + zapiInstance + '/token/' + zapiToken + '/send-text'
       const headers = { 'Content-Type': 'application/json' }
@@ -209,6 +282,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         }),
         timeout: 15,
       })
+
+      console.log('[WEBHOOK] Resultado envio Z-API:', sendRes.statusCode)
 
       if (sendRes.statusCode >= 200 && sendRes.statusCode < 300) {
         sent = true
