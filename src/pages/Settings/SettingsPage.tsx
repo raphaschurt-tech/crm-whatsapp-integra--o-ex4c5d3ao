@@ -8,8 +8,13 @@ import {
   Smartphone,
   Sparkles,
   HelpCircle,
+  Activity,
+  CheckCircle2,
+  XCircle,
+  Loader2,
 } from 'lucide-react'
 import { getSettings, saveSettings } from '@/services/settings'
+import pb from '@/lib/pocketbase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -35,6 +40,17 @@ export default function SettingsPage() {
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+
+  // Estado do Teste de Conexão
+  const [testingConnection, setTestingConnection] = useState(false)
+  const [testResult, setTestResult] = useState<{
+    status: 'idle' | 'success' | 'error'
+    webhookOk?: boolean
+    zapiOk?: boolean
+    connected?: boolean
+    phone?: string
+    message?: string
+  }>({ status: 'idle' })
 
   const defaultPromptTemplate = `Você é o assistente virtual de atendimento comercial inteligente da empresa CRM Intragan.
 Seu objetivo é atender os clientes de forma educada, prestativa, ágil e profissional via WhatsApp.
@@ -84,6 +100,104 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
 
   const handleUseDefaultPrompt = () => {
     setAiSystemPrompt(defaultPromptTemplate)
+  }
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true)
+    setTestResult({ status: 'idle' })
+
+    try {
+      // 1. Testar endpoint do Webhook
+      let webhookAlive = false
+      try {
+        const webhookRes = await pb.send<{ status?: string; message?: string }>(
+          '/backend/v1/whatsapp/webhook',
+          { method: 'GET' },
+        )
+        if (webhookRes && webhookRes.status === 'ok') {
+          webhookAlive = true
+        }
+      } catch (err: unknown) {
+        console.error('Erro ao testar webhook:', err)
+        webhookAlive = false
+      }
+
+      if (!webhookAlive) {
+        setTestResult({
+          status: 'error',
+          webhookOk: false,
+          message:
+            'Webhook WhatsApp não respondeu ou retornou erro (404/500). Verifique o backend.',
+        })
+        toast({
+          title: 'Falha no Webhook',
+          description: 'A rota do Webhook WhatsApp está inacessível.',
+          variant: 'destructive',
+        })
+        setTestingConnection(false)
+        return
+      }
+
+      // 2. Testar credenciais Z-API
+      let zapiRes: { ok?: boolean; connected?: boolean; phone?: string; error?: string } = {}
+      try {
+        zapiRes = await pb.send<{
+          ok?: boolean
+          connected?: boolean
+          phone?: string
+          error?: string
+        }>('/backend/v1/whatsapp/test-zapi', { method: 'GET' })
+      } catch (err: unknown) {
+        console.error('Erro ao testar Z-API:', err)
+        zapiRes = { ok: false, error: 'Erro ao comunicar com a API do servidor' }
+      }
+
+      if (zapiRes && zapiRes.ok) {
+        const isConnected = !!zapiRes.connected
+        const phone = zapiRes.phone || ''
+        setTestResult({
+          status: 'success',
+          webhookOk: true,
+          zapiOk: true,
+          connected: isConnected,
+          phone: phone,
+          message: isConnected
+            ? `Webhook ativo e Z-API conectada com sucesso! ${phone ? `(Telefone: ${phone})` : ''}`
+            : 'Webhook ativo e credenciais Z-API válidas! Obs: A instância Z-API está desconectada (escaneie o QR Code no painel da Z-API).',
+        })
+        toast({
+          title: 'Conexão Testada com Sucesso!',
+          description: isConnected
+            ? 'Webhook e Z-API estão funcionando normalmente.'
+            : 'Webhook OK e credenciais válidas na Z-API.',
+        })
+      } else {
+        const errorMsg = zapiRes?.error || 'Erro desconhecido ao validar credenciais Z-API.'
+        setTestResult({
+          status: 'error',
+          webhookOk: true,
+          zapiOk: false,
+          message: `Webhook ativo, mas houve falha na Z-API: ${errorMsg}`,
+        })
+        toast({
+          title: 'Falha na Z-API',
+          description: errorMsg,
+          variant: 'destructive',
+        })
+      }
+    } catch (generalErr: unknown) {
+      setTestResult({
+        status: 'error',
+        message: 'Falha inesperada ao executar o teste de conexão.',
+      })
+      toast({
+        title: 'Erro no teste',
+        description: 'Não foi possível completar a validação.',
+        variant: 'destructive',
+      })
+    } finally {
+      setTestingConnection(false)
+    }
   }
 
   if (loading)
@@ -266,9 +380,69 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                 </ul>
               </div>
             </div>
+
+            {/* Botão de Testar Conexão e Feedback */}
+            <div className="pt-2 border-t border-emerald-100/70 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
+                    <Activity className="h-4 w-4 text-emerald-600" /> Diagnóstico de Conexão
+                    WhatsApp
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Verifique se o webhook de mensagens e as credenciais da Z-API estão ativos e
+                    operantes.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleTestConnection}
+                  disabled={testingConnection}
+                  className="border-emerald-300 hover:bg-emerald-50 text-emerald-800 bg-white shadow-xs font-medium shrink-0"
+                >
+                  {testingConnection ? (
+                    <>
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-emerald-600" />
+                      Testando...
+                    </>
+                  ) : (
+                    <>
+                      <Activity className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+                      Testar Conexão
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {/* Feedback Visual do Teste */}
+              {testResult.status === 'success' && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 flex items-start gap-2.5 animate-in fade-in duration-200">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-semibold text-emerald-900">
+                      {testResult.connected
+                        ? '✅ Conexão estabelecida com sucesso!'
+                        : '✅ Webhook ativo e credenciais validadas!'}
+                    </p>
+                    <p className="text-emerald-700 leading-relaxed">{testResult.message}</p>
+                  </div>
+                </div>
+              )}
+
+              {testResult.status === 'error' && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800 flex items-start gap-2.5 animate-in fade-in duration-200">
+                  <XCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-semibold text-red-900">❌ Falha no teste de conexão</p>
+                    <p className="text-red-700 leading-relaxed">{testResult.message}</p>
+                  </div>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
-
         {/* Seção 2: Integrações Gerais e Links */}
         <Card className="bg-white border-slate-200 shadow-sm">
           <CardHeader className="pb-4">

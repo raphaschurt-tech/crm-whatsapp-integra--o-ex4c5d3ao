@@ -1,50 +1,4 @@
-// Auto-configurar o webhook na Z-API na inicialização do hook
-try {
-  const defaultInstanceId = '3F82053E374BF28959D38ADBF15570D8'
-  const defaultToken = '4B6B187E17D2D3514CBD75CC'
-  const webhookUrl = 'https://crm-whatsapp-integracao-aee3e.goskip.app/backend/v1/whatsapp/webhook'
-
-  let zInstance = defaultInstanceId
-  let zToken = defaultToken
-  let zClientToken = ''
-
-  try {
-    const list = $app.findRecordsByFilter('settings', '', '-created', 1, 0)
-    if (list && list.length > 0) {
-      zInstance = list[0].getString('zapi_instance_id') || defaultInstanceId
-      zToken = list[0].getString('zapi_token') || defaultToken
-      zClientToken = list[0].getString('zapi_client_token') || ''
-    }
-  } catch (_) {}
-
-  const configHeaders = { 'Content-Type': 'application/json' }
-  if (zClientToken) {
-    configHeaders['Client-Token'] = zClientToken
-  }
-
-  const setWebhookRes = $http.send({
-    url:
-      'https://api.z-api.io/instances/' +
-      zInstance +
-      '/token/' +
-      zToken +
-      '/update-webhook-received',
-    method: 'PUT',
-    headers: configHeaders,
-    body: JSON.stringify({ value: webhookUrl }),
-    timeout: 15,
-  })
-
-  console.log('[WEBHOOK-INIT] Configurando Webhook Z-API para:', webhookUrl)
-  console.log(
-    '[WEBHOOK-INIT] Resultado configuração Z-API:',
-    setWebhookRes.statusCode,
-    JSON.stringify(setWebhookRes.json || setWebhookRes.body),
-  )
-} catch (initErr) {
-  console.log('[WEBHOOK-INIT] Erro ao configurar webhook Z-API na inicialização:', String(initErr))
-}
-
+// 1. Registrar rotas do webhook IMEDIATAMENTE antes de qualquer chamada externa
 // Handler GET para testar se a rota do webhook está ativa e funcional
 routerAdd('GET', '/backend/v1/whatsapp/webhook', (e) => {
   return e.json(200, {
@@ -124,7 +78,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     isFromMe = body.data.key.fromMe === true
     if (body.data.message) {
       incomingText =
-        body.data.message.conversation || body.data.message.extendedTextMessage?.text || ''
+        body.data.message.extendedTextMessage?.text || body.data.message.conversation || ''
     }
   }
 
@@ -306,3 +260,48 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     reply: aiReplyText,
   })
 })
+
+// Auto-configurar o webhook na Z-API em bloco seguro após registro das rotas
+try {
+  let zInstance = ''
+  let zToken = ''
+  let zClientToken = ''
+
+  try {
+    const list = $app.findRecordsByFilter('settings', '', '-created', 1, 0)
+    if (list && list.length > 0) {
+      zInstance = list[0].getString('zapi_instance_id') || ''
+      zToken = list[0].getString('zapi_token') || ''
+      zClientToken = list[0].getString('zapi_client_token') || ''
+    }
+  } catch (_) {}
+
+  if (zInstance && zToken) {
+    const webhookUrl =
+      'https://crm-whatsapp-integracao-aee3e.goskip.app/backend/v1/whatsapp/webhook'
+    const configHeaders = { 'Content-Type': 'application/json' }
+    if (zClientToken) {
+      configHeaders['Client-Token'] = zClientToken
+    }
+
+    try {
+      const setWebhookRes = $http.send({
+        url:
+          'https://api.z-api.io/instances/' +
+          zInstance +
+          '/token/' +
+          zToken +
+          '/update-webhook-received',
+        method: 'PUT',
+        headers: configHeaders,
+        body: JSON.stringify({ value: webhookUrl }),
+        timeout: 5,
+      })
+      console.log('[WEBHOOK-INIT] Configurando Webhook Z-API:', setWebhookRes.statusCode)
+    } catch (sendErr) {
+      console.log('[WEBHOOK-INIT] Erro não-bloqueante ao configurar Z-API:', String(sendErr))
+    }
+  }
+} catch (initErr) {
+  console.log('[WEBHOOK-INIT] Erro geral não-bloqueante na inicialização:', String(initErr))
+}
