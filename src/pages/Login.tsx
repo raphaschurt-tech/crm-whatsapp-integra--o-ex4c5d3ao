@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileText, Lock, Mail } from 'lucide-react'
+import { Lock, Mail } from 'lucide-react'
+import logoImg from '@/assets/logo-rpa-auto-parts-01-definitivo-correto-1d75c.png'
 import { useAuth } from '@/hooks/use-auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -48,10 +49,14 @@ export default function Login() {
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-8 border border-slate-200 space-y-6">
         <div className="text-center space-y-2">
-          <div className="inline-flex h-14 w-14 rounded-2xl bg-emerald-500 items-center justify-center text-white shadow-lg mb-2">
-            <FileText className="h-8 w-8" />
+          <div className="flex justify-center mb-2">
+            <img
+              src={logoImg}
+              alt="RPA Auto Parts"
+              className="h-20 w-auto max-w-[240px] object-contain"
+            />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">CRM Intragan</h1>
+          <h1 className="text-xl font-bold text-slate-900">Portal de Atendimento</h1>
           <p className="text-sm text-slate-500">Gestão de Vendas com Integração WhatsApp</p>
         </div>
 

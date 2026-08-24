@@ -3,7 +3,6 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import {
   CheckCircle,
   Clock,
-  FileText,
   QrCode,
   CreditCard,
   AlertCircle,
@@ -12,6 +11,7 @@ import {
   Copy,
   Check,
 } from 'lucide-react'
+import logoImg from '@/assets/logo-rpa-auto-parts-01-definitivo-correto-1d75c.png'
 import pb from '@/lib/pocketbase/client'
 import { Quote, QuoteItem } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
@@ -145,14 +145,13 @@ export default function PaymentPage() {
     <div className="min-h-screen bg-gradient-to-b from-slate-100 to-slate-200 py-8 px-4 flex flex-col items-center justify-center">
       <div className="w-full max-w-2xl space-y-6">
         {/* Brand header */}
-        <div className="flex items-center justify-center gap-3 text-center">
-          <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-md">
-            <FileText className="h-6 w-6" />
-          </div>
-          <div className="text-left">
-            <h1 className="text-xl font-bold text-slate-900 leading-tight">CRM Intragan</h1>
-            <p className="text-xs text-slate-500 font-medium">Checkout Seguro de Propostas</p>
-          </div>
+        <div className="flex flex-col items-center justify-center gap-2 text-center">
+          <img
+            src={logoImg}
+            alt="RPA Auto Parts"
+            className="h-16 w-auto max-w-[220px] object-contain"
+          />
+          <p className="text-xs text-slate-500 font-medium">Checkout Seguro de Propostas & Peças</p>
         </div>
 
         {paidSuccess ? (
@@ -337,7 +336,7 @@ export default function PaymentPage() {
 
         <div className="text-center text-xs text-slate-400 flex items-center justify-center gap-2">
           <Building2 className="h-3.5 w-3.5" />
-          <span>CRM Intragan — Sistema de Gestão Comercial Integrado</span>
+          <span>RPA Auto Parts — Desde 1995</span>
         </div>
       </div>
     </div>

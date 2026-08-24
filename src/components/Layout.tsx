@@ -11,6 +11,7 @@ import {
   X,
   Search,
 } from 'lucide-react'
+import logoImg from '@/assets/logo-rpa-auto-parts-01-definitivo-correto-1d75c.png'
 import { useAuth } from '@/hooks/use-auth'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -59,20 +60,20 @@ export default function Layout() {
     if (path.startsWith('/estoque') && path.includes('/editar')) return 'Editar Produto'
     if (path.startsWith('/estoque')) return 'Estoque'
     if (path.startsWith('/configuracoes')) return 'Configurações'
-    return 'CRM Intragan'
+    return 'RPA Auto Parts'
   }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       <aside className="hidden md:flex w-[260px] flex-col bg-white border-r border-slate-200 fixed inset-y-0 z-30">
-        <div className="p-6 flex items-center gap-3 border-b border-slate-100">
-          <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-md">
-            <FileText className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="font-bold text-slate-900 text-lg leading-tight">CRM Intragan</h1>
-            <p className="text-xs text-slate-500 font-medium">WhatsApp Integrated</p>
-          </div>
+        <div className="p-4 flex flex-col items-center justify-center border-b border-slate-100 bg-white">
+          <Link to="/" className="flex flex-col items-center gap-1 group py-1">
+            <img
+              src={logoImg}
+              alt="RPA Auto Parts"
+              className="h-14 w-auto max-w-[210px] object-contain transition-transform group-hover:scale-[1.02]"
+            />
+          </Link>
         </div>
 
         <nav className="flex-1 p-4 space-y-1.5 overflow-y-auto">
@@ -137,13 +138,14 @@ export default function Layout() {
             onClick={() => setMobileOpen(false)}
           />
           <div className="relative w-4/5 max-w-xs bg-white h-full flex flex-col z-10 shadow-2xl">
-            <div className="p-4 flex items-center justify-between border-b">
-              <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-lg bg-emerald-500 flex items-center justify-center text-white">
-                  <FileText className="h-5 w-5" />
-                </div>
-                <span className="font-bold text-slate-900">CRM Intragan</span>
-              </div>
+            <div className="p-4 flex items-center justify-between border-b bg-white">
+              <Link to="/" onClick={() => setMobileOpen(false)} className="flex items-center">
+                <img
+                  src={logoImg}
+                  alt="RPA Auto Parts"
+                  className="h-11 w-auto max-w-[170px] object-contain"
+                />
+              </Link>
               <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)}>
                 <X className="h-5 w-5" />
               </Button>
