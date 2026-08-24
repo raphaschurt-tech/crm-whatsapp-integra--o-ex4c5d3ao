@@ -319,18 +319,19 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
               {/* Z-API Client Token */}
               <div className="space-y-1.5 md:col-span-2">
                 <Label className="flex items-center gap-1.5 text-slate-800 font-medium">
-                  <Key className="h-4 w-4 text-emerald-600" /> Client Token Z-API (Opcional para
-                  segurança extra)
+                  <Key className="h-4 w-4 text-emerald-600" /> Client Token da Conta Z-API
+                  (Client-Token)
                 </Label>
                 <Input
                   type="password"
                   value={zapiClientToken}
                   onChange={(e) => setZapiClientToken(e.target.value)}
-                  placeholder="Client-Token de segurança da conta"
+                  placeholder="Ex: F1234567890ABCDEF..."
                   className="bg-white font-mono text-sm"
                 />
                 <p className="text-xs text-slate-500">
-                  Cabeçalho Client-Token configurado na sua conta Z-API, caso ativado no provedor.
+                  Client-Token da sua conta Z-API (obrigatório se o Client-Token estiver ativo na
+                  segurança da sua conta Z-API).
                 </p>
               </div>
             </div>
