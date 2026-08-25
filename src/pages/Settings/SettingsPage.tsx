@@ -141,11 +141,11 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
     setTestResult({ status: 'idle' })
 
     try {
-      // 1. Testar endpoint do Webhook
+      // 1. Testar endpoint do Webhook (health check)
       let webhookAlive = false
       try {
         const webhookRes = await pb.send<{ status?: string; message?: string }>(
-          '/backend/v1/whatsapp/webhook',
+          '/backend/v1/whatsapp/webhook/health',
           { method: 'GET' },
         )
         if (webhookRes && webhookRes.status === 'ok') {

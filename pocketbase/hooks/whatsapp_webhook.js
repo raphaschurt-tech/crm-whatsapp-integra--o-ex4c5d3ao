@@ -1,66 +1,79 @@
-// 1. Registrar rota unificada do webhook IMEDIATAMENTE antes de qualquer chamada externa
-routerAdd('*', '/backend/v1/whatsapp/webhook', (e) => {
-  const method = e.requestInfo().method
+// 1. Health check do webhook em caminho separado
+routerAdd('GET', '/backend/v1/whatsapp/webhook/health', (e) => {
+  return e.json(200, {
+    status: 'ok',
+    message: 'WhatsApp webhook is running',
+  })
+})
 
-  if (method === 'GET') {
-    return e.json(200, {
-      status: 'ok',
-      message: 'WhatsApp webhook is running',
-    })
+// 2. Rota POST explícita no caminho principal do webhook
+routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
+  let rawBody = e.requestInfo().body
+  let body = {}
+
+  if (typeof rawBody === 'string') {
+    try {
+      body = JSON.parse(rawBody)
+    } catch (_) {
+      body = {}
+    }
+  } else if (rawBody && typeof rawBody === 'object') {
+    body = rawBody
   }
 
-  if (method === 'POST') {
-    let rawBody = e.requestInfo().body
-    let body = {}
+  // Extrair campos seguros para o log sanitizado (mascarando dados e omitindo tokens)
+  const eventType =
+    body.type ||
+    body.event ||
+    body.eventType ||
+    (body.data && body.data.message ? 'message' : '') ||
+    ''
 
-    if (typeof rawBody === 'string') {
-      try {
-        body = JSON.parse(rawBody)
-      } catch (_) {
-        body = {}
-      }
-    } else if (rawBody && typeof rawBody === 'object') {
-      body = rawBody
+  const rawInstanceId = String(body.instanceId || body.instance_id || '')
+  let maskedInstanceId = ''
+  if (rawInstanceId) {
+    if (rawInstanceId.length > 8) {
+      maskedInstanceId = rawInstanceId.slice(0, 4) + '****' + rawInstanceId.slice(-4)
+    } else {
+      maskedInstanceId = '****'
     }
-
-    // Extrair campos seguros para o log antes de qualquer processamento (sem tokens ou dados sensíveis)
-    const eventType =
-      body.type ||
-      body.event ||
-      body.eventType ||
-      (body.data && body.data.message ? 'message' : '') ||
-      ''
-    const instanceId = body.instanceId || body.instance_id || ''
-    let senderPhone = ''
-    if (body.phone) {
-      senderPhone = String(body.phone)
-    } else if (body.sender) {
-      senderPhone = String(body.sender)
-    } else if (body.data && body.data.key && body.data.key.remoteJid) {
-      senderPhone = String(body.data.key.remoteJid).replace('@s.whatsapp.net', '')
-    }
-    senderPhone = senderPhone.replace(/\D/g, '')
-
-    console.log(
-      '[WEBHOOK-RECEIVED]',
-      JSON.stringify({
-        timestamp: new Date().toISOString(),
-        method: 'POST',
-        path: '/backend/v1/whatsapp/webhook',
-        eventType: eventType,
-        instanceId: instanceId,
-        senderPhone: senderPhone,
-      }),
-    )
-
-    // Retornar resposta HTTP 200 imediatamente antes de qualquer chamada à OpenAI, Z-API ou processamento pesado
-    return e.json(200, {
-      status: 'received',
-      message: 'Webhook received successfully',
-    })
   }
 
-  return e.json(405, { error: 'Method Not Allowed' })
+  let rawPhone = ''
+  if (body.phone) {
+    rawPhone = String(body.phone)
+  } else if (body.sender) {
+    rawPhone = String(body.sender)
+  } else if (body.data && body.data.key && body.data.key.remoteJid) {
+    rawPhone = String(body.data.key.remoteJid).replace('@s.whatsapp.net', '')
+  }
+  rawPhone = rawPhone.replace(/\D/g, '')
+
+  let maskedSenderPhone = ''
+  if (rawPhone) {
+    if (rawPhone.length > 6) {
+      maskedSenderPhone = rawPhone.slice(0, 4) + '****' + rawPhone.slice(-2)
+    } else {
+      maskedSenderPhone = '****'
+    }
+  }
+
+  console.log(
+    '[WEBHOOK-RECEIVED]',
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      method: 'POST',
+      path: '/backend/v1/whatsapp/webhook',
+      eventType: eventType,
+      instanceId: maskedInstanceId,
+      senderPhone: maskedSenderPhone,
+    }),
+  )
+
+  // Responde HTTP 200 imediatamente com { status: 'received' }
+  return e.json(200, {
+    status: 'received',
+  })
 })
 
 // Rota auxiliar para configurar o webhook na Z-API sob demanda
