@@ -1,3 +1,4 @@
+// redeploy trigger - 2026-08-25T01:35:00.000Z
 // 1. Registrar rotas do webhook IMEDIATAMENTE antes de qualquer chamada externa
 // Handler GET para testar se a rota do webhook está ativa e funcional
 routerAdd('GET', '/backend/v1/whatsapp/webhook', (e) => {
