@@ -43,6 +43,7 @@ export default function SettingsPage() {
 
   // Estado do Teste de Conexão
   const [testingConnection, setTestingConnection] = useState(false)
+  const [configuringWebhook, setConfiguringWebhook] = useState(false)
   const [testResult, setTestResult] = useState<{
     status: 'idle' | 'success' | 'error'
     webhookOk?: boolean
@@ -100,6 +101,39 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
 
   const handleUseDefaultPrompt = () => {
     setAiSystemPrompt(defaultPromptTemplate)
+  }
+
+  const handleConfigureWebhook = async () => {
+    setConfiguringWebhook(true)
+    try {
+      const res = await pb.send<{
+        success?: boolean
+        statusCode?: number
+        message?: string
+      }>('/backend/v1/whatsapp/configure-webhook', { method: 'POST' })
+
+      if (res && res.success) {
+        toast({
+          title: `Webhook configurado com sucesso! Status: ${res.statusCode || 200}`,
+          className: 'bg-emerald-600 text-white border-emerald-700',
+        })
+      } else {
+        const status = res?.statusCode || 500
+        const msg = res?.message || 'Falha ao registrar webhook na Z-API.'
+        toast({
+          title: `Falha ao configurar webhook. Status: ${status} — ${msg}`,
+          variant: 'destructive',
+        })
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Erro ao conectar com o servidor.'
+      toast({
+        title: `Falha ao configurar webhook. Status: 500 — ${errorMsg}`,
+        variant: 'destructive',
+      })
+    } finally {
+      setConfiguringWebhook(false)
+    }
   }
 
   const handleTestConnection = async () => {
@@ -382,39 +416,60 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
               </div>
             </div>
 
-            {/* Botão de Testar Conexão e Feedback */}
+            {/* Botões de Ação: Configurar Webhook e Testar Conexão */}
             <div className="pt-2 border-t border-emerald-100/70 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h4 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
-                    <Activity className="h-4 w-4 text-emerald-600" /> Diagnóstico de Conexão
-                    WhatsApp
+                    <Activity className="h-4 w-4 text-emerald-600" /> Diagnóstico e Configuração do
+                    Webhook
                   </h4>
                   <p className="text-xs text-slate-500">
-                    Verifique se o webhook de mensagens e as credenciais da Z-API estão ativos e
-                    operantes.
+                    Configure a URL do webhook na Z-API ou teste a conectividade em tempo real.
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleTestConnection}
-                  disabled={testingConnection}
-                  className="border-emerald-300 hover:bg-emerald-50 text-emerald-800 bg-white shadow-xs font-medium shrink-0"
-                >
-                  {testingConnection ? (
-                    <>
-                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-emerald-600" />
-                      Testando...
-                    </>
-                  ) : (
-                    <>
-                      <Activity className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
-                      Testar Conexão
-                    </>
-                  )}
-                </Button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleConfigureWebhook}
+                    disabled={configuringWebhook || testingConnection}
+                    className="border-emerald-400 bg-emerald-50/50 hover:bg-emerald-100/70 text-emerald-900 shadow-xs font-medium"
+                  >
+                    {configuringWebhook ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-emerald-600" />
+                        Configurando...
+                      </>
+                    ) : (
+                      <>
+                        <SettingsIcon className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+                        Configurar Webhook
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestConnection}
+                    disabled={testingConnection || configuringWebhook}
+                    className="border-emerald-300 hover:bg-emerald-50 text-emerald-800 bg-white shadow-xs font-medium"
+                  >
+                    {testingConnection ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-emerald-600" />
+                        Testando...
+                      </>
+                    ) : (
+                      <>
+                        <Activity className="mr-1.5 h-3.5 w-3.5 text-emerald-600" />
+                        Testar Conexão
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
 
               {/* Feedback Visual do Teste */}

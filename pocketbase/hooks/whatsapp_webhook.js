@@ -1,4 +1,3 @@
-// redeploy trigger - 2026-08-25T01:35:00.000Z
 // 1. Registrar rotas do webhook IMEDIATAMENTE antes de qualquer chamada externa
 // Handler GET para testar se a rota do webhook está ativa e funcional
 routerAdd('GET', '/backend/v1/whatsapp/webhook', (e) => {
@@ -23,7 +22,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     body = rawBody
   }
 
-  // Extrair campos seguros para o log antes de qualquer processamento
+  // Extrair campos seguros para o log antes de qualquer processamento (sem tokens ou dados sensíveis)
   const eventType =
     body.type ||
     body.event ||
@@ -60,8 +59,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   })
 })
 
-// Auto-configurar o webhook na Z-API em bloco seguro após registro das rotas
-try {
+// Rota auxiliar para configurar o webhook na Z-API sob demanda
+routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
   let zInstance = ''
   let zToken = ''
   let zClientToken = ''
@@ -73,18 +72,34 @@ try {
       zToken = list[0].getString('zapi_token') || ''
       zClientToken = list[0].getString('zapi_client_token') || ''
     }
-  } catch (_) {}
+  } catch (err) {
+    console.log('[WEBHOOK-INIT] Erro ao ler configurações:', err.message || String(err))
+  }
 
-  if (zInstance && zToken) {
-    const webhookUrl =
-      'https://crm-whatsapp-integracao-aee3e.goskip.app/backend/v1/whatsapp/webhook'
-    const configHeaders = { 'Content-Type': 'application/json' }
-    if (zClientToken) {
-      configHeaders['Client-Token'] = zClientToken
-    }
+  if (!zInstance || !zToken) {
+    return e.json(400, {
+      success: false,
+      statusCode: 400,
+      message: 'Instância ou Token da Z-API não configurados nas configurações.',
+    })
+  }
 
+  const webhookUrl = 'https://crm-whatsapp-integracao-aee3e.goskip.app/backend/v1/whatsapp/webhook'
+  const configHeaders = { 'Content-Type': 'application/json' }
+  if (zClientToken) {
+    configHeaders['Client-Token'] = zClientToken
+  }
+
+  let attempts = 0
+  let maxAttempts = 3
+  let lastStatusCode = 0
+  let lastErrorMsg = ''
+  let success = false
+
+  while (attempts < maxAttempts && !success) {
+    attempts++
     try {
-      const setWebhookRes = $http.send({
+      const res = $http.send({
         url:
           'https://api.z-api.io/instances/' +
           zInstance +
@@ -94,13 +109,127 @@ try {
         method: 'PUT',
         headers: configHeaders,
         body: JSON.stringify({ value: webhookUrl }),
-        timeout: 5,
+        timeout: 10,
       })
-      console.log('[WEBHOOK-INIT] Configurando Webhook Z-API:', setWebhookRes.statusCode)
-    } catch (sendErr) {
-      console.log('[WEBHOOK-INIT] Erro não-bloqueante ao configurar Z-API:', String(sendErr))
+
+      lastStatusCode = res.statusCode
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        success = true
+        console.log(
+          '[WEBHOOK-CONFIG] Webhook Z-API configurado com sucesso. Status:',
+          res.statusCode,
+        )
+        break
+      } else {
+        lastErrorMsg = 'Resposta inesperada da Z-API (HTTP ' + res.statusCode + ')'
+        console.log('[WEBHOOK-CONFIG] Tentativa ' + attempts + ' falhou. Status: ' + res.statusCode)
+      }
+    } catch (err) {
+      lastErrorMsg = err.message || String(err)
+      console.log(
+        '[WEBHOOK-CONFIG] Tentativa ' + attempts + ' erro: ' + (err.message || String(err)),
+      )
+    }
+
+    if (!success && attempts < maxAttempts) {
+      sleep(1000)
     }
   }
-} catch (initErr) {
-  console.log('[WEBHOOK-INIT] Erro geral não-bloqueante na inicialização:', String(initErr))
-}
+
+  if (success) {
+    return e.json(200, {
+      success: true,
+      statusCode: lastStatusCode || 200,
+      message: 'Webhook configurado com sucesso na Z-API.',
+    })
+  } else {
+    return e.json(200, {
+      success: false,
+      statusCode: lastStatusCode || 500,
+      message: 'Falha ao configurar webhook na Z-API: ' + (lastErrorMsg || 'Erro de comunicação'),
+    })
+  }
+})
+
+// Auto-configuração não-bloqueante no bootstrap com retry limitado (máx 3 tentativas, 1s de intervalo)
+onBootstrap((e) => {
+  e.next()
+
+  try {
+    let zInstance = ''
+    let zToken = ''
+    let zClientToken = ''
+
+    try {
+      const list = $app.findRecordsByFilter('settings', '', '-created', 1, 0)
+      if (list && list.length > 0) {
+        zInstance = list[0].getString('zapi_instance_id') || ''
+        zToken = list[0].getString('zapi_token') || ''
+        zClientToken = list[0].getString('zapi_client_token') || ''
+      }
+    } catch (err) {
+      console.log('[WEBHOOK-INIT] Erro ao ler configurações:', err.message || String(err))
+    }
+
+    if (zInstance && zToken) {
+      const webhookUrl =
+        'https://crm-whatsapp-integracao-aee3e.goskip.app/backend/v1/whatsapp/webhook'
+      const configHeaders = { 'Content-Type': 'application/json' }
+      if (zClientToken) {
+        configHeaders['Client-Token'] = zClientToken
+      }
+
+      let attempts = 0
+      let maxAttempts = 3
+      let success = false
+
+      while (attempts < maxAttempts && !success) {
+        attempts++
+        try {
+          const setWebhookRes = $http.send({
+            url:
+              'https://api.z-api.io/instances/' +
+              zInstance +
+              '/token/' +
+              zToken +
+              '/update-webhook-received',
+            method: 'PUT',
+            headers: configHeaders,
+            body: JSON.stringify({ value: webhookUrl }),
+            timeout: 5,
+          })
+
+          if (setWebhookRes.statusCode >= 200 && setWebhookRes.statusCode < 300) {
+            success = true
+            console.log(
+              '[WEBHOOK-INIT] Webhook Z-API configurado com sucesso. Status:',
+              setWebhookRes.statusCode,
+            )
+            break
+          } else {
+            console.log(
+              '[WEBHOOK-INIT] Tentativa ' +
+                attempts +
+                ' falhou com status: ' +
+                setWebhookRes.statusCode,
+            )
+          }
+        } catch (sendErr) {
+          console.log(
+            '[WEBHOOK-INIT] Tentativa ' + attempts + ' erro ao configurar Z-API:',
+            sendErr.message || String(sendErr),
+          )
+        }
+
+        if (!success && attempts < maxAttempts) {
+          sleep(1000)
+        }
+      }
+    }
+  } catch (initErr) {
+    console.log(
+      '[WEBHOOK-INIT] Erro geral não-bloqueante no bootstrap:',
+      initErr.message || String(initErr),
+    )
+  }
+})
