@@ -1,8 +1,36 @@
 // 1. Health check do webhook em caminho separado
 routerAdd('GET', '/backend/v1/whatsapp/webhook/health', (e) => {
+  let testRes = null
+  try {
+    const res = $http.send({
+      url: 'https://crm-whatsapp-integracao-aee3e.goskip.app/api/v1/whatsapp/webhook',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        type: 'ReceivedCallback',
+        phone: '5511999999999',
+        fromMe: false,
+        status: 'RECEIVED',
+        text: { message: 'teste-api' },
+      }),
+      timeout: 10,
+    })
+    testRes = {
+      statusCode: res.statusCode,
+      body: res.json || res.body,
+    }
+  } catch (err) {
+    testRes = {
+      error: err.message || String(err),
+    }
+  }
+
   return e.json(200, {
     status: 'ok',
     message: 'WhatsApp webhook is running',
+    apiTestResult: testRes,
   })
 })
 
@@ -173,6 +201,35 @@ onBootstrap((e) => {
   e.next()
 
   try {
+    try {
+      const pingRes = $http.send({
+        url: 'https://crm-whatsapp-integracao-aee3e.goskip.app/api/v1/whatsapp/webhook',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'ReceivedCallback',
+          phone: '5511999999999',
+          fromMe: false,
+          status: 'RECEIVED',
+          text: { message: 'teste-api' },
+        }),
+        timeout: 10,
+      })
+      let str = ''
+      if (pingRes.body) {
+        if (typeof pingRes.body === 'string') {
+          str = pingRes.body
+        } else if (Array.isArray(pingRes.body)) {
+          str = String.fromCharCode.apply(null, pingRes.body)
+        } else {
+          str = JSON.stringify(pingRes.body)
+        }
+      }
+      console.log('[EXTERNAL-API-TEST-RESULT-STR]', pingRes.statusCode, str.slice(0, 200))
+    } catch (testErr) {
+      console.log('[EXTERNAL-API-TEST-RESULT] Error:', testErr.message || String(testErr))
+    }
+
     let zInstance = ''
     let zToken = ''
     let zClientToken = ''
