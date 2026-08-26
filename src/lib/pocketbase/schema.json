@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-26T13:30:52.625Z",
+  "generatedAt": "2026-08-26T14:15:39.806Z",
   "collections": [
     {
       "name": "users",
@@ -507,6 +507,99 @@
         }
       ],
       "indexes": []
+    },
+    {
+      "name": "webhook_received",
+      "type": "base",
+      "apiRules": {
+        "list": null,
+        "view": null,
+        "create": "",
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "type",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "phone",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "fromMe",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "text",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "chat",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "sender",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "messageId",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "instanceId",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "moment",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_webhook_received_messageId ON webhook_received (messageId)",
+        "CREATE INDEX idx_webhook_received_instanceId ON webhook_received (instanceId)",
+        "CREATE INDEX idx_webhook_received_type ON webhook_received (type)",
+        "CREATE INDEX idx_webhook_received_created ON webhook_received (created DESC)"
+      ]
     }
   ]
 }
