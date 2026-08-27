@@ -137,14 +137,13 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
   const configHeaders = { 'Content-Type': 'application/json' }
   if (zClientToken) {
     configHeaders['Client-Token'] = zClientToken
-  }
->>>>>>>
 
   let attempts = 0
   let maxAttempts = 3
   let lastStatusCode = 0
   let lastErrorMsg = ''
   let success = false
+>>>>>>>
 
   while (attempts < maxAttempts && !success) {
     attempts++
@@ -256,9 +255,9 @@ onBootstrap((e) => {
         'https://crm-whatsapp-integracao-aee3e.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
       const configHeaders = { 'Content-Type': 'application/json' }
       if (zClientToken) {
->>>>>>>
         configHeaders['Client-Token'] = zClientToken
       }
+>>>>>>>
 
       let attempts = 0
       let maxAttempts = 3
