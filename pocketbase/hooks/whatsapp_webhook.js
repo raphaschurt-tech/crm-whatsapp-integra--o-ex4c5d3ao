@@ -129,8 +129,13 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
     })
   }
 
-  const webhookUrl = 'https://crm-whatsapp-integracao-aee3e.goskip.app/backend/v1/whatsapp/webhook'
+  // The public gateway (*.goskip.app) returns 405 for external POSTs to
+  // /backend/v1/*. The internal hostname accepts external POSTs and proxies
+  // directly to PocketBase — use it as the Z-API webhook target.
+  const webhookUrl =
+    'https://crm-whatsapp-integracao-aee3e.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
   const configHeaders = { 'Content-Type': 'application/json' }
+>>>>>>>
   if (zClientToken) {
     configHeaders['Client-Token'] = zClientToken
   }
@@ -246,8 +251,10 @@ onBootstrap((e) => {
     }
 
     if (zInstance && zToken) {
+      // Internal hostname: the public gateway blocks external POSTs (405).
       const webhookUrl =
-        'https://crm-whatsapp-integracao-aee3e.goskip.app/backend/v1/whatsapp/webhook'
+        'https://crm-whatsapp-integracao-aee3e.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
+>>>>>>>
       const configHeaders = { 'Content-Type': 'application/json' }
       if (zClientToken) {
         configHeaders['Client-Token'] = zClientToken
