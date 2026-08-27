@@ -149,8 +149,8 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
     try {
       const res = $http.send({
         url:
->>>>>>>
           'https://api.z-api.io/instances/' +
+>>>>>>>
           zInstance +
           '/token/' +
           zToken +
@@ -261,9 +261,9 @@ onBootstrap((e) => {
       let attempts = 0
       let maxAttempts = 3
       let success = false
->>>>>>>
 
       while (attempts < maxAttempts && !success) {
+>>>>>>>
         attempts++
         try {
           const setWebhookRes = $http.send({
