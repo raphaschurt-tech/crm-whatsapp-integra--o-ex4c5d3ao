@@ -141,8 +141,8 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
 
   let attempts = 0
   let maxAttempts = 3
->>>>>>>
   let lastStatusCode = 0
+>>>>>>>
   let lastErrorMsg = ''
   let success = false
 
