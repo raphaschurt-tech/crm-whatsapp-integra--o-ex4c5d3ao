@@ -143,9 +143,9 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
   let lastStatusCode = 0
   let lastErrorMsg = ''
   let success = false
->>>>>>>
 
   while (attempts < maxAttempts && !success) {
+>>>>>>>
     attempts++
     try {
       const res = $http.send({
