@@ -32,6 +32,8 @@ export default function SettingsPage() {
 
   // Configurações de Atendimento IA
   const [aiEnabled, setAiEnabled] = useState(false)
+  const [authorizedTestPhone, setAuthorizedTestPhone] = useState('5511947861439')
+  const [aiModel, setAiModel] = useState('gpt-4o-mini')
   const [openaiApiKey, setOpenaiApiKey] = useState('')
   const [zapiInstanceId, setZapiInstanceId] = useState('')
   const [zapiToken, setZapiToken] = useState('')
@@ -66,6 +68,8 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
         setStockApiUrl(s.stock_api_url || '')
         setPaymentLinkTemplate(s.payment_link_template || '')
         setAiEnabled(!!s.ai_enabled)
+        setAuthorizedTestPhone(s.authorized_test_phone || '5511947861439')
+        setAiModel(s.ai_model || 'gpt-4o-mini')
         setOpenaiApiKey(s.openai_api_key || '')
         setZapiInstanceId(s.zapi_instance_id || '')
         setZapiToken(s.zapi_token || '')
@@ -85,6 +89,8 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
         stock_api_url: stockApiUrl,
         payment_link_template: paymentLinkTemplate,
         ai_enabled: aiEnabled,
+        authorized_test_phone: authorizedTestPhone,
+        ai_model: aiModel,
         openai_api_key: openaiApiKey,
         zapi_instance_id: zapiInstanceId,
         zapi_token: zapiToken,
@@ -296,6 +302,47 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
 
           <CardContent className="space-y-5 pt-0">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Telefone de Teste Autorizado */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-1.5 text-slate-800 font-medium">
+                    <Smartphone className="h-4 w-4 text-emerald-600" /> Número de Teste Autorizado
+                    (Etapa 2)
+                  </Label>
+                </div>
+                <Input
+                  value={authorizedTestPhone}
+                  onChange={(e) => setAuthorizedTestPhone(e.target.value)}
+                  placeholder="Ex: 5511947861439"
+                  className="bg-white font-mono text-sm font-semibold"
+                />
+                <p className="text-xs text-slate-500">
+                  Apenas mensagens deste número serão processadas pela IA na Etapa 2 de teste
+                  controlado.
+                </p>
+              </div>
+
+              {/* Modelo de IA */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-1.5 text-slate-800 font-medium">
+                    <Sparkles className="h-4 w-4 text-emerald-600" /> Modelo de IA
+                  </Label>
+                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 text-[10px]">
+                    OpenAI
+                  </Badge>
+                </div>
+                <Input
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  placeholder="gpt-4o-mini"
+                  className="bg-white font-mono text-sm"
+                />
+                <p className="text-xs text-slate-500">
+                  Modelo utilizado para geração de respostas (padrão estrito: gpt-4o-mini).
+                </p>
+              </div>
+
               {/* Chave OpenAI */}
               <div className="space-y-1.5 md:col-span-2">
                 <div className="flex items-center justify-between">
@@ -308,15 +355,11 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                   type="password"
                   value={openaiApiKey}
                   onChange={(e) => setOpenaiApiKey(e.target.value)}
-                  placeholder="sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  placeholder="<redacted>"
                   className="bg-white font-mono text-sm"
                 />
-                <p className="text-xs text-slate-500">
-                  Chave de acesso da OpenAI (GPT-4o-mini). Se não preenchida, o sistema utilizará o
-                  motor nativo integrado.
-                </p>
+                <p className="text-xs text-slate-500">Chave de acesso da OpenAI (GPT-4o-mini).</p>
               </div>
-
               {/* Z-API Instance ID */}
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1.5 text-slate-800 font-medium">

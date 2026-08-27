@@ -76,9 +76,26 @@ export interface Settings extends RecordModel {
   stock_api_url?: string
   payment_link_template?: string
   ai_enabled?: boolean
+  authorized_test_phone?: string
+  ai_model?: string
   openai_api_key?: string
   zapi_instance_id?: string
   zapi_token?: string
   zapi_client_token?: string
   ai_system_prompt?: string
+}
+
+export type MessageProcessingStatus = 'received' | 'processing' | 'completed' | 'failed'
+
+export interface MessageProcessingRecord extends RecordModel {
+  messageId: string
+  phone: string
+  status: MessageProcessingStatus
+  replySent?: boolean
+  incomingText?: string
+  aiReplyText?: string
+  aiModel?: string
+  zapiStatus?: number
+  errorMessage?: string
+  retryCount?: number
 }
