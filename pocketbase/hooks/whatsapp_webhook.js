@@ -157,8 +157,8 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
         method: 'PUT',
         headers: configHeaders,
         body: JSON.stringify({ value: webhookUrl }),
->>>>>>>
         timeout: 10,
+>>>>>>>
       })
 
       lastStatusCode = res.statusCode
@@ -270,8 +270,8 @@ onBootstrap((e) => {
               'https://api.z-api.io/instances/' +
               zInstance +
               '/token/' +
->>>>>>>
               zToken +
+>>>>>>>
               '/update-webhook-received',
             method: 'PUT',
             headers: configHeaders,
