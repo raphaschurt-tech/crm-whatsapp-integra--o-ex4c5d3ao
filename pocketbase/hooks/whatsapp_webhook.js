@@ -135,8 +135,8 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
   const webhookUrl =
     'https://crm-whatsapp-integracao-aee3e.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
   const configHeaders = { 'Content-Type': 'application/json' }
->>>>>>>
   if (zClientToken) {
+>>>>>>>
     configHeaders['Client-Token'] = zClientToken
   }
 
@@ -254,8 +254,8 @@ onBootstrap((e) => {
       // Internal hostname: the public gateway blocks external POSTs (405).
       const webhookUrl =
         'https://crm-whatsapp-integracao-aee3e.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
->>>>>>>
       const configHeaders = { 'Content-Type': 'application/json' }
+>>>>>>>
       if (zClientToken) {
         configHeaders['Client-Token'] = zClientToken
       }
