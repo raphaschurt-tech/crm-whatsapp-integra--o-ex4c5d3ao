@@ -3,7 +3,7 @@ routerAdd('GET', '/backend/v1/whatsapp/webhook/health', (e) => {
   let testRes = null
   try {
     const res = $http.send({
-      url: 'https://crm-whatsapp-integracao-aee3e.goskip.app/api/v1/whatsapp/webhook',
+      url: 'https://crm-whatsapp-integracao-aee3e.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -129,9 +129,9 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
     })
   }
 
-  // The public gateway (*.goskip.app) returns 405 for external POSTs to
-  // /backend/v1/*. The internal hostname accepts external POSTs and proxies
-  // directly to PocketBase — use it as the Z-API webhook target.
+  // O gateway público (*.goskip.app) retorna 405 para POSTs externos em
+  // /backend/v1/*. O hostname interno aceita POSTs externos e encaminha
+  // direto ao PocketBase — use-o como destino do webhook da Z-API.
   const webhookUrl =
     'https://crm-whatsapp-integracao-aee3e.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
   const configHeaders = { 'Content-Type': 'application/json' }
@@ -142,7 +142,6 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
   let attempts = 0
   let maxAttempts = 3
   let lastStatusCode = 0
->>>>>>>
   let lastErrorMsg = ''
   let success = false
 
@@ -163,7 +162,6 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
       })
 
       lastStatusCode = res.statusCode
->>>>>>>
       if (res.statusCode >= 200 && res.statusCode < 300) {
         success = true
         console.log(
@@ -207,35 +205,6 @@ onBootstrap((e) => {
   e.next()
 
   try {
-    try {
-      const pingRes = $http.send({
-        url: 'https://crm-whatsapp-integracao-aee3e.goskip.app/api/v1/whatsapp/webhook',
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'ReceivedCallback',
-          phone: '5511999999999',
-          fromMe: false,
-          status: 'RECEIVED',
-          text: { message: 'teste-api' },
-        }),
-        timeout: 10,
-      })
-      let str = ''
-      if (pingRes.body) {
-        if (typeof pingRes.body === 'string') {
-          str = pingRes.body
-        } else if (Array.isArray(pingRes.body)) {
-          str = String.fromCharCode.apply(null, pingRes.body)
-        } else {
-          str = JSON.stringify(pingRes.body)
-        }
-      }
-      console.log('[EXTERNAL-API-TEST-RESULT-STR]', pingRes.statusCode, str.slice(0, 200))
-    } catch (testErr) {
-      console.log('[EXTERNAL-API-TEST-RESULT] Error:', testErr.message || String(testErr))
-    }
-
     let zInstance = ''
     let zToken = ''
     let zClientToken = ''
@@ -252,7 +221,7 @@ onBootstrap((e) => {
     }
 
     if (zInstance && zToken) {
-      // Internal hostname: the public gateway blocks external POSTs (405).
+      // Hostname interno: o gateway público bloqueia POSTs externos (405).
       const webhookUrl =
         'https://crm-whatsapp-integracao-aee3e.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
       const configHeaders = { 'Content-Type': 'application/json' }
@@ -275,7 +244,6 @@ onBootstrap((e) => {
               zToken +
               '/update-webhook-received',
             method: 'PUT',
->>>>>>>
             headers: configHeaders,
             body: JSON.stringify({ value: webhookUrl }),
             timeout: 5,
