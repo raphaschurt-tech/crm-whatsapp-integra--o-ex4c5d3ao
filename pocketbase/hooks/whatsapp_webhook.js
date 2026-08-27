@@ -145,8 +145,8 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
   let success = false
 
   while (attempts < maxAttempts && !success) {
->>>>>>>
     attempts++
+>>>>>>>
     try {
       const res = $http.send({
         url:
@@ -257,9 +257,9 @@ onBootstrap((e) => {
       if (zClientToken) {
         configHeaders['Client-Token'] = zClientToken
       }
->>>>>>>
 
       let attempts = 0
+>>>>>>>
       let maxAttempts = 3
       let success = false
 
