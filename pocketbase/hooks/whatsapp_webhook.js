@@ -137,8 +137,10 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
   const configHeaders = { 'Content-Type': 'application/json' }
   if (zClientToken) {
     configHeaders['Client-Token'] = zClientToken
+  }
 
   let attempts = 0
+>>>>>>>
   let maxAttempts = 3
   let lastStatusCode = 0
   let lastErrorMsg = ''
@@ -158,10 +160,10 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
         headers: configHeaders,
         body: JSON.stringify({ value: webhookUrl }),
         timeout: 10,
->>>>>>>
       })
 
       lastStatusCode = res.statusCode
+>>>>>>>
       if (res.statusCode >= 200 && res.statusCode < 300) {
         success = true
         console.log(
@@ -271,9 +273,9 @@ onBootstrap((e) => {
               zInstance +
               '/token/' +
               zToken +
->>>>>>>
               '/update-webhook-received',
             method: 'PUT',
+>>>>>>>
             headers: configHeaders,
             body: JSON.stringify({ value: webhookUrl }),
             timeout: 5,
