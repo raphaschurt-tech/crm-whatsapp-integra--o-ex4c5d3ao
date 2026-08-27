@@ -1,45 +1,46 @@
 routerAdd('GET', '/backend/v1/whatsapp/test-zapi', function (e) {
-  // 1. Ler as credenciais da Z-API da coleção settings com fallback para variáveis de ambiente
-  let zapiInstance = ''
-  let zapiToken = ''
-  let zapiClientToken = ''
+  // 1. Ler as credenciais da Z-API da coleção settings com validação estrita
+  let validConfigRec = null
+  let configError = ''
 
   try {
-    const list = $app.findRecordsByFilter('settings', '', '-created', 1, 0)
-    if (list && list.length > 0) {
-      zapiInstance = list[0].getString('zapi_instance_id') || ''
-      zapiToken = list[0].getString('zapi_token') || ''
-      zapiClientToken = list[0].getString('zapi_client_token') || ''
+    const validConfigs = $app.findRecordsByFilter(
+      'settings',
+      "zapi_instance_id != '' && zapi_token != '' && zapi_client_token != ''",
+      '-created',
+      10,
+      0,
+    )
+
+    if (!validConfigs || validConfigs.length === 0) {
+      configError = 'Nenhuma configuração válida encontrada (credenciais Z-API incompletas)'
+    } else if (validConfigs.length > 1) {
+      configError =
+        'Múltiplas configurações válidas encontradas (' +
+        validConfigs.length +
+        '). É exigida configuração única'
+    } else {
+      validConfigRec = validConfigs[0]
     }
   } catch (err) {
-    console.log('[TEST-ZAPI] Erro ao buscar configurações:', String(err))
+    configError = 'Erro ao consultar configurações: ' + (err.message || String(err))
   }
 
-  // Fallback para variáveis de ambiente
-  if (!zapiInstance) {
-    zapiInstance = $os.getenv('ZAPI_INSTANCE_ID') || ''
-  }
-  if (!zapiToken) {
-    zapiToken = $os.getenv('ZAPI_TOKEN') || ''
-  }
-  if (!zapiClientToken) {
-    zapiClientToken = $os.getenv('ZAPI_CLIENT_TOKEN') || ''
-  }
-
-  // Se credenciais faltando: { ok: false, error: "Credenciais Z-API não configuradas" }
-  if (!zapiInstance || !zapiToken) {
+  if (configError || !validConfigRec) {
     return e.json(200, {
       ok: false,
-      error: 'Credenciais Z-API não configuradas',
+      error: configError || 'Credenciais Z-API não configuradas',
     })
   }
+
+  const zapiInstance = validConfigRec.getString('zapi_instance_id')
+  const zapiToken = validConfigRec.getString('zapi_token')
+  const zapiClientToken = validConfigRec.getString('zapi_client_token')
 
   // 2. Chamar a API real da Z-API: GET https://api.z-api.io/instances/{instanceId}/token/{token}/status
   const headers = {
     'Content-Type': 'application/json',
-  }
-  if (zapiClientToken) {
-    headers['Client-Token'] = zapiClientToken
+    'Client-Token': zapiClientToken,
   }
 
   const url =
@@ -83,7 +84,7 @@ routerAdd('GET', '/backend/v1/whatsapp/test-zapi', function (e) {
       })
     }
   } catch (httpErr) {
-    console.log('[TEST-ZAPI] Erro na requisição:', String(httpErr))
+    console.log('[TEST-ZAPI-ERR] Erro na requisição:', String(httpErr))
     return e.json(200, {
       ok: false,
       error: 'Erro ao consultar Z-API: ' + String(httpErr),

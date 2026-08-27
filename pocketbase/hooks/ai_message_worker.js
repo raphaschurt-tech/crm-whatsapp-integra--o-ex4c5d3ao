@@ -42,36 +42,71 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  // 2. Ler configurações ativas (IA e Z-API)
-  let iaEnabled = false
-  let authorizedPhone = ''
-  let configuredAiModel = 'gpt-4o-mini'
-  let openaiKey = ''
-  let zapiInstance = ''
-  let zapiToken = ''
-  let zapiClientToken = ''
+  // 2. Ler e validar estritamente configurações ativas (PARTE 3)
+  let validConfigRec = null
+  let configError = ''
 
   try {
-    const sList = $app.findRecordsByFilter('settings', '', '-created', 1, 0)
-    if (sList && sList.length > 0) {
-      const s = sList[0]
-      iaEnabled = Boolean(s.get('ai_enabled'))
-      authorizedPhone = String(s.get('authorized_test_phone') || '').replace(/\D/g, '')
-      configuredAiModel = String(s.get('ai_model') || 'gpt-4o-mini')
-      openaiKey = String(s.get('openai_api_key') || '')
-      zapiInstance = String(s.get('zapi_instance_id') || '')
-      zapiToken = String(s.get('zapi_token') || '')
-      zapiClientToken = String(s.get('zapi_client_token') || '')
+    const validConfigs = $app.findRecordsByFilter(
+      'settings',
+      "zapi_instance_id != '' && zapi_token != '' && zapi_client_token != ''",
+      '-created',
+      10,
+      0,
+    )
+
+    if (!validConfigs || validConfigs.length === 0) {
+      configError = 'Nenhuma configuração válida encontrada (credenciais Z-API incompletas)'
+    } else if (validConfigs.length > 1) {
+      configError =
+        'Múltiplas configurações válidas encontradas (' +
+        validConfigs.length +
+        '). É exigida configuração única'
+    } else {
+      validConfigRec = validConfigs[0]
     }
   } catch (err) {
-    console.log('[SETTINGS-HOOK-READ-ERR]', err.message || String(err))
+    configError = 'Erro ao consultar configurações: ' + (err.message || String(err))
   }
 
-  // Fallbacks para variáveis de ambiente se não preenchido na collection
-  if (!zapiInstance) zapiInstance = $os.getenv('ZAPI_INSTANCE_ID') || ''
-  if (!zapiToken) zapiToken = $os.getenv('ZAPI_TOKEN') || ''
-  if (!zapiClientToken) zapiClientToken = $os.getenv('ZAPI_CLIENT_TOKEN') || ''
-  if (!openaiKey) openaiKey = $os.getenv('OPENAI_API_KEY') || ''
+  if (configError || !validConfigRec) {
+    console.log(
+      '[SETTINGS-INVALID]',
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        stage: 'ai_worker_init',
+        error: configError,
+      }),
+    )
+    try {
+      procRecord.set('status', 'failed')
+      procRecord.set('errorMessage', configError)
+      $app.save(procRecord)
+    } catch (_) {}
+    return e.next()
+  }
+
+  const maskedInst = validConfigRec.getString('zapi_instance_id').slice(0, 4) + '****'
+  console.log(
+    '[SETTINGS-VALID]',
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      stage: 'ai_worker',
+      configId: validConfigRec.id,
+      instanceId: maskedInst,
+      aiEnabled: Boolean(validConfigRec.get('ai_enabled')),
+    }),
+  )
+
+  const iaEnabled = Boolean(validConfigRec.get('ai_enabled'))
+  const authorizedPhone = String(validConfigRec.get('authorized_test_phone') || '').replace(
+    /\D/g,
+    '',
+  )
+  const openaiKey = String(validConfigRec.get('openai_api_key') || '')
+  const zapiInstance = String(validConfigRec.get('zapi_instance_id') || '')
+  const zapiToken = String(validConfigRec.get('zapi_token') || '')
+  const zapiClientToken = String(validConfigRec.get('zapi_client_token') || '')
 
   // 3. Verificações de segurança no momento da execução
   if (!iaEnabled) {
@@ -242,31 +277,9 @@ onRecordAfterCreateSuccess((e) => {
   )
 
   // 6. Envio da resposta pela Z-API
-  if (!zapiInstance || !zapiToken) {
-    console.log(
-      '[ZAPI-REPLY-ERROR]',
-      JSON.stringify({
-        timestamp: new Date().toISOString(),
-        messageId: messageId,
-        senderPhone: maskedPhone,
-        error: 'Credenciais da Z-API não configuradas',
-      }),
-    )
-    try {
-      procRecord.set('status', 'failed')
-      procRecord.set('errorMessage', 'Credenciais Z-API não configuradas')
-      procRecord.set('aiReplyText', aiReply)
-      procRecord.set('aiModel', usedModel)
-      $app.save(procRecord)
-    } catch (_) {}
-    return e.next()
-  }
-
   const zapiHeaders = {
     'Content-Type': 'application/json',
-  }
-  if (zapiClientToken) {
-    zapiHeaders['Client-Token'] = zapiClientToken
+    'Client-Token': zapiClientToken,
   }
 
   let zapiHttpStatus = 0

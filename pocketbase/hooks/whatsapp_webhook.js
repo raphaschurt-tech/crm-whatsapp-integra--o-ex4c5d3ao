@@ -13,13 +13,13 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     body = rawBody
   }
 
-  // 1. Extrair campos do payload Z-API de forma segura e resiliente a diferentes tipos
+  // 1. Extrair campos do payload Z-API de forma segura e resiliente a diferentes formatos
   const eventType =
     body.type ||
     body.event ||
     body.eventType ||
     (body.data && body.data.message ? 'message' : '') ||
-    ''
+    'ReceivedCallback'
 
   const rawInstanceId = String(body.instanceId || body.instance_id || '')
   let maskedInstanceId = ''
@@ -55,7 +55,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     rawPhone = String(body.data.key.remoteJid)
   }
 
-  // Normalização de telefone
+  // Normalização de telefone (apenas dígitos)
   let normalizedPhone = rawPhone.replace(/\D/g, '')
 
   let maskedSenderPhone = ''
@@ -101,7 +101,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     (body.data && body.data.key && body.data.key.fromMe),
   )
 
-  // Log sanitizado de recepção (conforme Etapa 1)
+  // Log sanitizado de recepção do webhook (sem expor credenciais nem telefones completos)
   console.log(
     '[WEBHOOK-RECEIVED]',
     JSON.stringify({
@@ -134,12 +134,12 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   }
 
   // 3. Validações de segurança e regras para enfileiramento na message_processing
-  // Regra: Ignorar mensagens com fromMe=true
+  // Regra: Ignorar mensagens enviadas pelo próprio bot (fromMe=true)
   if (isFromMe) {
     return e.json(200, { status: 'ignored_from_me' })
   }
 
-  // Regra: Somente mensagens de texto
+  // Regra: Somente mensagens de texto com conteúdo
   if (!incomingText || typeof incomingText !== 'string' || !incomingText.trim()) {
     return e.json(200, { status: 'ignored_non_text' })
   }
@@ -157,28 +157,67 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     return e.json(200, { status: 'ignored_missing_message_id' })
   }
 
-  // 4. Ler configurações persistentes
-  let iaEnabled = false
-  let authorizedPhone = ''
-  let configuredAiModel = 'gpt-4o-mini'
+  // 4. Seleção e validação estrita da configuração ativa (PARTE 3)
+  let validConfigRec = null
+  let configError = ''
 
   try {
-    const sList = $app.findRecordsByFilter('settings', '', '-created', 1, 0)
-    if (sList && sList.length > 0) {
-      const sRec = sList[0]
-      iaEnabled = Boolean(sRec.get('ai_enabled'))
-      authorizedPhone = String(sRec.get('authorized_test_phone') || '')
-      configuredAiModel = String(sRec.get('ai_model') || 'gpt-4o-mini')
+    const validConfigs = $app.findRecordsByFilter(
+      'settings',
+      "zapi_instance_id != '' && zapi_token != '' && zapi_client_token != ''",
+      '-created',
+      10,
+      0,
+    )
+
+    if (!validConfigs || validConfigs.length === 0) {
+      configError = 'Nenhuma configuração válida encontrada (credenciais Z-API incompletas)'
+    } else if (validConfigs.length > 1) {
+      configError =
+        'Múltiplas configurações válidas encontradas (' +
+        validConfigs.length +
+        '). É exigida configuração única'
+    } else {
+      validConfigRec = validConfigs[0]
     }
   } catch (err) {
-    console.log('[SETTINGS-READ-ERR]', err.message || String(err))
+    configError = 'Erro ao consultar configurações: ' + (err.message || String(err))
   }
 
-  // Normalizar telefone autorizado
-  const normalizedAuthPhone = authorizedPhone.replace(/\D/g, '')
+  if (configError || !validConfigRec) {
+    console.log(
+      '[SETTINGS-INVALID]',
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        error: configError,
+      }),
+    )
+    return e.json(200, {
+      status: 'settings_invalid',
+      error: configError,
+    })
+  }
+
+  const maskedInst = validConfigRec.getString('zapi_instance_id').slice(0, 4) + '****'
+  console.log(
+    '[SETTINGS-VALID]',
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      configId: validConfigRec.id,
+      instanceId: maskedInst,
+      aiEnabled: Boolean(validConfigRec.get('ai_enabled')),
+    }),
+  )
+
+  const iaEnabled = Boolean(validConfigRec.get('ai_enabled'))
+  const authorizedPhone = String(validConfigRec.get('authorized_test_phone') || '').replace(
+    /\D/g,
+    '',
+  )
+  const configuredAiModel = String(validConfigRec.get('ai_model') || 'gpt-4o-mini')
 
   // Verificação de número de teste autorizado
-  if (!normalizedAuthPhone || normalizedPhone !== normalizedAuthPhone) {
+  if (!authorizedPhone || normalizedPhone !== authorizedPhone) {
     console.log(
       '[UNAUTHORIZED-TEST-NUMBER]',
       JSON.stringify({
@@ -203,7 +242,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     return e.json(200, { status: 'ai_disabled' })
   }
 
-  // 5. Idempotência e Enfileiramento em message_processing
+  // 5. Idempotência e Enfileiramento seguro em message_processing
   try {
     const existing = $app.findRecordsByFilter(
       'message_processing',
