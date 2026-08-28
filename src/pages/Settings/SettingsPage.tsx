@@ -32,7 +32,7 @@ export default function SettingsPage() {
 
   // Configurações de Atendimento IA
   const [aiEnabled, setAiEnabled] = useState(false)
-  const [authorizedTestPhone, setAuthorizedTestPhone] = useState('5511947861439')
+  const [authorizedTestPhone, setAuthorizedTestPhone] = useState('5511947518805')
   const [aiModel, setAiModel] = useState('gpt-4o-mini')
   const [openaiApiKey, setOpenaiApiKey] = useState('')
   const [zapiInstanceId, setZapiInstanceId] = useState('')
@@ -68,7 +68,7 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
         setStockApiUrl(s.stock_api_url || '')
         setPaymentLinkTemplate(s.payment_link_template || '')
         setAiEnabled(!!s.ai_enabled)
-        setAuthorizedTestPhone(s.authorized_test_phone || '5511947861439')
+        setAuthorizedTestPhone(s.authorized_test_phone || '5511947518805')
         setAiModel(s.ai_model || 'gpt-4o-mini')
         setOpenaiApiKey(s.openai_api_key || '')
         setZapiInstanceId(s.zapi_instance_id || '')
@@ -313,7 +313,7 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                 <Input
                   value={authorizedTestPhone}
                   onChange={(e) => setAuthorizedTestPhone(e.target.value)}
-                  placeholder="Ex: 5511947861439"
+                  placeholder="Ex: 5511947518805"
                   className="bg-white font-mono text-sm font-semibold"
                 />
                 <p className="text-xs text-slate-500">
