@@ -55,11 +55,34 @@ onBootstrap((e) => {
       timeout: 15,
     })
 
+    // A Z-API mantem DOIS campos de webhook de recebimento:
+    // receivedCallbackUrl (update-webhook-received) e
+    // receivedAndDeliveryCallbackUrl (update-webhook-received-delivery).
+    // Se apenas o primeiro for gravado, a entrega real de mensagens continua
+    // pela URL antiga gravada no segundo campo (ex.: URL publica, que recebe
+    // 405 do gateway). Gravar SEMPRE os dois.
+    const setReceivedDeliveryRes = $http.send({
+      url:
+        'https://api.z-api.io/instances/' +
+        encodeURIComponent(zapiInstance) +
+        '/token/' +
+        encodeURIComponent(zapiToken) +
+        '/update-webhook-received-delivery',
+      method: 'PUT',
+      headers: headers,
+      body: JSON.stringify({
+        value: internalWebhookUrl,
+      }),
+      timeout: 15,
+    })
+
     const maskedUrl =
       'https://crm-whatsapp-integracao-****.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
     console.log(
       '[WEBHOOK-INIT] Webhook Z-API configurado com sucesso. Status: ' +
         setReceivedRes.statusCode +
+        ' Delivery: ' +
+        setReceivedDeliveryRes.statusCode +
         ' Url: ' +
         maskedUrl,
     )
@@ -132,11 +155,28 @@ routerAdd('POST', '/backend/v1/whatsapp/configure-webhook', (e) => {
       timeout: 15,
     })
 
+    const setReceivedDeliveryRes = $http.send({
+      url:
+        'https://api.z-api.io/instances/' +
+        encodeURIComponent(zapiInstance) +
+        '/token/' +
+        encodeURIComponent(zapiToken) +
+        '/update-webhook-received-delivery',
+      method: 'PUT',
+      headers: headers,
+      body: JSON.stringify({
+        value: internalWebhookUrl,
+      }),
+      timeout: 15,
+    })
+
     const maskedUrl =
       'https://crm-whatsapp-integracao-****.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
     console.log(
       '[WEBHOOK-CONFIG] Webhook Z-API configurado com sucesso. Status: ' +
         setReceivedRes.statusCode +
+        ' Delivery: ' +
+        setReceivedDeliveryRes.statusCode +
         ' Url: ' +
         maskedUrl,
     )
