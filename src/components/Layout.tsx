@@ -67,11 +67,11 @@ export default function Layout() {
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       <aside className="hidden md:flex w-[260px] flex-col bg-white border-r border-slate-200 fixed inset-y-0 z-30">
         <div className="p-4 flex flex-col items-center justify-center border-b border-slate-100 bg-white">
-          <Link to="/" className="flex flex-col items-center gap-1 group py-1">
+          <Link to="/" className="flex flex-col items-center justify-center w-full group py-1">
             <img
               src="/visual-edits/logo-rpa-auto-parts-02-definitivo-correto-4f10a71a.png"
               alt="RPA Auto Parts"
-              className="h-14 w-auto max-w-[210px] object-contain transition-transform group-hover:scale-[1.02]"
+              className="w-full h-auto max-h-24 object-contain transition-transform group-hover:scale-[1.02]"
             />
           </Link>
         </div>
