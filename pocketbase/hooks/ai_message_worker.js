@@ -126,7 +126,9 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  if (!authorizedPhone || phone !== authorizedPhone) {
+  // O filtro de número só é aplicado no modo de teste controlado (IA desligada).
+  // Com a IA habilitada, qualquer número recebido pelo webhook pode ser processado.
+  if (!iaEnabled && (!authorizedPhone || phone !== authorizedPhone)) {
     console.log(
       '[UNAUTHORIZED-TEST-NUMBER]',
       JSON.stringify({
