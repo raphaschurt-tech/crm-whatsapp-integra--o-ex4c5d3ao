@@ -69,7 +69,7 @@ export default function Layout() {
         <div className="p-4 flex flex-col items-center justify-center border-b border-slate-100 bg-white">
           <Link to="/" className="flex flex-col items-center justify-center w-full group py-1">
             <img
-              src="/visual-edits/logo-rpa-auto-parts-02-definitivo-correto-4f10a71a.png"
+              src="/visual-edits/logo-preto-rpa-dfa45fe5.png"
               alt="RPA Auto Parts"
               className="w-full h-auto max-h-24 object-contain transition-transform group-hover:scale-[1.02]"
             />
