@@ -40,49 +40,96 @@ onBootstrap((e) => {
       'Client-Token': zapiClientToken,
     }
 
-    const setReceivedRes = $http.send({
-      url:
-        'https://api.z-api.io/instances/' +
-        encodeURIComponent(zapiInstance) +
-        '/token/' +
-        encodeURIComponent(zapiToken) +
-        '/update-webhook-received',
-      method: 'PUT',
-      headers: headers,
-      body: JSON.stringify({
-        value: internalWebhookUrl,
-      }),
-      timeout: 15,
-    })
+    // 1. Consultar o estado atual dos webhooks na Z-API (GET /me) para tornar o
+    // bootstrap idempotente: só regrava quando alguma URL não apontar para a
+    // URL interna, evitando chamadas externas desnecessárias a cada deploy.
+    let currentReceivedUrl = ''
+    let currentReceivedDeliveryUrl = ''
+    try {
+      const meRes = $http.send({
+        url:
+          'https://api.z-api.io/instances/' +
+          encodeURIComponent(zapiInstance) +
+          '/token/' +
+          encodeURIComponent(zapiToken) +
+          '/me',
+        method: 'GET',
+        headers: headers,
+        timeout: 15,
+      })
 
-    // A Z-API mantem DOIS campos de webhook de recebimento:
+      if (meRes.statusCode >= 200 && meRes.statusCode < 300 && meRes.json) {
+        const data = meRes.json
+        currentReceivedUrl = String(data.receivedCallbackUrl || data.received_callback_url || '')
+        currentReceivedDeliveryUrl = String(
+          data.receivedAndDeliveryCallbackUrl || data.received_and_delivery_callback_url || '',
+        )
+      }
+    } catch (meErr) {
+      console.log('[WEBHOOK-INIT-WARN] Falha ao consultar webhook atual na Z-API:', String(meErr))
+    }
+
+    const needReceived = currentReceivedUrl !== internalWebhookUrl
+    const needReceivedDelivery = currentReceivedDeliveryUrl !== internalWebhookUrl
+
+    if (!needReceived && !needReceivedDelivery) {
+      console.log(
+        '[WEBHOOK-INIT-SKIP] Webhook Z-API já aponta para a URL interna. Nenhuma alteração necessária.',
+      )
+      return
+    }
+
+    // 2. A Z-API mantem DOIS campos de webhook de recebimento:
     // receivedCallbackUrl (update-webhook-received) e
     // receivedAndDeliveryCallbackUrl (update-webhook-received-delivery).
     // Se apenas o primeiro for gravado, a entrega real de mensagens continua
     // pela URL antiga gravada no segundo campo (ex.: URL publica, que recebe
-    // 405 do gateway). Gravar SEMPRE os dois.
-    const setReceivedDeliveryRes = $http.send({
-      url:
-        'https://api.z-api.io/instances/' +
-        encodeURIComponent(zapiInstance) +
-        '/token/' +
-        encodeURIComponent(zapiToken) +
-        '/update-webhook-received-delivery',
-      method: 'PUT',
-      headers: headers,
-      body: JSON.stringify({
-        value: internalWebhookUrl,
-      }),
-      timeout: 15,
-    })
+    // 405 do gateway). Gravar os dois somente quando necessário.
+    let setReceivedStatus = 'SKIP'
+    if (needReceived) {
+      const setReceivedRes = $http.send({
+        url:
+          'https://api.z-api.io/instances/' +
+          encodeURIComponent(zapiInstance) +
+          '/token/' +
+          encodeURIComponent(zapiToken) +
+          '/update-webhook-received',
+        method: 'PUT',
+        headers: headers,
+        body: JSON.stringify({
+          value: internalWebhookUrl,
+        }),
+        timeout: 15,
+      })
+      setReceivedStatus = String(setReceivedRes.statusCode)
+    }
+
+    let setReceivedDeliveryStatus = 'SKIP'
+    if (needReceivedDelivery) {
+      const setReceivedDeliveryRes = $http.send({
+        url:
+          'https://api.z-api.io/instances/' +
+          encodeURIComponent(zapiInstance) +
+          '/token/' +
+          encodeURIComponent(zapiToken) +
+          '/update-webhook-received-delivery',
+        method: 'PUT',
+        headers: headers,
+        body: JSON.stringify({
+          value: internalWebhookUrl,
+        }),
+        timeout: 15,
+      })
+      setReceivedDeliveryStatus = String(setReceivedDeliveryRes.statusCode)
+    }
 
     const maskedUrl =
       'https://crm-whatsapp-integracao-****.shrd00.internal.goskip.dev/backend/v1/whatsapp/webhook'
     console.log(
-      '[WEBHOOK-INIT] Webhook Z-API configurado com sucesso. Status: ' +
-        setReceivedRes.statusCode +
+      '[WEBHOOK-INIT] Webhook Z-API verificado. Received: ' +
+        setReceivedStatus +
         ' Delivery: ' +
-        setReceivedDeliveryRes.statusCode +
+        setReceivedDeliveryStatus +
         ' Url: ' +
         maskedUrl,
     )

@@ -216,21 +216,23 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   )
   const configuredAiModel = String(validConfigRec.get('ai_model') || 'gpt-4o-mini')
 
-  // Verificação de número de teste autorizado
-  if (!authorizedPhone || normalizedPhone !== authorizedPhone) {
-    console.log(
-      '[UNAUTHORIZED-TEST-NUMBER]',
-      JSON.stringify({
-        timestamp: new Date().toISOString(),
-        senderPhone: maskedSenderPhone,
-        messageId: messageId,
-      }),
-    )
-    return e.json(200, { status: 'ignored_unauthorized_number' })
-  }
-
   // Verificação de IA Habilitada
+  // Com a IA habilitada, o atendimento é liberado para qualquer número (sem filtro).
+  // O authorized_test_phone vale apenas como modo de teste controlado: com a IA desligada,
+  // somente o número de teste chega ao processamento; os demais são registrados como ignorados.
   if (!iaEnabled) {
+    if (authorizedPhone && normalizedPhone !== authorizedPhone) {
+      console.log(
+        '[UNAUTHORIZED-TEST-NUMBER]',
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          senderPhone: maskedSenderPhone,
+          messageId: messageId,
+        }),
+      )
+      return e.json(200, { status: 'ignored_unauthorized_number' })
+    }
+
     console.log(
       '[AI-DISABLED]',
       JSON.stringify({
