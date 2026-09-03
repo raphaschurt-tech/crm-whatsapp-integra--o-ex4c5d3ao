@@ -10,6 +10,7 @@ import Layout from '@/components/Layout'
 // Pages
 import Login from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
+import WhatsAppAtendimento from '@/pages/WhatsApp/Atendimento'
 import QuoteList from '@/pages/Quotes/QuoteList'
 import QuoteForm from '@/pages/Quotes/QuoteForm'
 import QuoteDetail from '@/pages/Quotes/QuoteDetail'
@@ -41,6 +42,8 @@ const App = () => (
           <Route element={<ProtectedRoute />}>
             <Route element={<Layout />}>
               <Route path="/" element={<Dashboard />} />
+              {/* Atendimento WhatsApp */}
+              <Route path="/atendimento" element={<WhatsAppAtendimento />} />
               {/* Orçamentos */}
               <Route path="/orcamentos" element={<QuoteList />} />
               <Route path="/orcamentos/novo" element={<QuoteForm />} />

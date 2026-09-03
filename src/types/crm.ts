@@ -9,12 +9,17 @@ export interface User extends RecordModel {
   blocked?: boolean
 }
 
+export type CustomerType = 'PF' | 'PJ'
+
 export interface Customer extends RecordModel {
   name: string
   phone: string
   email?: string
   company?: string
   notes?: string
+  type?: CustomerType
+  cpf?: string
+  cnpj?: string
 }
 
 export interface Product extends RecordModel {

@@ -44,7 +44,20 @@ export default function CustomerDetail() {
           <Button variant="ghost" size="icon" onClick={() => navigate('/clientes')}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-2xl font-bold text-slate-900">{customer.name}</h1>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-slate-900">{customer.name}</h1>
+              <Badge
+                className={
+                  (customer.type || (customer.cnpj ? 'PJ' : 'PF')) === 'PJ'
+                    ? 'bg-blue-100 text-blue-800 hover:bg-blue-100 border-none'
+                    : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-none'
+                }
+              >
+                {customer.type || (customer.cnpj ? 'PJ' : 'PF')}
+              </Badge>
+            </div>
+          </div>
         </div>
         <Button
           onClick={() => navigate(`/orcamentos/novo?customerId=${customer.id}`)}
@@ -60,6 +73,26 @@ export default function CustomerDetail() {
             <CardTitle className="text-base font-bold">Perfil do Cliente</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
+            <div>
+              <p className="text-xs text-slate-400 uppercase font-semibold">Tipo</p>
+              <p className="font-semibold text-slate-800">
+                {(customer.type || (customer.cnpj ? 'PJ' : 'PF')) === 'PJ'
+                  ? 'Pessoa Jurídica (PJ)'
+                  : 'Pessoa Física (PF)'}
+              </p>
+            </div>
+            {customer.cpf && (
+              <div>
+                <p className="text-xs text-slate-400 uppercase font-semibold">CPF</p>
+                <p className="font-mono text-slate-800 font-semibold">{customer.cpf}</p>
+              </div>
+            )}
+            {customer.cnpj && (
+              <div>
+                <p className="text-xs text-slate-400 uppercase font-semibold">CNPJ</p>
+                <p className="font-mono text-slate-800 font-semibold">{customer.cnpj}</p>
+              </div>
+            )}
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold">Telefone / WhatsApp</p>
               <p className="font-semibold text-slate-800">{customer.phone}</p>

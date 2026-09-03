@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-03T17:04:11.090Z",
+  "generatedAt": "2026-09-03T23:50:53.106Z",
   "collections": [
     {
       "name": "users",
@@ -117,6 +117,25 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["PF", "PJ"]
+        },
+        {
+          "name": "cpf",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cnpj",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
