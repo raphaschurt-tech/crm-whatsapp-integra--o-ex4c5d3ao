@@ -31,16 +31,22 @@ export default function Dashboard() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [checkingSku, setCheckingSku] = useState<string | null>(null)
 
   const loadData = async () => {
+    setLoading(true)
+    setLoadError(null)
     try {
       const [q, c, p] = await Promise.all([getQuotes(), getCustomers(), getProducts()])
       setQuotes(q)
       setCustomers(c)
       setProducts(p)
-    } catch (e) {
-      console.error(e)
+    } catch (e: any) {
+      console.error('Erro ao carregar dados do Dashboard:', e)
+      setLoadError(
+        e?.message || 'Falha na conexão com o servidor. O backend pode estar inicializando.',
+      )
     } finally {
       setLoading(false)
     }
@@ -117,7 +123,28 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="p-8 text-center text-slate-500">Carregando informações do sistema...</div>
+      <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center gap-3">
+        <RefreshCw className="h-6 w-6 animate-spin text-emerald-600" />
+        <p>Carregando informações do sistema...</p>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="p-8 max-w-lg mx-auto text-center space-y-4 bg-white border border-red-200 rounded-xl shadow-xs">
+        <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto" />
+        <h2 className="text-lg font-bold text-slate-900">Falha ao conectar com o servidor</h2>
+        <p className="text-sm text-slate-600">
+          O servidor pode estar inicializando (cold start) ou temporariamente indisponível.
+        </p>
+        <Button
+          onClick={() => loadData()}
+          className="bg-emerald-500 hover:bg-emerald-600 text-white"
+        >
+          <RefreshCw className="mr-1.5 h-4 w-4" /> Tentar novamente
+        </Button>
+      </div>
     )
   }
 

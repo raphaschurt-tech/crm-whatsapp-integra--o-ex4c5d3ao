@@ -1,7 +1,14 @@
 import pb from '@/lib/pocketbase/client'
 import { Product } from '@/types/crm'
 
-export const getProducts = () => pb.collection<Product>('products').getFullList({ sort: 'name' })
+export const getProducts = async (): Promise<Product[]> => {
+  try {
+    return await pb.collection<Product>('products').getFullList({ sort: 'name' })
+  } catch (error) {
+    console.warn('Erro ao carregar produtos:', error)
+    return []
+  }
+}
 
 export const getProduct = (id: string) => pb.collection<Product>('products').getOne(id)
 

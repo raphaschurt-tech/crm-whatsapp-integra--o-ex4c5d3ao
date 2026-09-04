@@ -10,6 +10,8 @@ import {
   User as UserIcon,
   CheckCircle2,
   XCircle,
+  RefreshCw,
+  AlertTriangle,
 } from 'lucide-react'
 import { getUsers, createUser, updateUser, toggleBlockUser, deleteUser } from '@/services/users'
 import { User } from '@/types/crm'
@@ -41,6 +43,7 @@ export default function UserList() {
   const [users, setUsers] = useState<User[]>([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // Modais de Criação / Edição
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -58,16 +61,14 @@ export default function UserList() {
   const [deletingUser, setDeletingUser] = useState<User | null>(null)
 
   const loadData = async () => {
+    setLoading(true)
+    setLoadError(null)
     try {
       const data = await getUsers()
       setUsers(data)
-    } catch (err) {
-      console.error(err)
-      toast({
-        title: 'Erro ao carregar usuários',
-        description: 'Não foi possível carregar a lista de usuários.',
-        variant: 'destructive',
-      })
+    } catch (err: any) {
+      console.error('Erro ao carregar usuários:', err)
+      setLoadError(err?.message || 'Falha ao comunicar com o servidor.')
     } finally {
       setLoading(false)
     }
@@ -284,7 +285,21 @@ export default function UserList() {
 
       {/* Tabela ou Lista */}
       {loading ? (
-        <div className="p-8 text-center text-slate-500">Carregando usuários...</div>
+        <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center gap-3">
+          <RefreshCw className="h-6 w-6 animate-spin text-emerald-600" />
+          <p>Carregando usuários...</p>
+        </div>
+      ) : loadError ? (
+        <div className="bg-white p-8 rounded-xl border border-red-200 text-center space-y-3">
+          <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto" />
+          <p className="text-slate-700 font-medium">
+            Não foi possível carregar a lista de usuários.
+          </p>
+          <p className="text-xs text-slate-500">O servidor pode estar inicializando.</p>
+          <Button onClick={() => loadData()} variant="outline">
+            <RefreshCw className="mr-1.5 h-4 w-4" /> Tentar novamente
+          </Button>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="bg-white p-8 rounded-xl border text-center text-slate-500">
           Nenhum usuário encontrado.

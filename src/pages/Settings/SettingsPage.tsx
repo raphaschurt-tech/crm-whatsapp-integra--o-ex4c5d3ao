@@ -61,8 +61,10 @@ Você pode tirar dúvidas sobre produtos, estoque atual, preços e condições d
 Sempre informe valores em Reais (R$).
 Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisar de suporte avançado que não consiga resolver, informe educadamente que você irá transferir para um atendente humano da equipe comercial.`
 
-  useEffect(() => {
-    getSettings().then((s) => {
+  const loadSettingsData = async () => {
+    setLoading(true)
+    try {
+      const s = await getSettings()
       if (s) {
         setWhatsappNumber(s.whatsapp_number || '')
         setStockApiUrl(s.stock_api_url || '')
@@ -76,8 +78,15 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
         setZapiClientToken(s.zapi_client_token || '')
         setAiSystemPrompt(s.ai_system_prompt || '')
       }
+    } catch (e) {
+      console.warn('Erro ao obter configurações:', e)
+    } finally {
       setLoading(false)
-    })
+    }
+  }
+
+  useEffect(() => {
+    loadSettingsData()
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {

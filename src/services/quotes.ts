@@ -1,11 +1,17 @@
 import pb from '@/lib/pocketbase/client'
 import { Quote, QuoteItem } from '@/types/crm'
 
-export const getQuotes = () =>
-  pb.collection<Quote>('quotes').getFullList({
-    sort: '-created',
-    expand: 'customer',
-  })
+export const getQuotes = async (): Promise<Quote[]> => {
+  try {
+    return await pb.collection<Quote>('quotes').getFullList({
+      sort: '-created',
+      expand: 'customer',
+    })
+  } catch (error) {
+    console.warn('Erro ao carregar orçamentos:', error)
+    return []
+  }
+}
 
 export const getQuote = (id: string) =>
   pb.collection<Quote>('quotes').getOne(id, {

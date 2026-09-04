@@ -28,6 +28,7 @@ export default function ProductList() {
   const [search, setSearch] = useState('')
   const [onlyLowStock, setOnlyLowStock] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
 
   // Lookup modal
@@ -37,11 +38,14 @@ export default function ProductList() {
   const [checking, setChecking] = useState(false)
 
   const loadData = async () => {
+    setLoading(true)
+    setLoadError(null)
     try {
       const data = await getProducts()
       setProducts(data)
-    } catch (e) {
-      console.error(e)
+    } catch (e: any) {
+      console.error('Erro ao carregar produtos:', e)
+      setLoadError(e?.message || 'Falha ao comunicar com o servidor.')
     } finally {
       setLoading(false)
     }
@@ -155,7 +159,21 @@ export default function ProductList() {
       </div>
 
       {loading ? (
-        <div className="p-8 text-center text-slate-500">Carregando catálogo...</div>
+        <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center gap-3">
+          <RefreshCw className="h-6 w-6 animate-spin text-emerald-600" />
+          <p>Carregando catálogo...</p>
+        </div>
+      ) : loadError ? (
+        <div className="bg-white p-8 rounded-xl border border-red-200 text-center space-y-3">
+          <Package className="h-8 w-8 text-amber-500 mx-auto" />
+          <p className="text-slate-700 font-medium">
+            Não foi possível carregar o catálogo de produtos.
+          </p>
+          <p className="text-xs text-slate-500">O servidor pode estar inicializando.</p>
+          <Button onClick={() => loadData()} variant="outline">
+            <RefreshCw className="mr-1.5 h-4 w-4" /> Tentar novamente
+          </Button>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="bg-white p-8 rounded-xl border text-center text-slate-500">
           Nenhum produto encontrado.

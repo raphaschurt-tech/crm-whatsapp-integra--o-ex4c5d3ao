@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, MessageCircle, Eye, Edit, Trash2 } from 'lucide-react'
+import {
+  Plus,
+  Search,
+  MessageCircle,
+  Eye,
+  Edit,
+  Trash2,
+  RefreshCw,
+  AlertTriangle,
+} from 'lucide-react'
 import { getCustomers, deleteCustomer } from '@/services/customers'
 import { Customer } from '@/types/crm'
 import { openWhatsApp } from '@/lib/whatsapp'
@@ -17,13 +26,17 @@ export default function CustomerList() {
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const loadData = async () => {
+    setLoading(true)
+    setLoadError(null)
     try {
       const data = await getCustomers()
       setCustomers(data)
-    } catch (e) {
-      console.error(e)
+    } catch (e: any) {
+      console.error('Erro ao carregar clientes:', e)
+      setLoadError(e?.message || 'Falha ao comunicar com o servidor.')
     } finally {
       setLoading(false)
     }
@@ -130,7 +143,19 @@ export default function CustomerList() {
       </div>
 
       {loading ? (
-        <div className="p-8 text-center text-slate-500">Carregando clientes...</div>
+        <div className="p-8 text-center text-slate-500 flex flex-col items-center justify-center gap-3">
+          <RefreshCw className="h-6 w-6 animate-spin text-emerald-600" />
+          <p>Carregando clientes...</p>
+        </div>
+      ) : loadError ? (
+        <div className="bg-white p-8 rounded-xl border border-red-200 text-center space-y-3">
+          <AlertTriangle className="h-8 w-8 text-amber-500 mx-auto" />
+          <p className="text-slate-700 font-medium">Não foi possível carregar os clientes.</p>
+          <p className="text-xs text-slate-500">O servidor pode estar inicializando.</p>
+          <Button onClick={() => loadData()} variant="outline">
+            <RefreshCw className="mr-1.5 h-4 w-4" /> Tentar novamente
+          </Button>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="bg-white p-8 rounded-xl border text-center text-slate-500">
           Nenhum cliente encontrado.

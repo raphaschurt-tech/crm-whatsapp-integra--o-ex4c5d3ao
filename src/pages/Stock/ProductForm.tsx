@@ -24,15 +24,20 @@ export default function ProductForm() {
 
   useEffect(() => {
     if (id) {
-      getProduct(id).then((p) => {
-        setName(p.name)
-        setSku(p.sku)
-        setPrice(p.price)
-        setCost(p.cost || 0)
-        setStockQuantity(p.stock_quantity)
-        setMinStock(p.min_stock || 0)
-        setDescription(p.description || '')
-      })
+      getProduct(id)
+        .then((p) => {
+          setName(p.name)
+          setSku(p.sku)
+          setPrice(p.price)
+          setCost(p.cost || 0)
+          setStockQuantity(p.stock_quantity)
+          setMinStock(p.min_stock || 0)
+          setDescription(p.description || '')
+        })
+        .catch((e) => {
+          console.error(e)
+          toast({ title: 'Erro ao carregar produto', variant: 'destructive' })
+        })
     }
   }, [id])
 

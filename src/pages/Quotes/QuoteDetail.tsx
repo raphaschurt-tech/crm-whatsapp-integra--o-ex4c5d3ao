@@ -52,6 +52,7 @@ export default function QuoteDetail() {
   const [items, setItems] = useState<QuoteItem[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   // Receipt Modal State
@@ -63,6 +64,8 @@ export default function QuoteDetail() {
 
   const loadData = async () => {
     if (!id) return
+    setLoading(true)
+    setLoadError(null)
     try {
       const q = await getQuote(id)
       setQuote(q)
@@ -71,7 +74,9 @@ export default function QuoteDetail() {
       const pList = await getPaymentsForQuote(id)
       setPayments(pList)
       setAmount(q.total.toString())
-    } catch (e) {
+    } catch (e: any) {
+      console.error(e)
+      setLoadError(e?.message || 'Falha ao carregar orçamento.')
       toast({ title: 'Erro ao carregar orçamento', variant: 'destructive' })
     } finally {
       setLoading(false)
@@ -83,6 +88,19 @@ export default function QuoteDetail() {
   }, [id])
 
   if (loading) return <div className="p-8 text-center text-slate-500">Carregando detalhes...</div>
+
+  if (loadError) {
+    return (
+      <div className="p-8 max-w-md mx-auto text-center space-y-3 bg-white border border-red-200 rounded-xl">
+        <p className="text-sm text-slate-700 font-medium">Erro ao carregar orçamento.</p>
+        <p className="text-xs text-slate-500">{loadError}</p>
+        <Button onClick={loadData} variant="outline" size="sm">
+          Tentar novamente
+        </Button>
+      </div>
+    )
+  }
+
   if (!quote) return <div className="p-8 text-center text-slate-500">Orçamento não encontrado.</div>
 
   const paymentLink = `${window.location.origin}/pagamento/${quote.id}?token=${quote.payment_token}`

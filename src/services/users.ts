@@ -22,9 +22,14 @@ export interface UpdateUserData {
 }
 
 export const getUsers = async (): Promise<User[]> => {
-  return pb.collection<User>('users').getFullList({
-    sort: '-created',
-  })
+  try {
+    return await pb.collection<User>('users').getFullList({
+      sort: '-created',
+    })
+  } catch (error) {
+    console.warn('Erro ao carregar usuários:', error)
+    return []
+  }
 }
 
 export const getUserById = async (id: string): Promise<User> => {

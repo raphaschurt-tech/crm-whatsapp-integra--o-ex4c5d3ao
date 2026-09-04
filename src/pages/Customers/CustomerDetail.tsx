@@ -16,26 +16,48 @@ export default function CustomerDetail() {
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const load = async () => {
-      if (!id) return
-      try {
-        const c = await getCustomer(id)
-        setCustomer(c)
-        const qList = await getQuotes()
-        setQuotes(qList.filter((q) => q.customer === id))
-      } catch (e) {
-        console.error(e)
-      } finally {
-        setLoading(false)
-      }
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  const loadData = async () => {
+    if (!id) return
+    setLoading(true)
+    setLoadError(null)
+    try {
+      const c = await getCustomer(id)
+      setCustomer(c)
+      const qList = await getQuotes()
+      setQuotes(qList.filter((q) => q.customer === id))
+    } catch (e: any) {
+      console.error(e)
+      setLoadError(e?.message || 'Falha ao carregar detalhes do cliente.')
+    } finally {
+      setLoading(false)
     }
-    load()
+  }
+
+  useEffect(() => {
+    loadData()
   }, [id])
 
-  if (loading) return <div className="p-8 text-center text-slate-500">Carregando cliente...</div>
-  if (!customer)
+  if (loading) {
+    return <div className="p-8 text-center text-slate-500">Carregando cliente...</div>
+  }
+
+  if (loadError) {
+    return (
+      <div className="p-8 max-w-md mx-auto text-center space-y-3 bg-white border border-red-200 rounded-xl">
+        <p className="text-sm text-slate-700 font-medium">Erro ao carregar cliente.</p>
+        <p className="text-xs text-slate-500">{loadError}</p>
+        <Button onClick={loadData} variant="outline" size="sm">
+          Tentar novamente
+        </Button>
+      </div>
+    )
+  }
+
+  if (!customer) {
     return <div className="p-8 text-center text-slate-500">Cliente não encontrado.</div>
+  }
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">

@@ -26,15 +26,19 @@ export default function ProductDetail() {
   const { isAdmin } = useAuth()
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
 
   const loadData = async () => {
     if (!id) return
+    setLoading(true)
+    setLoadError(null)
     try {
       const p = await getProduct(id)
       setProduct(p)
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
+      setLoadError(e?.message || 'Falha ao carregar produto.')
       toast({ title: 'Erro ao carregar produto', variant: 'destructive' })
     } finally {
       setLoading(false)
@@ -75,6 +79,18 @@ export default function ProductDetail() {
 
   if (loading) {
     return <div className="p-8 text-center text-slate-500">Carregando detalhes do produto...</div>
+  }
+
+  if (loadError) {
+    return (
+      <div className="p-8 max-w-md mx-auto text-center space-y-3 bg-white border border-red-200 rounded-xl">
+        <p className="text-sm text-slate-700 font-medium">Erro ao carregar produto.</p>
+        <p className="text-xs text-slate-500">{loadError}</p>
+        <Button onClick={loadData} variant="outline" size="sm">
+          Tentar novamente
+        </Button>
+      </div>
+    )
   }
 
   if (!product) {

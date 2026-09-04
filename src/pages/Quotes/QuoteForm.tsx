@@ -61,38 +61,45 @@ export default function QuoteForm() {
 
   const isEditing = Boolean(id)
 
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const [cList, pList] = await Promise.all([getCustomers(), getProducts()])
-        setCustomers(cList)
-        setProducts(pList)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
-        if (id) {
-          const q = await getQuote(id)
-          setSelectedCustomer(q.customer)
-          setDiscount(q.discount || 0)
-          setNotes(q.notes || '')
+  const loadData = async () => {
+    setLoading(true)
+    setLoadError(null)
+    try {
+      const [cList, pList] = await Promise.all([getCustomers(), getProducts()])
+      setCustomers(cList)
+      setProducts(pList)
 
-          const qItems = await getQuoteItems(id)
-          setItems(
-            qItems.map((qi) => ({
-              id: qi.id,
-              product: qi.product,
-              quantity: qi.quantity,
-              unit_price: qi.unit_price,
-              total: qi.total,
-            })),
-          )
-        } else {
-          setItems([{ product: '', quantity: 1, unit_price: 0, total: 0 }])
-        }
-      } catch (e) {
-        toast({ title: 'Erro ao carregar dados', variant: 'destructive' })
-      } finally {
-        setLoading(false)
+      if (id) {
+        const q = await getQuote(id)
+        setSelectedCustomer(q.customer)
+        setDiscount(q.discount || 0)
+        setNotes(q.notes || '')
+
+        const qItems = await getQuoteItems(id)
+        setItems(
+          qItems.map((qi) => ({
+            id: qi.id,
+            product: qi.product,
+            quantity: qi.quantity,
+            unit_price: qi.unit_price,
+            total: qi.total,
+          })),
+        )
+      } else {
+        setItems([{ product: '', quantity: 1, unit_price: 0, total: 0 }])
       }
+    } catch (e: any) {
+      console.error(e)
+      setLoadError(e?.message || 'Falha ao carregar dados do formulário.')
+      toast({ title: 'Erro ao carregar dados', variant: 'destructive' })
+    } finally {
+      setLoading(false)
     }
+  }
+
+  useEffect(() => {
     loadData()
   }, [id])
 
@@ -242,6 +249,18 @@ export default function QuoteForm() {
   }
 
   if (loading) return <div className="p-8 text-center text-slate-500">Carregando formulário...</div>
+
+  if (loadError) {
+    return (
+      <div className="p-8 max-w-md mx-auto text-center space-y-3 bg-white border border-red-200 rounded-xl">
+        <p className="text-sm text-slate-700 font-medium">Erro ao carregar dados.</p>
+        <p className="text-xs text-slate-500">{loadError}</p>
+        <Button onClick={loadData} variant="outline" size="sm">
+          Tentar novamente
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">

@@ -45,22 +45,27 @@ export default function CustomerForm() {
 
   useEffect(() => {
     if (id) {
-      getCustomer(id).then((c) => {
-        setName(c.name)
-        setPhone(c.phone)
-        setEmail(c.email || '')
-        setCompany(c.company || '')
-        setNotes(c.notes || '')
-        if (c.type) {
-          setType(c.type)
-        } else if (c.cnpj) {
-          setType('PJ')
-        } else {
-          setType('PF')
-        }
-        setCpf(c.cpf ? maskCPF(c.cpf) : '')
-        setCnpj(c.cnpj ? maskCNPJ(c.cnpj) : '')
-      })
+      getCustomer(id)
+        .then((c) => {
+          setName(c.name)
+          setPhone(c.phone)
+          setEmail(c.email || '')
+          setCompany(c.company || '')
+          setNotes(c.notes || '')
+          if (c.type) {
+            setType(c.type)
+          } else if (c.cnpj) {
+            setType('PJ')
+          } else {
+            setType('PF')
+          }
+          setCpf(c.cpf ? maskCPF(c.cpf) : '')
+          setCnpj(c.cnpj ? maskCNPJ(c.cnpj) : '')
+        })
+        .catch((e) => {
+          console.error(e)
+          toast({ title: 'Erro ao carregar cliente', variant: 'destructive' })
+        })
     }
   }, [id])
 
