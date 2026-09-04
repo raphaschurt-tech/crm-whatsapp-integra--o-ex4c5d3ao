@@ -168,8 +168,13 @@ onRecordAfterCreateSuccess((e) => {
 
   let aiReply = ''
   let aiError = ''
+  let usedProvider = ''
 
-  // Tentativa de chamada OpenAI gpt-4o-mini com timeout de 15 segundos
+  // Tentativa de chamada OpenAI gpt-4o-mini com timeout de 15 segundos.
+  // Se a chave OpenAI existir mas a chamada falhar (ex.: HTTP 429 sem créditos),
+  // recai automaticamente para o gateway nativo Skip AI ($ai.chat) em vez de
+  // abandonar o processamento. Isso mantém o atendimento disponível mesmo quando a
+  // conta OpenAI do cliente fica sem créditos.
   if (openaiKey) {
     try {
       const openAiRes = $http.send({
@@ -201,6 +206,7 @@ onRecordAfterCreateSuccess((e) => {
           parsed.choices[0].message.content
         ) {
           aiReply = parsed.choices[0].message.content.trim()
+          usedProvider = 'openai'
         } else {
           aiError = 'Resposta da OpenAI sem choices válidas'
         }
@@ -216,6 +222,43 @@ onRecordAfterCreateSuccess((e) => {
       }
     } catch (openAiEx) {
       aiError = openAiEx.message || String(openAiEx)
+    }
+
+    // Fallback: se a chamada OpenAI falhou (429 sem créditos, timeout, rede, etc.),
+    // tenta o gateway nativo do Skip antes de desistir.
+    if (!aiReply && aiError) {
+      console.log(
+        '[AI-FALLBACK-TO-SKIP-GATEWAY]',
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          messageId: messageId,
+          reason: aiError,
+        }),
+      )
+      try {
+        const chatRes = $ai.chat({
+          model: 'fast',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: incomingText },
+          ],
+        })
+        if (
+          chatRes &&
+          chatRes.choices &&
+          chatRes.choices.length > 0 &&
+          chatRes.choices[0].message &&
+          chatRes.choices[0].message.content
+        ) {
+          aiReply = chatRes.choices[0].message.content.trim()
+          usedProvider = 'skip_gateway'
+          aiError = ''
+        } else {
+          aiError = 'Skip AI gateway retornou resposta vazia'
+        }
+      } catch (aiEx) {
+        aiError = aiEx.message || String(aiEx)
+      }
     }
   } else {
     // Caso openai_api_key não esteja preenchida, utiliza o gateway nativo Skip AI (alias 'fast' mapeado para gpt-4o-mini)
@@ -235,6 +278,7 @@ onRecordAfterCreateSuccess((e) => {
         chatRes.choices[0].message.content
       ) {
         aiReply = chatRes.choices[0].message.content.trim()
+        usedProvider = 'skip_gateway'
       } else {
         aiError = 'Skip AI gateway retornou resposta vazia'
       }
