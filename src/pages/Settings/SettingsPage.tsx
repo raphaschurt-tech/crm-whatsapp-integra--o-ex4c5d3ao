@@ -42,6 +42,7 @@ export default function SettingsPage() {
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [togglingAi, setTogglingAi] = useState(false)
 
   // Estado do Teste de Conexão
   const [testingConnection, setTestingConnection] = useState(false)
@@ -111,6 +112,35 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
       toast({ title: 'Erro ao salvar configurações', variant: 'destructive' })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleToggleAi = async (newValue: boolean) => {
+    // Atualiza imediatamente o estado da UI de forma otimista
+    const prevValue = aiEnabled
+    setAiEnabled(newValue)
+    setTogglingAi(true)
+
+    try {
+      // Atualiza apenas o campo ai_enabled diretamente no registro existente
+      await saveSettings({ ai_enabled: newValue })
+      toast({
+        title: newValue ? 'Robô de atendimento ativado' : 'Robô de atendimento desativado',
+        description: newValue
+          ? 'A IA responderá aos clientes autorizados via WhatsApp.'
+          : 'O atendimento automatizado foi pausado.',
+      })
+    } catch (err: unknown) {
+      // Em caso de falha, reverte para o valor anterior
+      setAiEnabled(prevValue)
+      const errorMsg = err instanceof Error ? err.message : 'Falha ao conectar com o servidor.'
+      toast({
+        title: 'Erro ao alterar estado do robô',
+        description: errorMsg,
+        variant: 'destructive',
+      })
+    } finally {
+      setTogglingAi(false)
     }
   }
 
@@ -300,11 +330,17 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
               <div className="flex items-center gap-3 bg-white px-3.5 py-2 rounded-lg border border-slate-200 shadow-xs">
                 <Label
                   htmlFor="ai-toggle"
-                  className="text-sm font-semibold cursor-pointer text-slate-700"
+                  className="text-sm font-semibold cursor-pointer text-slate-700 flex items-center gap-1.5"
                 >
+                  {togglingAi && <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />}
                   {aiEnabled ? 'Robô Ativo' : 'Robô Desativado'}
                 </Label>
-                <Switch id="ai-toggle" checked={aiEnabled} onCheckedChange={setAiEnabled} />
+                <Switch
+                  id="ai-toggle"
+                  checked={aiEnabled}
+                  disabled={togglingAi || loading}
+                  onCheckedChange={handleToggleAi}
+                />
               </div>
             </div>
           </CardHeader>

@@ -1,14 +1,10 @@
 migrate(
   (app) => {
-    const settings = app.findRecordById('settings', 'ks86suaa4vn5xd4')
-    settings.set('ai_enabled', true)
-    app.save(settings)
-    console.log('[MIGRATION-0008] ai_enabled ativado para a configuração principal')
+    // No-op: não sobrescrever ai_enabled no boot/deploy.
+    // O controle deve permanecer exclusivamente com o usuário via painel de configurações.
+    console.log('[MIGRATION-0008] Mantendo valor de ai_enabled definido pelo usuário no banco')
   },
   (app) => {
-    const settings = app.findRecordById('settings', 'ks86suaa4vn5xd4')
-    settings.set('ai_enabled', false)
-    app.save(settings)
-    console.log('[MIGRATION-0008-DOWN] ai_enabled restaurado para false')
+    console.log('[MIGRATION-0008-DOWN] no-op')
   },
 )
