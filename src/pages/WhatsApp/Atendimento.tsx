@@ -615,7 +615,6 @@ export default function WhatsAppAtendimento() {
                   variant="outline"
                   onClick={() => openWhatsApp(activeCustomer.phone, 'Olá!')}
                   className="hidden md:flex text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-                  title="Abrir WhatsApp oficial"
                 >
                   <Phone className="w-3.5 h-3.5 mr-1" />
                   WhatsApp
