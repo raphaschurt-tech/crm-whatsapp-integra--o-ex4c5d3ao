@@ -21,6 +21,8 @@ import CustomerDetail from '@/pages/Customers/CustomerDetail'
 import ProductList from '@/pages/Stock/ProductList'
 import ProductForm from '@/pages/Stock/ProductForm'
 import ProductDetail from '@/pages/Stock/ProductDetail'
+import FamilyList from '@/pages/Stock/FamilyList'
+import ProductionOrderList from '@/pages/Stock/ProductionOrderList'
 import UserList from '@/pages/Users/UserList'
 import SettingsPage from '@/pages/Settings/SettingsPage'
 import PaymentPage from '@/pages/Payment/PaymentPage'
@@ -66,6 +68,9 @@ const App = () => (
               <Route path="/estoque/novo" element={<ProductForm />} />
               <Route path="/estoque/:id" element={<ProductDetail />} />
               <Route path="/estoque/:id/editar" element={<ProductForm />} />
+              {/* PCP / Famílias e Ordens de Produção */}
+              <Route path="/familias" element={<FamilyList />} />
+              <Route path="/ordens-producao" element={<ProductionOrderList />} />
               {/* Configurações (Admin) */}
               <Route element={<ProtectedRoute adminOnly />}>
                 <Route path="/configuracoes" element={<SettingsPage />} />

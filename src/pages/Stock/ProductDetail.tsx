@@ -116,8 +116,18 @@ export default function ProductDetail() {
               ) : (
                 <Badge className="bg-emerald-500 text-white">Disponível</Badge>
               )}
+              {product.product_type === 'produzido' ? (
+                <Badge className="bg-purple-100 text-purple-700 border-purple-200">Produzido</Badge>
+              ) : (
+                <Badge variant="outline" className="text-slate-600 bg-slate-50">
+                  Comprado
+                </Badge>
+              )}
             </div>
-            <p className="text-xs text-slate-400 font-mono">SKU: {product.sku}</p>
+            <p className="text-xs text-slate-400 font-mono">
+              SKU: {product.sku}{' '}
+              {product.supplier ? `• Fornecedor/Origem: ${product.supplier}` : ''}
+            </p>
           </div>
         </div>
 

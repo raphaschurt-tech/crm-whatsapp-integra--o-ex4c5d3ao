@@ -23,6 +23,8 @@ export interface Customer extends RecordModel {
   pipeline_status?: string
 }
 
+export type ProductType = 'comprado' | 'produzido'
+
 export interface Product extends RecordModel {
   name: string
   sku: string
@@ -32,6 +34,59 @@ export interface Product extends RecordModel {
   stock_quantity: number
   min_stock?: number
   external_id?: string
+  product_type?: ProductType
+  supplier?: string
+}
+
+export interface ItemFamily extends RecordModel {
+  name: string
+  description?: string
+  products?: string[]
+  expand?: {
+    products?: Product[]
+  }
+}
+
+export interface ProductComposition extends RecordModel {
+  product: string
+  family: string
+  allowed_products?: string[]
+  required?: boolean
+  expand?: {
+    product?: Product
+    family?: ItemFamily
+    allowed_products?: Product[]
+  }
+}
+
+export type ProductionOrderStatus = 'aberta' | 'em_producao' | 'concluida' | 'cancelada'
+
+export interface SelectedProductionItem {
+  family_id: string
+  family_name: string
+  product_id: string
+  product_name: string
+  sku: string
+  unit_cost: number
+  quantity_used: number
+  total_cost: number
+  is_produced?: boolean
+  stock_available?: number
+}
+
+export interface ProductionOrder extends RecordModel {
+  code: string
+  product: string
+  quantity: number
+  status: ProductionOrderStatus
+  total_cost?: number
+  unit_cost?: number
+  selected_items?: SelectedProductionItem[]
+  notes?: string
+  completed_at?: string
+  expand?: {
+    product?: Product
+  }
 }
 
 export type QuoteStatus = 'rascunho' | 'enviado' | 'aprovado' | 'rejeitado' | 'pago'

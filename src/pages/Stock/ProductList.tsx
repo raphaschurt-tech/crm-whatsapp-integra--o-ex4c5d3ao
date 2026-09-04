@@ -185,9 +185,10 @@ export default function ProductList() {
               <thead>
                 <tr className="bg-slate-50 text-xs uppercase font-semibold text-slate-500 border-b">
                   <th className="p-4">Produto / SKU</th>
+                  <th className="p-4">Tipo</th>
                   <th className="p-4">Preço</th>
+                  <th className="p-4">Custo</th>
                   <th className="p-4">Estoque</th>
-                  <th className="p-4">Mínimo</th>
                   <th className="p-4">Status</th>
                   <th className="p-4 text-right">Ações</th>
                 </tr>
@@ -198,10 +199,26 @@ export default function ProductList() {
                     <td className="p-4">
                       <p className="font-bold text-slate-900">{p.name}</p>
                       <p className="text-xs text-slate-400">SKU: {p.sku}</p>
+                      {p.supplier && (
+                        <p className="text-[11px] text-slate-500 truncate max-w-xs">{p.supplier}</p>
+                      )}
+                    </td>
+                    <td className="p-4">
+                      {p.product_type === 'produzido' ? (
+                        <Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100 border-purple-200">
+                          Produzido
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-slate-600 bg-slate-50">
+                          Comprado
+                        </Badge>
+                      )}
                     </td>
                     <td className="p-4 font-semibold text-slate-900">{formatCurrency(p.price)}</td>
+                    <td className="p-4 text-xs font-semibold text-slate-600">
+                      {p.cost ? formatCurrency(p.cost) : '—'}
+                    </td>
                     <td className="p-4 font-bold text-slate-800">{p.stock_quantity} un.</td>
-                    <td className="p-4 text-slate-500">{p.min_stock || 0} un.</td>
                     <td className="p-4">{getStockBadge(p.stock_quantity, p.min_stock)}</td>
                     <td className="p-4 text-right space-x-1">
                       <Button
