@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-04T23:19:07.154Z",
+  "generatedAt": "2026-09-04T23:35:37.378Z",
   "collections": [
     {
       "name": "users",
@@ -232,6 +232,24 @@
         {
           "name": "supplier",
           "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_purchased",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_produced",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_component",
+          "type": "bool",
           "required": false,
           "system": false
         }

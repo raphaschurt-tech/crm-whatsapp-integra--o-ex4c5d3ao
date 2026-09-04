@@ -63,7 +63,11 @@ const App = () => (
               <Route element={<ProtectedRoute adminOnly />}>
                 <Route path="/usuarios" element={<UserList />} />
               </Route>
-              {/* Estoque / Produtos */}
+              {/* Produtos / Estoque (Suporta tanto /produtos quanto /estoque para compatibilidade) */}
+              <Route path="/produtos" element={<ProductList />} />
+              <Route path="/produtos/novo" element={<ProductForm />} />
+              <Route path="/produtos/:id" element={<ProductDetail />} />
+              <Route path="/produtos/:id/editar" element={<ProductForm />} />
               <Route path="/estoque" element={<ProductList />} />
               <Route path="/estoque/novo" element={<ProductForm />} />
               <Route path="/estoque/:id" element={<ProductDetail />} />

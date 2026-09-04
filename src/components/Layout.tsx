@@ -35,7 +35,7 @@ export default function Layout() {
     { label: 'Orçamentos', path: '/orcamentos', icon: FileText },
     { label: 'Clientes', path: '/clientes', icon: Users },
     ...(isAdmin ? [{ label: 'Usuários', path: '/usuarios', icon: Users }] : []),
-    { label: 'Estoque', path: '/estoque', icon: Package },
+    { label: 'Produtos', path: '/produtos', icon: Package },
     { label: 'Famílias', path: '/familias', icon: Layers },
     { label: 'Ordens de Produção', path: '/ordens-producao', icon: Factory },
     ...(isAdmin ? [{ label: 'Configurações', path: '/configuracoes', icon: Settings }] : []),
@@ -66,9 +66,11 @@ export default function Layout() {
     if (path.startsWith('/clientes/')) return 'Detalhes do Cliente'
     if (path.startsWith('/clientes')) return 'Clientes'
     if (path.startsWith('/usuarios')) return 'Usuários'
-    if (path.startsWith('/estoque/novo')) return 'Novo Produto'
-    if (path.startsWith('/estoque') && path.includes('/editar')) return 'Editar Produto'
-    if (path.startsWith('/estoque')) return 'Estoque'
+    if (path.startsWith('/produtos/novo') || path.startsWith('/estoque/novo')) return 'Novo Produto'
+    if ((path.startsWith('/produtos') || path.startsWith('/estoque')) && path.includes('/editar'))
+      return 'Editar Produto'
+    if (path.startsWith('/produtos/') || path.startsWith('/estoque/')) return 'Detalhes do Produto'
+    if (path.startsWith('/produtos') || path.startsWith('/estoque')) return 'Produtos'
     if (path.startsWith('/familias')) return 'Famílias de Insumos'
     if (path.startsWith('/ordens-producao')) return 'Ordens de Produção (PCP)'
     if (path.startsWith('/configuracoes')) return 'Configurações'

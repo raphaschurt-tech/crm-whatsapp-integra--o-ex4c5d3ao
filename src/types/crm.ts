@@ -36,6 +36,9 @@ export interface Product extends RecordModel {
   external_id?: string
   product_type?: ProductType
   supplier?: string
+  is_purchased?: boolean
+  is_produced?: boolean
+  is_component?: boolean
 }
 
 export interface ItemFamily extends RecordModel {

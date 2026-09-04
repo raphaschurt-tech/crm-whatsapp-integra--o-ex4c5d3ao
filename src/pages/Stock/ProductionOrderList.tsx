@@ -98,7 +98,10 @@ export default function ProductionOrderList() {
       const [orderList, prods] = await Promise.all([getProductionOrders(), getProducts()])
       setOrders(orderList)
       setAllProducts(prods)
-      setProducedProducts(prods.filter((p) => p.product_type === 'produzido'))
+      // Regra: "ao criar uma nova OP, o usuário seleciona um produto com flag 'Produzido'"
+      setProducedProducts(
+        prods.filter((p) => Boolean(p.is_produced ?? p.product_type === 'produzido')),
+      )
     } catch (err) {
       console.error(err)
       toast({ title: 'Erro ao carregar Ordens de Produção', variant: 'destructive' })
@@ -134,7 +137,9 @@ export default function ProductionOrderList() {
         const fam = families.find((f) => f.id === comp.family)
         const familyName = fam ? fam.name : 'Família de Insumos'
 
-        // IDs dos itens permitidos
+        // IDs dos itens permitidos:
+        // Regra do usuário: "Para cada família, o operador vê apenas os insumos permitidos para aquele produto,
+        // com estoque disponível e custo. Apenas produtos com a flag 'Composto (insumo)' aparecem como opções."
         const allowedIds = Array.isArray(comp.allowed_products) ? comp.allowed_products : []
         const allowedItems: AllowedItemInfo[] = []
 
@@ -148,7 +153,8 @@ export default function ProductionOrderList() {
             }
           }
 
-          if (itemProd) {
+          // Insumo deve existir e ter a flag is_component marcada
+          if (itemProd && Boolean(itemProd.is_component)) {
             // Resolver custo real (se for produzido, busca custo da última OP que o produziu)
             const { unitCost, isProduced } = await getResolvedItemUnitCost(itemProd)
             allowedItems.push({
@@ -541,24 +547,28 @@ export default function ProductionOrderList() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
               <div className="sm:col-span-2 space-y-1.5">
                 <Label className="text-xs font-bold text-slate-700">
-                  Produto Fabricado (Tipo: Produzido) *
+                  Produto Fabricado (Flag: Produzido) *
                 </Label>
                 <Select value={selectedProductId} onValueChange={handleProductSelectionChange}>
                   <SelectTrigger className="bg-white">
                     <SelectValue placeholder="Selecione o produto a produzir..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {producedProducts.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name} ({p.sku}) — Estoque atual: {p.stock_quantity} un.
-                      </SelectItem>
-                    ))}
+                    {producedProducts.map((p) => {
+                      const costDisplay =
+                        p.cost && p.cost > 0 ? ` • Custo base: ${formatCurrency(p.cost)}` : ''
+                      return (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name} ({p.sku}) — Estoque atual: {p.stock_quantity} un.{costDisplay}
+                        </SelectItem>
+                      )
+                    })}
                   </SelectContent>
                 </Select>
                 {producedProducts.length === 0 && (
                   <p className="text-[11px] text-amber-600">
-                    Nenhum produto com tipo &quot;Produzido&quot; encontrado. Configure um no
-                    Estoque.
+                    Nenhum produto com a flag &quot;Produzido&quot; encontrado. Marque a flag em
+                    Cadastro de Produtos.
                   </p>
                 )}
               </div>

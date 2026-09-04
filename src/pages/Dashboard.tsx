@@ -172,7 +172,7 @@ export default function Dashboard() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => navigate('/estoque')}
+            onClick={() => navigate('/produtos')}
             className="border-slate-300 text-slate-700 hover:bg-slate-50"
           >
             <Package className="mr-1.5 h-4 w-4" /> Consultar Estoque
@@ -337,7 +337,7 @@ export default function Dashboard() {
       <Card className="border-slate-200">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base font-bold text-slate-800">Estoque Crítico</CardTitle>
-          <Link to="/estoque" className="text-xs text-emerald-600 font-semibold hover:underline">
+          <Link to="/produtos" className="text-xs text-emerald-600 font-semibold hover:underline">
             Gerenciar Estoque
           </Link>
         </CardHeader>

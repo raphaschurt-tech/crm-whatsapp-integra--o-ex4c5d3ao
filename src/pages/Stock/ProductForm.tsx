@@ -3,23 +3,16 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { getProduct, createProduct, updateProduct, getProducts } from '@/services/products'
 import { getFamilies } from '@/services/families'
 import { getCompositionsByProduct, saveProductCompositions } from '@/services/compositions'
-import { ItemFamily, Product, ProductType } from '@/types/crm'
+import { ItemFamily, Product } from '@/types/crm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { toast } from '@/hooks/use-toast'
-import { Layers, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Layers, AlertCircle, ShoppingCart, Factory, Boxes } from 'lucide-react'
 
 interface FamilyCompositionState {
   familyId: string
@@ -41,11 +34,15 @@ export default function ProductForm() {
   const [stockQuantity, setStockQuantity] = useState<number>(0)
   const [minStock, setMinStock] = useState<number>(5)
   const [description, setDescription] = useState('')
-  const [productType, setProductType] = useState<ProductType>('comprado')
   const [supplier, setSupplier] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Composição por Famílias (para produtos do tipo 'produzido')
+  // Três flags independentes de comportamento do produto
+  const [isPurchased, setIsPurchased] = useState(true)
+  const [isProduced, setIsProduced] = useState(false)
+  const [isComponent, setIsComponent] = useState(false)
+
+  // Composição por Famílias (para produtos quando isProduced está marcada)
   const [allFamilies, setAllFamilies] = useState<ItemFamily[]>([])
   const [allStockProducts, setAllStockProducts] = useState<Product[]>([])
   const [familyCompositions, setFamilyCompositions] = useState<FamilyCompositionState[]>([])
@@ -78,8 +75,18 @@ export default function ProductForm() {
           setStockQuantity(p.stock_quantity)
           setMinStock(p.min_stock || 0)
           setDescription(p.description || '')
-          setProductType(p.product_type || 'comprado')
           setSupplier(p.supplier || '')
+
+          // Inicializar flags booleanas (compatibilidade com registros antigos)
+          const prodFlag =
+            p.is_produced !== undefined ? Boolean(p.is_produced) : p.product_type === 'produzido'
+          const purFlag =
+            p.is_purchased !== undefined ? Boolean(p.is_purchased) : p.product_type !== 'produzido'
+          const compFlag = p.is_component !== undefined ? Boolean(p.is_component) : false
+
+          setIsProduced(prodFlag)
+          setIsPurchased(purFlag)
+          setIsComponent(compFlag)
         })
         .catch((e) => {
           console.error(e)
@@ -89,6 +96,7 @@ export default function ProductForm() {
   }, [id])
 
   // Quando allFamilies ou id mudar, estruturar o estado de composições
+  // Regra do usuário: "Apenas produtos com a flag 'Composto (insumo)' aparecem como opções"
   useEffect(() => {
     if (allFamilies.length === 0) return
 
@@ -100,14 +108,29 @@ export default function ProductForm() {
         const initialStates: FamilyCompositionState[] = allFamilies.map((fam) => {
           const comp = existingComps.find((c) => c.family === fam.id)
           const familyProductIds = Array.isArray(fam.products) ? fam.products : []
-          const availableProducts = allStockProducts.filter((p) => familyProductIds.includes(p.id))
+
+          // Filtra somente produtos da família que tenham a flag is_component marcada
+          // e que não sejam o próprio produto que está sendo editado (evita autorreferência circular)
+          const availableProducts = allStockProducts.filter((p) => {
+            const matchesFamily = familyProductIds.includes(p.id)
+            const isComp = Boolean(p.is_component)
+            const notSelf = p.id !== id
+            return matchesFamily && isComp && notSelf
+          })
+
+          const allowedFromComp = comp?.allowed_products || []
+          // Se existia comp salva com IDs, mantemos os válidos que são insumos disponíveis
+          const availableIds = availableProducts.map((p) => p.id)
+          const allowedProductIds = comp
+            ? allowedFromComp.filter((pId) => availableIds.includes(pId))
+            : availableIds
 
           return {
             familyId: fam.id,
             familyName: fam.name,
             selected: Boolean(comp),
             required: comp ? (comp.required ?? true) : true,
-            allowedProductIds: comp?.allowed_products || familyProductIds,
+            allowedProductIds,
             availableProducts,
           }
         })
@@ -166,6 +189,15 @@ export default function ProductForm() {
       return
     }
 
+    if (!isPurchased && !isProduced && !isComponent) {
+      toast({
+        title: 'Selecione ao menos uma natureza',
+        description: 'Marque pelo menos uma das opções: Comprado, Produzido ou Composto (insumo).',
+        variant: 'destructive',
+      })
+      return
+    }
+
     setLoading(true)
     try {
       let savedProductId = id
@@ -178,8 +210,12 @@ export default function ProductForm() {
         stock_quantity: stockQuantity,
         min_stock: minStock,
         description,
-        product_type: productType,
         supplier,
+        is_purchased: isPurchased,
+        is_produced: isProduced,
+        is_component: isComponent,
+        // Mantém product_type sincronizado para compatibilidade
+        product_type: (isProduced ? 'produzido' : 'comprado') as 'comprado' | 'produzido',
       }
 
       if (isEditing && id) {
@@ -190,7 +226,7 @@ export default function ProductForm() {
       }
 
       // Se for produzido, salvar a configuração de composição por famílias
-      if (productType === 'produzido' && savedProductId) {
+      if (isProduced && savedProductId) {
         const selectedToSave = familyCompositions
           .filter((c) => c.selected)
           .map((c) => ({
@@ -203,7 +239,7 @@ export default function ProductForm() {
       }
 
       toast({ title: 'Produto salvo com sucesso!' })
-      navigate('/estoque')
+      navigate('/produtos')
     } catch (_) {
       toast({
         title: 'Erro ao salvar produto. Verifique se o SKU é único.',
@@ -255,37 +291,108 @@ export default function ProductForm() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>Tipo de Produto *</Label>
-              <Select value={productType} onValueChange={(val: ProductType) => setProductType(val)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione o tipo" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="comprado">
-                    <span className="font-semibold text-slate-800">Comprado</span> — Matéria-prima /
-                    insumo de fornecedor
-                  </SelectItem>
-                  <SelectItem value="produzido">
-                    <span className="font-semibold text-emerald-700">Produzido</span> — Fabricado
-                    internamente via OP
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          {/* Três Flags Independentes de Natureza do Produto */}
+          <div className="space-y-2 pt-1">
+            <Label className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+              Naturezas do Produto (Comportamento no Sistema) *
+            </Label>
+            <p className="text-xs text-slate-500">
+              Marque uma, duas ou as três opções simultaneamente para definir as permissões deste
+              item:
+            </p>
 
-            <div className="space-y-1.5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+              {/* Flag 1: Comprado */}
+              <label
+                className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  isPurchased
+                    ? 'border-emerald-500 bg-emerald-50/50 shadow-xs'
+                    : 'border-slate-200 bg-white hover:bg-slate-50'
+                }`}
+              >
+                <Checkbox
+                  checked={isPurchased}
+                  onCheckedChange={(checked) => setIsPurchased(Boolean(checked))}
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-sm text-slate-900">
+                    <ShoppingCart className="h-4 w-4 text-emerald-600" />
+                    <span>Comprado</span>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-snug">
+                    Pode gerar ordem de compra de fornecedores. Se desmarcado, não aparece em telas
+                    de compra.
+                  </p>
+                </div>
+              </label>
+
+              {/* Flag 2: Produzido */}
+              <label
+                className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  isProduced
+                    ? 'border-purple-500 bg-purple-50/50 shadow-xs'
+                    : 'border-slate-200 bg-white hover:bg-slate-50'
+                }`}
+              >
+                <Checkbox
+                  checked={isProduced}
+                  onCheckedChange={(checked) => setIsProduced(Boolean(checked))}
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-sm text-slate-900">
+                    <Factory className="h-4 w-4 text-purple-600" />
+                    <span>Produzido</span>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-snug">
+                    Fabricado internamente na empresa com composição por famílias. Gera Ordens de
+                    Produção (OP).
+                  </p>
+                </div>
+              </label>
+
+              {/* Flag 3: Composto (insumo) */}
+              <label
+                className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  isComponent
+                    ? 'border-blue-500 bg-blue-50/50 shadow-xs'
+                    : 'border-slate-200 bg-white hover:bg-slate-50'
+                }`}
+              >
+                <Checkbox
+                  checked={isComponent}
+                  onCheckedChange={(checked) => setIsComponent(Boolean(checked))}
+                  className="mt-0.5"
+                />
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-sm text-slate-900">
+                    <Boxes className="h-4 w-4 text-blue-600" />
+                    <span>Composto (insumo)</span>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-snug">
+                    Pode ser insumo na composição de outros produtos. Aparece nas opções de famílias
+                    de peças.
+                  </p>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+            <div className="space-y-1.5 md:col-span-2">
               <Label>
-                {productType === 'produzido' ? 'Linha / Responsável' : 'Fornecedor Principal'}
+                {isProduced && !isPurchased
+                  ? 'Linha / Responsável pela Fabricação'
+                  : 'Fornecedor Principal / Origem'}
               </Label>
               <Input
                 value={supplier}
                 onChange={(e) => setSupplier(e.target.value)}
                 placeholder={
-                  productType === 'produzido'
-                    ? 'Ex: PCP / Linha Montagem'
-                    : 'Ex: Borrachas Brasil Ltda'
+                  isProduced && !isPurchased
+                    ? 'Ex: PCP / Linha de Montagem Interna'
+                    : 'Ex: Borrachas Brasil Ltda, Metalúrgica Central...'
                 }
               />
             </div>
@@ -305,9 +412,7 @@ export default function ProductForm() {
 
             <div className="space-y-1.5">
               <Label>
-                {productType === 'produzido'
-                  ? 'Custo Real / Estimado da Produção (R$)'
-                  : 'Custo de Compra (R$)'}
+                {isProduced ? 'Custo Real da Produção (R$)' : 'Custo de Aquisição (R$)'}
               </Label>
               <Input
                 type="number"
@@ -316,9 +421,9 @@ export default function ProductForm() {
                 onChange={(e) => setCost(parseFloat(e.target.value) || 0)}
                 placeholder="0.00"
               />
-              {productType === 'produzido' && (
+              {isProduced && (
                 <p className="text-[11px] text-slate-400">
-                  Calculado e atualizado automaticamente ao concluir Ordens de Produção.
+                  Calculado pela soma dos insumos reais usados e atualizado ao concluir OPs.
                 </p>
               )}
             </div>
@@ -357,7 +462,7 @@ export default function ProductForm() {
         </div>
 
         {/* Seção Condicional: Composição por Famílias (quando for Produzido) */}
-        {productType === 'produzido' && (
+        {isProduced && (
           <Card className="border-emerald-200 bg-white shadow-sm overflow-hidden">
             <CardHeader className="bg-emerald-50/60 border-b border-emerald-100">
               <div className="flex items-center gap-2">
@@ -470,7 +575,7 @@ export default function ProductForm() {
         )}
 
         <div className="flex justify-end gap-3 pt-2">
-          <Button type="button" variant="outline" onClick={() => navigate('/estoque')}>
+          <Button type="button" variant="outline" onClick={() => navigate('/produtos')}>
             Cancelar
           </Button>
           <Button

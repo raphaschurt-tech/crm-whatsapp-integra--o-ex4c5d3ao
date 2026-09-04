@@ -33,7 +33,10 @@ export const getProductionOrder = async (id: string): Promise<ProductionOrder> =
 export const getResolvedItemUnitCost = async (
   itemProduct: Product,
 ): Promise<{ unitCost: number; isProduced: boolean }> => {
-  if (itemProduct.product_type === 'produzido') {
+  const isItemProduced = Boolean(
+    itemProduct.is_produced ?? itemProduct.product_type === 'produzido',
+  )
+  if (isItemProduced) {
     try {
       // Buscar última OP concluída para este produto
       const lastCompletedOrders = await pb
@@ -59,10 +62,10 @@ export const getResolvedItemUnitCost = async (
     }
   }
 
-  // Se for comprado ou não tiver OP concluída anterior, usa o cost padrão cadastrado
+  // Se não for produzido ou não tiver OP concluída anterior, usa o cost padrão cadastrado
   return {
     unitCost: Number((itemProduct.cost || 0).toFixed(2)),
-    isProduced: itemProduct.product_type === 'produzido',
+    isProduced: isItemProduced,
   }
 }
 

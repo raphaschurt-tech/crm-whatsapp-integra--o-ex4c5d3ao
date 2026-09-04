@@ -129,7 +129,11 @@ export default function FamilyList() {
       (f.description && f.description.toLowerCase().includes(search.toLowerCase())),
   )
 
-  const filteredModalProducts = products.filter(
+  // Regra de negócio: na seleção de itens da família, listar APENAS produtos
+  // com a flag "Composto (insumo)" marcada, com quantidade disponível, fornecedor e custo.
+  const componentProducts = products.filter((p) => Boolean(p.is_component))
+
+  const filteredModalProducts = componentProducts.filter(
     (p) =>
       p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
       p.sku.toLowerCase().includes(productSearch.toLowerCase()) ||
@@ -244,9 +248,14 @@ export default function FamilyList() {
                                   <div className="flex items-center gap-2">
                                     <Package className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                                     <span className="font-semibold text-slate-900">{p.name}</span>
-                                    {p.product_type === 'produzido' && (
+                                    {Boolean(p.is_produced ?? p.product_type === 'produzido') && (
                                       <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px] px-1 py-0">
                                         Produzido
+                                      </Badge>
+                                    )}
+                                    {Boolean(p.is_component) && (
+                                      <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px] px-1 py-0">
+                                        Insumo
                                       </Badge>
                                     )}
                                   </div>
@@ -320,13 +329,13 @@ export default function FamilyList() {
             <div className="space-y-2 pt-2 border-t">
               <div className="flex items-center justify-between">
                 <Label className="text-xs font-bold text-slate-800 uppercase tracking-wide">
-                  Vincular Produtos do Estoque a esta Família ({selectedProductIds.length}{' '}
-                  selecionados)
+                  Vincular Insumos a esta Família ({selectedProductIds.length} selecionados)
                 </Label>
               </div>
               <p className="text-xs text-slate-500">
-                Cada item selecionado faz parte desta família com sua quantidade em estoque,
-                fornecedor e custo. Um produto pode estar em várias famílias.
+                Apenas produtos cadastrados com a flag{' '}
+                <strong>&quot;Composto (insumo)&quot;</strong> são listados abaixo como opções. Cada
+                item exibe quantidade disponível, fornecedor e custo real.
               </p>
 
               <div className="relative">
@@ -340,7 +349,12 @@ export default function FamilyList() {
               </div>
 
               <div className="max-h-60 overflow-y-auto border rounded-lg divide-y divide-slate-100 bg-slate-50/40">
-                {filteredModalProducts.length === 0 ? (
+                {componentProducts.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-amber-700 bg-amber-50">
+                    Nenhum produto possui a flag &quot;Composto (insumo)&quot; marcada. Marque esta
+                    flag no Cadastro de Produtos para que ele apareça aqui.
+                  </div>
+                ) : filteredModalProducts.length === 0 ? (
                   <p className="p-4 text-center text-xs text-slate-400">
                     Nenhum produto cadastrado coincide com a busca.
                   </p>

@@ -9,12 +9,14 @@ import {
   DollarSign,
   Layers,
   AlertTriangle,
+  ShoppingCart,
+  Factory,
+  Boxes,
 } from 'lucide-react'
 import { getProduct, deleteProduct } from '@/services/products'
 import { lookupStock } from '@/services/stock'
 import { Product } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
-import { useAuth } from '@/hooks/use-auth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -23,7 +25,6 @@ import { toast } from '@/hooks/use-toast'
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { isAdmin } = useAuth()
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -70,8 +71,8 @@ export default function ProductDetail() {
     if (!product || !confirm(`Deseja realmente excluir ${product.name}?`)) return
     try {
       await deleteProduct(product.id)
-      toast({ title: 'Produto excluído' })
-      navigate('/estoque')
+      toast({ title: 'Produto excluído com sucesso!' })
+      navigate('/produtos')
     } catch (_) {
       toast({ title: 'Erro ao excluir produto', variant: 'destructive' })
     }
@@ -98,16 +99,25 @@ export default function ProductDetail() {
   }
 
   const isLowStock = product.stock_quantity <= (product.min_stock || 0)
+  const isPur =
+    product.is_purchased !== undefined
+      ? Boolean(product.is_purchased)
+      : product.product_type !== 'produzido'
+  const isProd =
+    product.is_produced !== undefined
+      ? Boolean(product.is_produced)
+      : product.product_type === 'produzido'
+  const isComp = Boolean(product.is_component)
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/estoque')}>
+          <Button variant="ghost" size="icon" onClick={() => navigate('/produtos')}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold text-slate-900">{product.name}</h1>
               {isLowStock ? (
                 <Badge variant="destructive" className="flex items-center gap-1">
@@ -116,18 +126,39 @@ export default function ProductDetail() {
               ) : (
                 <Badge className="bg-emerald-500 text-white">Disponível</Badge>
               )}
-              {product.product_type === 'produzido' ? (
-                <Badge className="bg-purple-100 text-purple-700 border-purple-200">Produzido</Badge>
-              ) : (
-                <Badge variant="outline" className="text-slate-600 bg-slate-50">
-                  Comprado
-                </Badge>
-              )}
             </div>
-            <p className="text-xs text-slate-400 font-mono">
-              SKU: {product.sku}{' '}
-              {product.supplier ? `• Fornecedor/Origem: ${product.supplier}` : ''}
-            </p>
+            <div className="flex items-center gap-2 flex-wrap mt-1">
+              <p className="text-xs text-slate-400 font-mono">
+                SKU: {product.sku}{' '}
+                {product.supplier ? `• Fornecedor/Origem: ${product.supplier}` : ''}
+              </p>
+              <div className="flex items-center gap-1.5">
+                {isPur && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] bg-emerald-50 text-emerald-800 border-emerald-200 flex items-center gap-1"
+                  >
+                    <ShoppingCart className="h-3 w-3" /> Comprado
+                  </Badge>
+                )}
+                {isProd && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] bg-purple-50 text-purple-800 border-purple-200 flex items-center gap-1"
+                  >
+                    <Factory className="h-3 w-3" /> Produzido
+                  </Badge>
+                )}
+                {isComp && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] bg-blue-50 text-blue-800 border-blue-200 flex items-center gap-1"
+                  >
+                    <Boxes className="h-3 w-3" /> Insumo
+                  </Badge>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -141,19 +172,18 @@ export default function ProductDetail() {
             <RefreshCw className={`mr-1.5 h-4 w-4 ${checking ? 'animate-spin' : ''}`} />
             Consultar Estoque API
           </Button>
-          <Button variant="outline" onClick={() => navigate(`/estoque/${product.id}/editar`)}>
+          <Button variant="outline" onClick={() => navigate(`/produtos/${product.id}/editar`)}>
             <Edit className="mr-1.5 h-4 w-4" /> Editar
           </Button>
-          {isAdmin && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleDelete}
-              className="text-red-500 hover:text-red-700"
-            >
-              <Trash2 className="h-5 w-5" />
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleDelete}
+            className="text-red-500 hover:text-red-700"
+            title="Excluir produto"
+          >
+            <Trash2 className="h-5 w-5" />
+          </Button>
         </div>
       </div>
 
