@@ -715,12 +715,11 @@ export default function WhatsAppAtendimento() {
               <Button
                 type="button"
                 onClick={handleOpenProductQuote}
-                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold px-3 text-xs shrink-0 transition-colors shadow-2xs"
+                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold px-2 text-xs shrink-0 transition-colors shadow-2xs"
                 title="Buscar produtos no estoque e montar orçamento"
               >
-                <PackageSearch className="w-4 h-4 mr-1.5 text-emerald-600" />
-                <span className="hidden sm:inline">Buscar Produtos</span>
-                <span className="sm:hidden">Produtos</span>
+                <PackageSearch className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                <span>Produtos</span>
               </Button>
 
               <Input
