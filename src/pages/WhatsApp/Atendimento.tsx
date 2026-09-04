@@ -593,7 +593,6 @@ export default function WhatsAppAtendimento() {
                       ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                       : 'text-slate-700'
                   }`}
-                  title="Histórico de orçamentos do cliente"
                 >
                   <History className="w-3.5 h-3.5 mr-1 text-emerald-600" />
                   Histórico
