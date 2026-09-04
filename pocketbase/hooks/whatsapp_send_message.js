@@ -18,8 +18,23 @@ routerAdd(
       })
     }
 
+    // Verificar se é LID ou inválido
+    if (rawPhone.toLowerCase().includes('@lid') || rawPhone.toLowerCase().includes('@g.us')) {
+      return e.json(400, {
+        ok: false,
+        error: 'Não é permitido enviar mensagem direta para @lid ou grupos',
+      })
+    }
+
     // Normalizar telefone (apenas números)
     let cleanPhone = rawPhone.replace(/\D/g, '')
+    if (cleanPhone.length >= 14 || cleanPhone.length < 10) {
+      return e.json(400, {
+        ok: false,
+        error: 'Número de telefone inválido (deve ser um número de telefone real com DDD)',
+      })
+    }
+
     if (cleanPhone.length === 10 || cleanPhone.length === 11) {
       cleanPhone = '55' + cleanPhone
     }

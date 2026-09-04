@@ -31,32 +31,81 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // Extrair telefone do remetente
-  let rawPhone = ''
-  if (body.phone) {
-    if (typeof body.phone === 'object' && body.phone !== null) {
-      rawPhone = String(body.phone.phone || body.phone.number || '')
-    } else {
-      rawPhone = String(body.phone)
-    }
-  } else if (body.sender) {
-    if (typeof body.sender === 'object' && body.sender !== null) {
-      rawPhone = String(body.sender.phone || body.sender.id || '')
-    } else {
-      rawPhone = String(body.sender)
-    }
-  } else if (body.chat) {
-    if (typeof body.chat === 'object' && body.chat !== null) {
-      rawPhone = String(body.chat.phone || body.chat.chatId || '')
-    } else {
-      rawPhone = String(body.chat)
-    }
-  } else if (body.data && body.data.key && body.data.key.remoteJid) {
-    rawPhone = String(body.data.key.remoteJid)
+  // Função auxiliar interna para verificar se uma string/JID é @lid ou número interno inválido
+  const isLidString = (val) => {
+    if (!val) return false
+    const s = String(val).trim()
+    if (s.toLowerCase().includes('@lid')) return true
+    const digits = s.replace(/\D/g, '')
+    // WhatsApp LIDs têm normalmente 14 ou 15 dígitos sem código DDI/DDD válido (não começam com 55 ou têm 14+ dígitos)
+    // Telefones brasileiros com DDI têm 12 (55 + 2 DDD + 8 fixo) ou 13 dígitos (55 + 2 DDD + 9 celular).
+    // Números com mais de 13 dígitos que não são telefones internacionais válidos ou com 14+ dígitos são LIDs.
+    if (digits.length >= 14) return true
+    return false
   }
 
-  // Normalização de telefone (apenas dígitos)
-  let normalizedPhone = rawPhone.replace(/\D/g, '')
+  // Função auxiliar interna para verificar se é grupo do WhatsApp
+  const isGroupString = (val) => {
+    if (!val) return false
+    const s = String(val).trim().toLowerCase()
+    return s.includes('@g.us') || s.includes('-group')
+  }
+
+  // Extração resiliente de telefone e detecção de LID/Grupo
+  // A Z-API pode enviar campos como: phone, senderPhone, participantPhone, connectedPhone, remoteJid, sender, chat, etc.
+  const candidatePhones = [
+    body.phone && typeof body.phone === 'object'
+      ? body.phone.phone || body.phone.number
+      : body.phone,
+    body.senderPhone,
+    body.participantPhone,
+    body.connectedPhone,
+    body.userPhone,
+    body.chat && typeof body.chat === 'object' ? body.chat.phone || body.chat.chatId : body.chat,
+    body.sender && typeof body.sender === 'object'
+      ? body.sender.phone || body.sender.id
+      : body.sender,
+    body.data && body.data.key && body.data.key.remoteJid,
+    body.data && body.data.key && body.data.key.participant,
+  ]
+
+  let resolvedPhone = ''
+  let hasLid = false
+  let isGroup = false
+
+  for (let i = 0; i < candidatePhones.length; i++) {
+    const candidate = candidatePhones[i]
+    if (!candidate) continue
+    const candStr = String(candidate)
+
+    if (isGroupString(candStr)) {
+      isGroup = true
+    }
+    if (isLidString(candStr)) {
+      hasLid = true
+    }
+
+    const digits = candStr.replace(/\D/g, '')
+    // Se não é grupo, não contém @lid e tem comprimento típico de telefone (10 a 13 dígitos)
+    if (!candStr.toLowerCase().includes('@lid') && !candStr.toLowerCase().includes('@g.us')) {
+      if (digits.length >= 10 && digits.length <= 13) {
+        resolvedPhone = digits
+        break
+      }
+    }
+  }
+
+  // Se é grupo, ignorar imediatamente (não processar nem poluir chat/IA)
+  if (isGroup) {
+    console.log('[WEBHOOK-IGNORED-GROUP]', JSON.stringify({ instanceId: maskedInstanceId }))
+    return e.json(200, { status: 'ignored_group' })
+  }
+
+  // Normalização final de telefone
+  let normalizedPhone = resolvedPhone
+  if (normalizedPhone.length === 10 || normalizedPhone.length === 11) {
+    normalizedPhone = '55' + normalizedPhone
+  }
 
   let maskedSenderPhone = ''
   if (normalizedPhone) {
@@ -115,20 +164,34 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   )
 
   // 2. Persistir na collection webhook_received (para rastreabilidade/auditoria)
+  // IMPORTANTE: Se normalizedPhone estiver vazio (ex: evento puro de @lid sem telefone mapeável),
+  // NÃO criamos registro órfão que poluiria o atendimento com número gigante ou vazio.
   try {
-    const colWebhook = $app.findCollectionByNameOrId('webhook_received')
-    const rec = new Record(colWebhook)
-    rec.set('type', eventType || 'ReceivedCallback')
-    rec.set('phone', body.phone || { phone: normalizedPhone })
-    rec.set('fromMe', isFromMe)
-    rec.set('text', body.text || { message: incomingText })
-    rec.set('chat', body.chat || null)
-    rec.set('sender', body.sender || null)
-    rec.set('status', String(body.status || 'RECEIVED'))
-    rec.set('messageId', messageId)
-    rec.set('instanceId', rawInstanceId)
-    rec.set('moment', Number(body.moment) || Math.floor(Date.now() / 1000))
-    $app.save(rec)
+    if (normalizedPhone) {
+      const colWebhook = $app.findCollectionByNameOrId('webhook_received')
+      const rec = new Record(colWebhook)
+      rec.set('type', eventType || 'ReceivedCallback')
+      rec.set('phone', { phone: normalizedPhone })
+      rec.set('fromMe', isFromMe)
+      rec.set('text', body.text || { message: incomingText })
+      rec.set('chat', { phone: normalizedPhone })
+      rec.set('sender', body.sender || null)
+      rec.set('status', String(body.status || 'RECEIVED'))
+      rec.set('messageId', messageId)
+      rec.set('instanceId', rawInstanceId)
+      rec.set('moment', Number(body.moment) || Math.floor(Date.now() / 1000))
+      $app.save(rec)
+    } else {
+      console.log(
+        '[WEBHOOK-LID-WITHOUT-PHONE]',
+        JSON.stringify({
+          eventType: eventType,
+          messageId: messageId,
+          fromMe: isFromMe,
+          hasLid: hasLid,
+        }),
+      )
+    }
   } catch (err) {
     console.log('[WEBHOOK-PERSIST-ERR]', err.message || String(err))
   }
@@ -137,6 +200,11 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   // Regra: Ignorar mensagens enviadas pelo próprio bot (fromMe=true)
   if (isFromMe) {
     return e.json(200, { status: 'ignored_from_me' })
+  }
+
+  // Regra: Sem telefone real válido (não enfileirar @lid nem número fantasma para IA)
+  if (!normalizedPhone || normalizedPhone.length < 10 || normalizedPhone.length > 13) {
+    return e.json(200, { status: 'ignored_invalid_phone_or_lid' })
   }
 
   // Regra: Somente mensagens de texto com conteúdo

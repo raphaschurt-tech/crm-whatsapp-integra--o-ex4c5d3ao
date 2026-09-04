@@ -234,12 +234,18 @@ export default function WhatsAppAtendimento() {
 
     // Enviar via backend Z-API se configurado
     try {
-      const sendRes = await sendWhatsAppMessage(activeCustomer.rawPhone, textToSend)
+      const targetPhone = activeCustomer.rawPhone || activeCustomer.phone
+      const sendRes = await sendWhatsAppMessage(targetPhone, textToSend)
       if (!sendRes.zapiSuccess) {
         console.log('Mensagem registrada localmente. Z-API offline ou não configurada.')
       }
-    } catch (sendErr) {
+    } catch (sendErr: any) {
       console.warn('Erro ao disparar mensagem para o backend:', sendErr)
+      toast({
+        title: 'Aviso de envio',
+        description: sendErr?.message || 'Falha ao despachar mensagem pelo WhatsApp.',
+        variant: 'destructive',
+      })
     }
   }
 

@@ -17,6 +17,34 @@ onRecordAfterCreateSuccess((e) => {
   const phone = record.getString('phone')
   const incomingText = record.getString('incomingText')
 
+  // Blindagem estrita: rejeitar phones que sejam @lid ou inválidos (não responder a grupos ou LIDs)
+  const isLidOrInvalid = (p) => {
+    if (!p) return true
+    const s = String(p).trim()
+    if (s.toLowerCase().includes('@lid') || s.toLowerCase().includes('@g.us')) return true
+    const d = s.replace(/\D/g, '')
+    if (d.length < 10 || d.length > 13) return true
+    return false
+  }
+
+  if (isLidOrInvalid(phone)) {
+    console.log(
+      '[AI-REJECTED-LID-OR-INVALID-PHONE]',
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        recordId: recordId,
+        messageId: messageId,
+      }),
+    )
+    try {
+      procRecord = $app.findRecordById('message_processing', recordId)
+      procRecord.set('status', 'failed')
+      procRecord.set('errorMessage', 'Invalid phone number or WhatsApp LID')
+      $app.save(procRecord)
+    } catch (_) {}
+    return e.next()
+  }
+
   // Mascarar telefone para logs sanitizados
   let maskedPhone = '****'
   if (phone && phone.length > 6) {

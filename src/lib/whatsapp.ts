@@ -1,4 +1,15 @@
+export function isLidPhoneNumber(phone: any): boolean {
+  if (!phone) return false
+  const s = String(phone).trim()
+  if (s.toLowerCase().includes('@lid')) return true
+  const digits = s.replace(/\D/g, '')
+  // Números com 14 ou mais dígitos não são telefones brasileiros e correspondem a LIDs do WhatsApp
+  if (digits.length >= 14) return true
+  return false
+}
+
 export function cleanPhoneNumber(phone: string): string {
+  if (isLidPhoneNumber(phone)) return ''
   const digits = phone.replace(/\D/g, '')
   if (!digits) return ''
   if (digits.startsWith('55')) return digits

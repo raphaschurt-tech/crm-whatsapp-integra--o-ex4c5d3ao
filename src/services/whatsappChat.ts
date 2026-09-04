@@ -58,7 +58,26 @@ export interface MessageProcessingRecord extends RecordModel {
 }
 
 /**
- * Extrai telefone normalizado de qualquer estrutura (objeto ou string)
+ * Verifica se um valor de telefone representa um WhatsApp LID (Linked Identity)
+ * ou grupo que não deve gerar conversa separada
+ */
+export function isLidOrGroup(phoneVal: any): boolean {
+  if (!phoneVal) return false
+  const s =
+    typeof phoneVal === 'object'
+      ? String(phoneVal.phone || phoneVal.number || phoneVal.id || phoneVal.chatId || '')
+      : String(phoneVal)
+  if (s.toLowerCase().includes('@lid') || s.toLowerCase().includes('@g.us')) return true
+  const digits = s.replace(/\D/g, '')
+  // Telefones normais no Brasil com DDI 55 têm 12 (fixo) ou 13 dígitos (celular).
+  // LIDs possuem 14 ou mais dígitos (ex: 224429321781298, 134196773261537)
+  if (digits.length >= 14) return true
+  return false
+}
+
+/**
+ * Extrai telefone normalizado de qualquer estrutura (objeto ou string).
+ * Retorna string vazia caso o telefone seja um @lid, grupo ou número não-telefônico inválido.
  */
 export function extractNormalizedPhone(phoneVal: any): string {
   if (!phoneVal) return ''
@@ -66,13 +85,20 @@ export function extractNormalizedPhone(phoneVal: any): string {
   if (typeof phoneVal === 'string') {
     raw = phoneVal
   } else if (typeof phoneVal === 'object') {
-    raw = String(phoneVal.phone || phoneVal.number || phoneVal.id || '')
+    raw = String(phoneVal.phone || phoneVal.number || phoneVal.id || phoneVal.chatId || '')
   }
-  // Se contiver @lid ou @s.whatsapp.net ou @c.us, extrai apenas os números antes do @
+  if (raw.toLowerCase().includes('@g.us')) return ''
+  if (raw.toLowerCase().includes('@lid')) return ''
+
   if (raw.includes('@')) {
     raw = raw.split('@')[0]
   }
-  return raw.replace(/\D/g, '')
+  const digits = raw.replace(/\D/g, '')
+  // Se tiver 14 ou mais dígitos ou menos de 8 dígitos, não é um número de telefone válido de cliente
+  if (digits.length >= 14 || digits.length < 8) {
+    return ''
+  }
+  return digits
 }
 
 /**
@@ -237,8 +263,16 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
 
     // 1. Processar webhook_received
     for (const rec of webhookList) {
-      const rawPhone = rec.phone || rec.sender || (rec.chat && rec.chat.phone) || ''
-      const normalized = extractNormalizedPhone(rawPhone)
+      // Tenta extrair telefone válido de múltiplos campos possíveis
+      let normalized = extractNormalizedPhone(rec.phone)
+      if (!normalized) {
+        normalized = extractNormalizedPhone(rec.chat)
+      }
+      if (!normalized) {
+        normalized = extractNormalizedPhone(rec.sender)
+      }
+
+      // Se após todas as tentativas o número ainda for um LID ou vazio, ignoramos para não criar conversa-fantasma
       if (!normalized) continue
 
       const text = extractMessageText(rec.text)
