@@ -1,6 +1,9 @@
-// Hook assíncrono acionado após inserção ou atualização bem-sucedida em message_processing
+// Hook assíncrono acionado após inserção bem-sucedida em message_processing
 // Processa mensagens com IA (gpt-4o-mini) e envia resposta via Z-API com idempotência estrita
 onRecordAfterCreateSuccess((e) => {
+  // Limite configurável de interações anteriores a carregar do histórico (ex.: 20 registros = 10 do cliente + 10 da IA)
+  const MAX_HISTORY_INTERACTIONS = 20
+
   const record = e.record
   const status = record.getString('status')
   const replySent = Boolean(record.get('replySent'))
@@ -42,7 +45,7 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  // 2. Ler e validar estritamente configurações ativas (PARTE 3)
+  // 2. Ler e validar estritamente configurações ativas
   let validConfigRec = null
   let configError = ''
 
@@ -145,7 +148,102 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  // 4. Início do processamento de IA
+  // 4. Formatação de data/hora atual no fuso America/Sao_Paulo (horário de Brasília)
+  let dateTimeSP = ''
+  try {
+    const now = new Date()
+    const formatter = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      weekday: 'long',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+    dateTimeSP = formatter.format(now)
+  } catch (_) {
+    // Fallback defensivo em caso de indisponibilidade de formatação específica de locale
+    try {
+      dateTimeSP = new Date().toISOString()
+    } catch (_) {}
+  }
+
+  const timeContextLine = dateTimeSP
+    ? '\n\nData/hora atual: ' + dateTimeSP + ' (horário de Brasília).'
+    : ''
+
+  // 5. Configurar systemPrompt a partir de settings ou fallback mínimo cordial
+  const configuredPrompt = String(validConfigRec.getString('ai_system_prompt') || '').trim()
+  const fallbackPrompt =
+    'Você é o assistente virtual da RPA AUTO PARTS, especializada em peças automotivas. ' +
+    'Seja cordial, objetivo e atencioso. ' +
+    'NÃO invente preços, estoque, prazos ou especificações técnicas. ' +
+    'Se não souber uma informação, informe que a equipe humana irá confirmar.'
+
+  const effectiveSystemPrompt =
+    (configuredPrompt.length > 0 ? configuredPrompt : fallbackPrompt) + timeContextLine
+
+  // 6. Buscar histórico da conversa na collection message_processing para o mesmo telefone
+  // Filtrar apenas interações anteriores já concluídas com resposta da IA enviada (replySent = true && aiReplyText != '')
+  // e ignorar o registro atual
+  let historyRecords = []
+  try {
+    const cleanPhone = String(phone || '').replace(/'/g, "\\'")
+    const historyFilter =
+      "phone = '" +
+      cleanPhone +
+      "' && replySent = true && aiReplyText != '' && id != '" +
+      recordId +
+      "'"
+
+    historyRecords = $app.findRecordsByFilter(
+      'message_processing',
+      historyFilter,
+      '-created',
+      MAX_HISTORY_INTERACTIONS,
+      0,
+    )
+  } catch (histErr) {
+    console.log(
+      '[AI-HISTORY-FETCH-ERROR]',
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        messageId: messageId,
+        senderPhone: maskedPhone,
+        error: histErr.message || String(histErr),
+      }),
+    )
+    historyRecords = []
+  }
+
+  // Reverter para ordem cronológica (created ASC)
+  const chronologicalHistory = (historyRecords || []).slice().reverse()
+
+  // Montar array messages: system -> histórico (user / assistant) -> mensagem atual do cliente
+  const chatMessages = [{ role: 'system', content: effectiveSystemPrompt }]
+  let historyTurnsCount = 0
+
+  for (let i = 0; i < chronologicalHistory.length; i++) {
+    const histItem = chronologicalHistory[i]
+    const histUserText = histItem.getString('incomingText')
+    const histAiText = histItem.getString('aiReplyText')
+
+    if (histUserText && histUserText.trim()) {
+      chatMessages.push({ role: 'user', content: histUserText.trim() })
+      historyTurnsCount++
+    }
+    if (histAiText && histAiText.trim()) {
+      chatMessages.push({ role: 'assistant', content: histAiText.trim() })
+      historyTurnsCount++
+    }
+  }
+
+  // Mensagem atual do usuário como último turno
+  chatMessages.push({ role: 'user', content: incomingText })
+
+  // 7. Início do processamento de IA
   const usedModel = 'gpt-4o-mini'
   console.log(
     '[AI-PROCESSING-START]',
@@ -154,17 +252,11 @@ onRecordAfterCreateSuccess((e) => {
       messageId: messageId,
       senderPhone: maskedPhone,
       model: usedModel,
+      historyTurns: historyTurnsCount,
+      historyRecordsCount: chronologicalHistory.length,
+      hasCustomPrompt: configuredPrompt.length > 0,
     }),
   )
-
-  // Mensagens do chat para a IA
-  // Conforme requisitos: resposta curta, cordial, sem inventar preço, estoque ou especificação técnica
-  const systemPrompt =
-    'Você é o assistente virtual da RPA AUTO PARTS. ' +
-    'Seja curto, cordial e objetivo. ' +
-    'NÃO invente preços, estoque, prazos ou especificações técnicas. ' +
-    'Quando o cliente perguntar sobre peças, responda de forma cordial perguntando qual peça procura e para qual veículo/aplicação. ' +
-    'Exemplo de referência: "Olá! Posso ajudar. Qual peça você procura e para qual veículo ou aplicação?"'
 
   let aiReply = ''
   let aiError = ''
@@ -186,11 +278,8 @@ onRecordAfterCreateSuccess((e) => {
         },
         body: JSON.stringify({
           model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: incomingText },
-          ],
-          max_tokens: 250,
+          messages: chatMessages,
+          max_tokens: 350,
           temperature: 0.3,
         }),
         timeout: 15,
@@ -238,10 +327,7 @@ onRecordAfterCreateSuccess((e) => {
       try {
         const chatRes = $ai.chat({
           model: 'fast',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: incomingText },
-          ],
+          messages: chatMessages,
         })
         if (
           chatRes &&
@@ -265,10 +351,7 @@ onRecordAfterCreateSuccess((e) => {
     try {
       const chatRes = $ai.chat({
         model: 'fast',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: incomingText },
-        ],
+        messages: chatMessages,
       })
       if (
         chatRes &&
