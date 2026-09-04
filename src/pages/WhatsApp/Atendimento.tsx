@@ -13,6 +13,8 @@ import {
   Sparkles,
   RefreshCw,
   ChevronDown,
+  PackageSearch,
+  History,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,6 +28,11 @@ import {
   loadWhatsAppConversations,
 } from '@/services/whatsappChat'
 import { useRealtime } from '@/hooks/use-realtime'
+import { sendWhatsAppMessage } from '@/services/quotes'
+import { ProductQuoteModal } from '@/components/WhatsApp/ProductQuoteModal'
+import { CustomerQuoteHistory } from '@/components/WhatsApp/CustomerQuoteHistory'
+import { createCustomer } from '@/services/customers'
+import { toast } from '@/hooks/use-toast'
 
 export type { WhatsAppStatus, WhatsAppMessage, WhatsAppCustomer }
 
@@ -40,6 +47,10 @@ export default function WhatsAppAtendimento() {
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [hasUnreadBelow, setHasUnreadBelow] = useState(false)
+
+  // Estados dos novos recursos de Orçamentos e Histórico
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false)
+  const [showHistoryPanel, setShowHistoryPanel] = useState(true)
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
@@ -185,10 +196,11 @@ export default function WhatsAppAtendimento() {
     return true
   })
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!inputText.trim() || !activeCustomer) return
 
+    const textToSend = inputText.trim()
     const now = new Date()
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(
       2,
@@ -197,7 +209,7 @@ export default function WhatsAppAtendimento() {
 
     const newMsg: WhatsAppMessage = {
       id: `msg-${Date.now()}`,
-      text: inputText.trim(),
+      text: textToSend,
       time: timeStr,
       sender: 'agent',
       timestamp: now.getTime(),
@@ -219,6 +231,41 @@ export default function WhatsAppAtendimento() {
     )
 
     setInputText('')
+
+    // Enviar via backend Z-API se configurado
+    try {
+      const sendRes = await sendWhatsAppMessage(activeCustomer.rawPhone, textToSend)
+      if (!sendRes.zapiSuccess) {
+        console.log('Mensagem registrada localmente. Z-API offline ou não configurada.')
+      }
+    } catch (sendErr) {
+      console.warn('Erro ao disparar mensagem para o backend:', sendErr)
+    }
+  }
+
+  // Garante que o cliente selecionado tenha um customerId no banco para vincular orçamentos
+  const handleOpenProductQuote = async () => {
+    if (!activeCustomer) return
+
+    if (!activeCustomer.customerId) {
+      try {
+        const created = await createCustomer({
+          name: activeCustomer.name,
+          phone: activeCustomer.rawPhone || activeCustomer.phone,
+          type: activeCustomer.type,
+          company: activeCustomer.company,
+        })
+        activeCustomer.customerId = created.id
+        // atualiza estado local
+        setCustomers((prev) =>
+          prev.map((c) => (c.id === activeCustomer.id ? { ...c, customerId: created.id } : c)),
+        )
+      } catch (err) {
+        console.warn('Erro ao auto-vincular cliente para orçamento:', err)
+      }
+    }
+
+    setIsProductModalOpen(true)
   }
 
   const handleUpdateStatus = (newStatus: WhatsAppStatus) => {
@@ -536,12 +583,28 @@ export default function WhatsAppAtendimento() {
 
               {/* Ações do Chat */}
               <div className="flex items-center gap-2 shrink-0">
+                {/* Alternar painel de histórico de orçamentos */}
+                <Button
+                  size="sm"
+                  variant={showHistoryPanel ? 'secondary' : 'outline'}
+                  onClick={() => setShowHistoryPanel((prev) => !prev)}
+                  className={`text-xs h-8 ${
+                    showHistoryPanel
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                      : 'text-slate-700'
+                  }`}
+                  title="Histórico de orçamentos do cliente"
+                >
+                  <History className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                  Histórico
+                </Button>
+
                 {/* Alterar status */}
                 <select
                   aria-label="Status do atendimento"
                   value={activeCustomer.status}
                   onChange={(e) => handleUpdateStatus(e.target.value as WhatsAppStatus)}
-                  className="text-xs border border-slate-200 rounded-md px-2 py-1.5 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  className="text-xs border border-slate-200 rounded-md px-2 py-1.5 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 hidden sm:block"
                 >
                   <option value="novo">Status: Novo</option>
                   <option value="em_atendimento">Status: Em atendimento</option>
@@ -552,7 +615,7 @@ export default function WhatsAppAtendimento() {
                   size="sm"
                   variant="outline"
                   onClick={() => openWhatsApp(activeCustomer.phone, 'Olá!')}
-                  className="hidden sm:flex text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                  className="hidden md:flex text-emerald-700 border-emerald-200 hover:bg-emerald-50"
                   title="Abrir WhatsApp oficial"
                 >
                   <Phone className="w-3.5 h-3.5 mr-1" />
@@ -643,11 +706,23 @@ export default function WhatsAppAtendimento() {
               </div>
             )}
 
-            {/* Barra inferior: Campo de texto para resposta manual e botão Enviar */}
+            {/* Barra inferior: Campo de texto para resposta manual, Botão Buscar Produtos e botão Enviar */}
             <form
               onSubmit={handleSendMessage}
               className="p-3 bg-white border-t border-slate-200 flex items-center gap-2"
             >
+              {/* Botão Buscar Produtos ao lado do campo de mensagem */}
+              <Button
+                type="button"
+                onClick={handleOpenProductQuote}
+                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold px-3 text-xs shrink-0 transition-colors shadow-2xs"
+                title="Buscar produtos no estoque e montar orçamento"
+              >
+                <PackageSearch className="w-4 h-4 mr-1.5 text-emerald-600" />
+                <span className="hidden sm:inline">Buscar Produtos</span>
+                <span className="sm:hidden">Produtos</span>
+              </Button>
+
               <Input
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
@@ -675,7 +750,34 @@ export default function WhatsAppAtendimento() {
             </div>
           </div>
         )}
+
+        {/* LADO DIREITO EXTREMO: Histórico de Orçamentos do Cliente Vinculado */}
+        {activeCustomer && showHistoryPanel && (
+          <CustomerQuoteHistory
+            customerId={activeCustomer.customerId}
+            customerPhone={activeCustomer.rawPhone}
+            customerName={activeCustomer.name}
+            onOpenCreateQuote={handleOpenProductQuote}
+          />
+        )}
       </div>
+
+      {/* Modal de Busca de Produtos no Estoque e Montagem de Orçamento */}
+      {activeCustomer && (
+        <ProductQuoteModal
+          isOpen={isProductModalOpen}
+          onClose={() => setIsProductModalOpen(false)}
+          customer={{
+            id: activeCustomer.customerId,
+            name: activeCustomer.name,
+            phone: activeCustomer.rawPhone || activeCustomer.phone,
+            company: activeCustomer.company,
+          }}
+          onQuoteSent={(quoteNumber) => {
+            fetchData(true)
+          }}
+        />
+      )}
     </div>
   )
 }

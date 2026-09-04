@@ -117,3 +117,35 @@ export const updateQuoteStatus = (id: string, status: Quote['status']) =>
   pb.collection<Quote>('quotes').update(id, { status })
 
 export const deleteQuote = (id: string) => pb.collection('quotes').delete(id)
+
+export const sendWhatsAppMessage = async (
+  phone: string,
+  message: string,
+): Promise<{
+  ok: boolean
+  zapiSuccess: boolean
+  zapiHttpStatus?: number
+  zapiError?: string | null
+  messageId?: string
+}> => {
+  return await pb.send('/backend/v1/whatsapp/send-message', {
+    method: 'POST',
+    body: { phone, message },
+  })
+}
+
+export const sendQuoteEmail = async (
+  quoteId: string,
+  email: string,
+  subject: string,
+  message: string,
+): Promise<{
+  ok: boolean
+  sent: boolean
+  error?: string | null
+}> => {
+  return await pb.send('/backend/v1/quotes/send-email', {
+    method: 'POST',
+    body: { quote_id: quoteId, email, subject, message },
+  })
+}
