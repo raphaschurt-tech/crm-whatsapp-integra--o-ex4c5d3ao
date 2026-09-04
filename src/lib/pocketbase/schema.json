@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-04T01:14:02.034Z",
+  "generatedAt": "2026-09-04T01:59:36.133Z",
   "collections": [
     {
       "name": "users",
@@ -133,6 +133,12 @@
         },
         {
           "name": "cnpj",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "pipeline_status",
           "type": "text",
           "required": false,
           "system": false

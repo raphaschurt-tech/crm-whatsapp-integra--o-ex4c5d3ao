@@ -20,6 +20,7 @@ export interface Customer extends RecordModel {
   type?: CustomerType
   cpf?: string
   cnpj?: string
+  pipeline_status?: string
 }
 
 export interface Product extends RecordModel {

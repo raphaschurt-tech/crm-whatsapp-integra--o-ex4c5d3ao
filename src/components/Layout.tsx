@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
+  Filter,
   MessageCircle,
   FileText,
   Users,
@@ -27,6 +28,7 @@ export default function Layout() {
 
   const navItems = [
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
+    { label: 'Pipeline', path: '/pipeline', icon: Filter },
     { label: 'Atendimento', path: '/atendimento', icon: MessageCircle },
     { label: 'Orçamentos', path: '/orcamentos', icon: FileText },
     { label: 'Clientes', path: '/clientes', icon: Users },
@@ -49,6 +51,7 @@ export default function Layout() {
   const getPageTitle = () => {
     const path = location.pathname
     if (path === '/') return 'Dashboard'
+    if (path.startsWith('/pipeline')) return 'Pipeline de Vendas'
     if (path.startsWith('/atendimento')) return 'Atendimento WhatsApp'
     if (path.startsWith('/orcamentos/novo')) return 'Novo Orçamento'
     if (path.startsWith('/orcamentos') && path.includes('/editar')) return 'Editar Orçamento'
