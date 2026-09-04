@@ -1,4 +1,5 @@
 import pb from '@/lib/pocketbase/client'
+import { withRetry } from '@/lib/retry'
 import { User } from '@/types/crm'
 
 export interface CreateUserData {
@@ -23,9 +24,13 @@ export interface UpdateUserData {
 
 export const getUsers = async (): Promise<User[]> => {
   try {
-    return await pb.collection<User>('users').getFullList({
-      sort: '-created',
-    })
+    return await withRetry(
+      () =>
+        pb.collection<User>('users').getFullList({
+          sort: '-created',
+        }),
+      { retries: 3, delayMs: 800 },
+    )
   } catch (error) {
     console.warn('Erro ao carregar usuários:', error)
     return []
@@ -33,7 +38,7 @@ export const getUsers = async (): Promise<User[]> => {
 }
 
 export const getUserById = async (id: string): Promise<User> => {
-  return pb.collection<User>('users').getOne(id)
+  return withRetry(() => pb.collection<User>('users').getOne(id), { retries: 2, delayMs: 800 })
 }
 
 export const createUser = async (data: CreateUserData): Promise<User> => {

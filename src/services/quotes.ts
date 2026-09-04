@@ -1,12 +1,17 @@
 import pb from '@/lib/pocketbase/client'
+import { withRetry } from '@/lib/retry'
 import { Quote, QuoteItem } from '@/types/crm'
 
 export const getQuotes = async (): Promise<Quote[]> => {
   try {
-    return await pb.collection<Quote>('quotes').getFullList({
-      sort: '-created',
-      expand: 'customer',
-    })
+    return await withRetry(
+      () =>
+        pb.collection<Quote>('quotes').getFullList({
+          sort: '-created',
+          expand: 'customer',
+        }),
+      { retries: 3, delayMs: 800 },
+    )
   } catch (error) {
     console.warn('Erro ao carregar orçamentos:', error)
     return []

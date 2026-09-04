@@ -1,9 +1,13 @@
 import pb from '@/lib/pocketbase/client'
+import { withRetry } from '@/lib/retry'
 import { Product } from '@/types/crm'
 
 export const getProducts = async (): Promise<Product[]> => {
   try {
-    return await pb.collection<Product>('products').getFullList({ sort: 'name' })
+    return await withRetry(() => pb.collection<Product>('products').getFullList({ sort: 'name' }), {
+      retries: 3,
+      delayMs: 800,
+    })
   } catch (error) {
     console.warn('Erro ao carregar produtos:', error)
     return []

@@ -1,4 +1,5 @@
 import pb from '@/lib/pocketbase/client'
+import { withRetry } from '@/lib/retry'
 import { Customer } from '@/types/crm'
 import { getCustomers } from '@/services/customers'
 import { RecordModel } from 'pocketbase'
@@ -166,20 +167,24 @@ export function formatPhoneDisplay(phoneStr: string): string {
 export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
   try {
     const [webhookList, processingList, customersList] = await Promise.all([
-      pb
-        .collection<WebhookReceivedRecord>('webhook_received')
-        .getFullList({ sort: 'created' })
-        .catch((err) => {
-          console.warn('Erro ao carregar webhook_received:', err)
-          return [] as WebhookReceivedRecord[]
-        }),
-      pb
-        .collection<MessageProcessingRecord>('message_processing')
-        .getFullList({ sort: 'created' })
-        .catch((err) => {
-          console.warn('Erro ao carregar message_processing:', err)
-          return [] as MessageProcessingRecord[]
-        }),
+      withRetry(
+        () =>
+          pb.collection<WebhookReceivedRecord>('webhook_received').getFullList({ sort: 'created' }),
+        { retries: 3, delayMs: 800 },
+      ).catch((err) => {
+        console.warn('Erro ao carregar webhook_received:', err)
+        return [] as WebhookReceivedRecord[]
+      }),
+      withRetry(
+        () =>
+          pb
+            .collection<MessageProcessingRecord>('message_processing')
+            .getFullList({ sort: 'created' }),
+        { retries: 3, delayMs: 800 },
+      ).catch((err) => {
+        console.warn('Erro ao carregar message_processing:', err)
+        return [] as MessageProcessingRecord[]
+      }),
       getCustomers().catch(() => [] as Customer[]),
     ])
 

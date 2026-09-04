@@ -54,14 +54,14 @@ export default function PipelineBoard() {
   // Carga dos dados
   const loadData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsRefreshing(true)
-    setLoadError(null)
     try {
       const [boardData, userList] = await Promise.all([
         loadPipelineBoardData(),
         getUsers().catch(() => [] as User[]),
       ])
       setCards(boardData.cards)
-      setUsers(userList)
+      setUsers(userList || [])
+      setLoadError(null)
 
       // Atualizar o card selecionado no drawer se estiver aberto
       setSelectedCard((prev) => {
@@ -71,7 +71,9 @@ export default function PipelineBoard() {
       })
     } catch (err: any) {
       console.error('Erro ao carregar Pipeline:', err)
-      setLoadError(err?.message || 'Falha ao comunicar com o servidor.')
+      setLoadError(
+        err?.message || 'Falha ao conectar com o servidor. O serviço pode estar reiniciando.',
+      )
     } finally {
       setLoading(false)
       setIsRefreshing(false)

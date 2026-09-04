@@ -2,6 +2,7 @@ import pb from '@/lib/pocketbase/client'
 import { Customer, Quote, User } from '@/types/crm'
 import { getCustomers, updateCustomer } from '@/services/customers'
 import { getQuotes } from '@/services/quotes'
+import { withRetry } from '@/lib/retry'
 import {
   loadWhatsAppConversations,
   WhatsAppCustomer,
@@ -148,9 +149,11 @@ export async function loadPipelineBoardData(): Promise<{
   whatsappConversations: WhatsAppCustomer[]
 }> {
   const [customers, quotes, whatsappConversations] = await Promise.all([
-    getCustomers().catch(() => [] as Customer[]),
-    getQuotes().catch(() => [] as Quote[]),
-    loadWhatsAppConversations().catch(() => [] as WhatsAppCustomer[]),
+    withRetry(() => getCustomers(), { retries: 3, delayMs: 800 }).catch(() => [] as Customer[]),
+    withRetry(() => getQuotes(), { retries: 3, delayMs: 800 }).catch(() => [] as Quote[]),
+    withRetry(() => loadWhatsAppConversations(), { retries: 3, delayMs: 800 }).catch(
+      () => [] as WhatsAppCustomer[],
+    ),
   ])
 
   // Mapear conversas de WhatsApp por customerId ou por telefone normalizado
