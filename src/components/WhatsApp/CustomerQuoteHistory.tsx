@@ -158,7 +158,7 @@ export function CustomerQuoteHistory({
   }
 
   return (
-    <div className="flex flex-col h-full bg-white border-l border-slate-200 w-full sm:w-80 md:w-96 shrink-0">
+    <div className="flex flex-col h-full bg-white border-l border-slate-200 w-full sm:w-80 md:w-96 shrink-0 relative z-20">
       {/* Header do Painel */}
       <div className="p-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
         <div className="flex items-center gap-2">

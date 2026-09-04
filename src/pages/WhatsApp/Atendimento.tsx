@@ -603,22 +603,27 @@ export default function WhatsAppAtendimento() {
                   aria-label="Status do atendimento"
                   value={activeCustomer.status}
                   onChange={(e) => handleUpdateStatus(e.target.value as WhatsAppStatus)}
-                  className="text-xs border border-slate-200 rounded-md px-2 py-1.5 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 hidden sm:block"
+                  className={`text-xs border border-slate-200 rounded-md px-2 py-1.5 bg-white font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 ${
+                    showHistoryPanel ? 'hidden xl:block' : 'hidden sm:block'
+                  }`}
                 >
                   <option value="novo">Status: Novo</option>
                   <option value="em_atendimento">Status: Em atendimento</option>
                   <option value="resolvido">Status: Resolvido</option>
                 </select>
 
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => openWhatsApp(activeCustomer.phone, 'Olá!')}
-                  className="hidden md:flex text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-                >
-                  <Phone className="w-3.5 h-3.5 mr-1" />
-                  WhatsApp
-                </Button>
+                {/* Botão WhatsApp externo: oculto quando o painel de histórico estiver aberto para evitar aperto e sobreposição */}
+                {!showHistoryPanel && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => openWhatsApp(activeCustomer.phone, 'Olá!')}
+                    className="hidden md:flex text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                  >
+                    <Phone className="w-3.5 h-3.5 mr-1" />
+                    WhatsApp
+                  </Button>
+                )}
               </div>
             </div>
 
