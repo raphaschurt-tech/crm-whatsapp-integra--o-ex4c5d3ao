@@ -1,13 +1,19 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getCustomer, createCustomer, updateCustomer } from '@/services/customers'
+import {
+  getCustomer,
+  createCustomer,
+  updateCustomer,
+  checkDuplicateDocument,
+  cleanDocument,
+} from '@/services/customers'
 import { CustomerType } from '@/types/crm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/hooks/use-toast'
-import { User, Building2 } from 'lucide-react'
+import { User, Building2, AlertCircle } from 'lucide-react'
 
 // Funções utilitárias de formatação
 const maskCPF = (val: string) => {
@@ -40,6 +46,7 @@ export default function CustomerForm() {
   const [company, setCompany] = useState('')
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
+  const [documentError, setDocumentError] = useState<string | null>(null)
 
   const isEditing = Boolean(id)
 
@@ -76,6 +83,26 @@ export default function CustomerForm() {
       return
     }
 
+    const currentDoc = type === 'PF' ? cpf : cnpj
+    const cleanDoc = cleanDocument(currentDoc)
+
+    // Validação de documento duplicado
+    if (cleanDoc) {
+      const duplicate = await checkDuplicateDocument(cleanDoc, id)
+      if (duplicate) {
+        const docLabel = type === 'PF' ? 'CPF' : 'CNPJ'
+        const errorMsg = `Este ${docLabel} já está cadastrado para o cliente "${duplicate.name}".`
+        setDocumentError(errorMsg)
+        toast({
+          title: `${docLabel} já cadastrado`,
+          description: errorMsg,
+          variant: 'destructive',
+        })
+        return
+      }
+    }
+
+    setDocumentError(null)
     setLoading(true)
     try {
       const payload = {
@@ -147,25 +174,49 @@ export default function CustomerForm() {
         {/* Campos condicionais: CPF para PF, CNPJ para PJ */}
         {type === 'PF' ? (
           <div className="space-y-1.5">
-            <Label htmlFor="cpf">CPF</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="cpf">CPF</Label>
+            </div>
             <Input
               id="cpf"
               value={cpf}
-              onChange={(e) => setCpf(maskCPF(e.target.value))}
+              onChange={(e) => {
+                setCpf(maskCPF(e.target.value))
+                if (documentError) setDocumentError(null)
+              }}
               placeholder="000.000.000-00"
               maxLength={14}
+              className={documentError ? 'border-red-500 focus-visible:ring-red-500' : ''}
             />
+            {documentError && (
+              <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                {documentError}
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-1.5">
-            <Label htmlFor="cnpj">CNPJ</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="cnpj">CNPJ</Label>
+            </div>
             <Input
               id="cnpj"
               value={cnpj}
-              onChange={(e) => setCnpj(maskCNPJ(e.target.value))}
+              onChange={(e) => {
+                setCnpj(maskCNPJ(e.target.value))
+                if (documentError) setDocumentError(null)
+              }}
               placeholder="00.000.000/0000-00"
               maxLength={18}
+              className={documentError ? 'border-red-500 focus-visible:ring-red-500' : ''}
             />
+            {documentError && (
+              <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                {documentError}
+              </p>
+            )}
           </div>
         )}
 

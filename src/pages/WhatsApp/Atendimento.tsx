@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Search,
   Send,
@@ -8,197 +8,80 @@ import {
   Building2,
   Clock,
   CheckCircle2,
-  AlertCircle,
   Phone,
   FileText,
   Sparkles,
+  RefreshCw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { openWhatsApp } from '@/lib/whatsapp'
 import { useNavigate } from 'react-router-dom'
+import {
+  WhatsAppCustomer,
+  WhatsAppMessage,
+  WhatsAppStatus,
+  loadWhatsAppConversations,
+} from '@/services/whatsappChat'
+import { useRealtime } from '@/hooks/use-realtime'
 
-export type WhatsAppStatus = 'novo' | 'em_atendimento' | 'resolvido'
-
-export interface WhatsAppMessage {
-  id: string
-  text: string
-  time: string
-  sender: 'client' | 'agent' | 'ai'
-}
-
-export interface WhatsAppCustomer {
-  id: string
-  name: string
-  type: 'PF' | 'PJ'
-  phone: string
-  company?: string
-  status: WhatsAppStatus
-  unreadCount?: number
-  lastActivity: string
-  messages: WhatsAppMessage[]
-}
-
-const INITIAL_CUSTOMERS: WhatsAppCustomer[] = [
-  {
-    id: 'cust-1',
-    name: 'Carlos Silva',
-    type: 'PF',
-    phone: '(11) 98765-4321',
-    status: 'em_atendimento',
-    unreadCount: 1,
-    lastActivity: '10:42',
-    messages: [
-      {
-        id: 'm1',
-        text: 'Bom dia! Gostaria de consultar o valor da pastilha de freio dianteira do Corolla 2021.',
-        time: '10:35',
-        sender: 'client',
-      },
-      {
-        id: 'm2',
-        text: 'Olá Carlos! Temos disponível a pastilha Bosch por R$ 240,00 e Fras-le por R$ 195,00 em pronta entrega.',
-        time: '10:38',
-        sender: 'ai',
-      },
-      {
-        id: 'm3',
-        text: 'Perfeito! Consegue gerar um orçamento com a pastilha Fras-le mais o fluido de freio DOT 4?',
-        time: '10:42',
-        sender: 'client',
-      },
-    ],
-  },
-  {
-    id: 'cust-2',
-    name: 'Auto Mecânica São Paulo Ltda',
-    type: 'PJ',
-    phone: '(11) 91234-5678',
-    company: 'São Paulo Mecânica',
-    status: 'novo',
-    unreadCount: 2,
-    lastActivity: '11:15',
-    messages: [
-      {
-        id: 'm4',
-        text: 'Olá, sou o Marcos da oficina. Precisamos de cotação para 4 amortecedores dianteiros da Hilux 2019.',
-        time: '11:05',
-        sender: 'client',
-      },
-      {
-        id: 'm5',
-        text: 'Bom dia Marcos! Localizamos o par dianteiro Cofap Turbogás por R$ 890,00 e Monroe por R$ 940,00.',
-        time: '11:10',
-        sender: 'ai',
-      },
-      {
-        id: 'm6',
-        text: 'Faturamento via boleto PJ para 28 dias seria aprovado? Temos CNPJ ativo.',
-        time: '11:15',
-        sender: 'client',
-      },
-    ],
-  },
-  {
-    id: 'cust-3',
-    name: 'Mariana Oliveira',
-    type: 'PF',
-    phone: '(31) 97654-3210',
-    status: 'resolvido',
-    unreadCount: 0,
-    lastActivity: 'Ontem',
-    messages: [
-      {
-        id: 'm7',
-        text: 'Oi! O filtro de óleo do Onix 1.0 turbo chegou?',
-        time: 'Ontem 14:20',
-        sender: 'client',
-      },
-      {
-        id: 'm8',
-        text: 'Olá Mariana, sim! Acabou de entrar em estoque o filtro original GM por R$ 38,00.',
-        time: 'Ontem 14:25',
-        sender: 'agent',
-      },
-      {
-        id: 'm9',
-        text: 'Já passei aí e retirei hoje cedo, muito obrigada pelo excelente atendimento!',
-        time: 'Ontem 16:40',
-        sender: 'client',
-      },
-    ],
-  },
-  {
-    id: 'cust-4',
-    name: 'Transportadora Rodonorte Ltda',
-    type: 'PJ',
-    phone: '(41) 98877-6655',
-    company: 'Rodonorte Transportes',
-    status: 'em_atendimento',
-    unreadCount: 0,
-    lastActivity: '09:20',
-    messages: [
-      {
-        id: 'm10',
-        text: 'Prezados, temos uma frota de 10 vans Sprinter 415 e precisamos de kits de embreagem Sachs.',
-        time: '08:50',
-        sender: 'client',
-      },
-      {
-        id: 'm11',
-        text: 'Bom dia equipe Rodonorte! Temos 6 unidades em pronta entrega e as outras 4 em 24h com desconto corporativo.',
-        time: '09:05',
-        sender: 'agent',
-      },
-      {
-        id: 'm12',
-        text: 'Ótimo. Por favor envie a proposta formal em PDF para o financeiro.',
-        time: '09:20',
-        sender: 'client',
-      },
-    ],
-  },
-  {
-    id: 'cust-5',
-    name: 'Lucas Ferreira',
-    type: 'PF',
-    phone: '(21) 99887-1122',
-    status: 'novo',
-    unreadCount: 1,
-    lastActivity: '11:30',
-    messages: [
-      {
-        id: 'm13',
-        text: 'Olá! Vocês fazem entrega expressa de bateria automotiva no bairro da Tijuca?',
-        time: '11:22',
-        sender: 'client',
-      },
-      {
-        id: 'm14',
-        text: 'Olá Lucas! Sim, nosso motoboy parceiro entrega baterias Moura e Heliar com instalação em até 45 min.',
-        time: '11:25',
-        sender: 'ai',
-      },
-      {
-        id: 'm15',
-        text: 'Maravilha, estou com o carro parado aqui na Rua Conde de Bonfim. É bateria de 60Ah polo positivo direito.',
-        time: '11:30',
-        sender: 'client',
-      },
-    ],
-  },
-]
+export type { WhatsAppStatus, WhatsAppMessage, WhatsAppCustomer }
 
 export default function WhatsAppAtendimento() {
   const navigate = useNavigate()
-  const [customers, setCustomers] = useState<WhatsAppCustomer[]>(INITIAL_CUSTOMERS)
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('cust-1')
+  const [customers, setCustomers] = useState<WhatsAppCustomer[]>([])
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'todos' | WhatsAppStatus>('todos')
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
   const [inputText, setInputText] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+
+  const fetchData = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsRefreshing(true)
+    try {
+      const data = await loadWhatsAppConversations()
+      setCustomers(data)
+      setSelectedCustomerId((prevId) => {
+        if (!prevId && data.length > 0) {
+          return data[0].id
+        }
+        if (prevId && data.some((c) => c.id === prevId)) {
+          return prevId
+        }
+        return data.length > 0 ? data[0].id : ''
+      })
+    } catch (err) {
+      console.error('Erro ao carregar conversas do WhatsApp:', err)
+    } finally {
+      setLoading(false)
+      setIsRefreshing(false)
+    }
+  }, [])
+
+  // Carga inicial
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
+
+  // Realtime subscription para webhook_received e message_processing
+  useRealtime('webhook_received', () => {
+    fetchData(true)
+  })
+  useRealtime('message_processing', () => {
+    fetchData(true)
+  })
+
+  // Polling leve a cada 12 segundos para garantir sincronização caso realtime falhe
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchData(true)
+    }, 12000)
+    return () => clearInterval(interval)
+  }, [fetchData])
 
   const activeCustomer = customers.find((c) => c.id === selectedCustomerId) || customers[0]
 
@@ -235,6 +118,7 @@ export default function WhatsAppAtendimento() {
       text: inputText.trim(),
       time: timeStr,
       sender: 'agent',
+      timestamp: now.getTime(),
     }
 
     setCustomers((prev) =>
@@ -297,6 +181,19 @@ export default function WhatsAppAtendimento() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchData(false)}
+            disabled={isRefreshing}
+            className="text-slate-700"
+            title="Atualizar mensagens agora"
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-1.5 text-emerald-600 ${isRefreshing ? 'animate-spin' : ''}`}
+            />
+            Atualizar
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -403,9 +300,14 @@ export default function WhatsAppAtendimento() {
 
           {/* Lista de Clientes com scroll */}
           <div className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white">
-            {filteredCustomers.length === 0 ? (
+            {loading ? (
+              <div className="p-8 text-center text-xs text-slate-500 flex flex-col items-center justify-center gap-2">
+                <RefreshCw className="h-5 w-5 animate-spin text-emerald-600" />
+                <span>Carregando conversas do WhatsApp...</span>
+              </div>
+            ) : filteredCustomers.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-500">
-                Nenhum cliente encontrado neste filtro.
+                Nenhuma conversa encontrada.
               </div>
             ) : (
               filteredCustomers.map((customer) => {

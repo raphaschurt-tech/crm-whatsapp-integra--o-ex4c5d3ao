@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-03T23:50:53.106Z",
+  "generatedAt": "2026-09-04T01:14:02.034Z",
   "collections": [
     {
       "name": "users",
@@ -543,8 +543,8 @@
       "name": "webhook_received",
       "type": "base",
       "apiRules": {
-        "list": null,
-        "view": null,
+        "list": "",
+        "view": "",
         "create": "",
         "update": null,
         "delete": null
@@ -636,8 +636,8 @@
       "name": "message_processing",
       "type": "base",
       "apiRules": {
-        "list": null,
-        "view": null,
+        "list": "",
+        "view": "",
         "create": null,
         "update": null,
         "delete": null
