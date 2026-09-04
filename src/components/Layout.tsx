@@ -71,18 +71,18 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
-      <aside className="hidden md:flex w-[260px] flex-col bg-white border-r border-slate-200 fixed inset-y-0 z-30">
-        <div className="p-4 flex flex-col items-center justify-center border-b border-slate-100 bg-white">
+      <aside className="hidden md:flex w-56 flex-col bg-white border-r border-slate-200 fixed inset-y-0 z-30">
+        <div className="p-3.5 flex flex-col items-center justify-center border-b border-slate-100 bg-white">
           <Link to="/" className="flex flex-col items-center justify-center w-full group py-1">
             <img
               src="/visual-edits/logo-preto-rpa-dfa45fe5.png"
               alt="RPA Auto Parts"
-              className="w-full h-auto max-h-24 object-contain transition-transform group-hover:scale-[1.02]"
+              className="w-full h-auto max-h-20 object-contain transition-transform group-hover:scale-[1.02]"
             />
           </Link>
         </div>
 
-        <nav className="flex-1 p-4 space-y-1.5 overflow-y-auto">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
             const Icon = item.icon
             const active =
@@ -93,7 +93,7 @@ export default function Layout() {
                 key={item.path}
                 to={item.path}
                 className={cn(
-                  'flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors relative',
+                  'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors relative',
                   active
                     ? 'bg-emerald-50 text-emerald-700 font-semibold'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
@@ -102,24 +102,26 @@ export default function Layout() {
                 {active && (
                   <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-emerald-500 rounded-r" />
                 )}
-                <Icon className={cn('h-5 w-5', active ? 'text-emerald-600' : 'text-slate-400')} />
-                {item.label}
+                <Icon
+                  className={cn('h-4 w-4 shrink-0', active ? 'text-emerald-600' : 'text-slate-400')}
+                />
+                <span className="truncate">{item.label}</span>
               </Link>
             )
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-100 bg-slate-50/50">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 overflow-hidden">
-              <div className="h-9 w-9 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm shrink-0">
+        <div className="p-3 border-t border-slate-100 bg-slate-50/50">
+          <div className="flex items-center justify-between gap-1.5">
+            <div className="flex items-center gap-2.5 overflow-hidden min-w-0">
+              <div className="h-8 w-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
                 {user?.name?.[0]?.toUpperCase() || 'U'}
               </div>
-              <div className="truncate">
-                <p className="text-sm font-semibold text-slate-800 truncate">
+              <div className="truncate min-w-0">
+                <p className="text-xs font-semibold text-slate-800 truncate">
                   {user?.name || user?.email}
                 </p>
-                <span className="inline-block px-1.5 py-0.5 text-[10px] uppercase font-bold text-emerald-700 bg-emerald-100 rounded">
+                <span className="inline-block px-1.5 py-0.5 text-[9px] uppercase font-bold text-emerald-700 bg-emerald-100 rounded">
                   {user?.role || 'Colaborador'}
                 </span>
               </div>
@@ -128,7 +130,7 @@ export default function Layout() {
               variant="ghost"
               size="icon"
               onClick={handleSignOut}
-              className="text-slate-400 hover:text-red-600 shrink-0"
+              className="h-8 w-8 text-slate-400 hover:text-red-600 shrink-0"
               title="Sair"
             >
               <LogOut className="h-4 w-4" />
@@ -171,8 +173,8 @@ export default function Layout() {
                       active ? 'bg-emerald-50 text-emerald-700 font-semibold' : 'text-slate-600',
                     )}
                   >
-                    <Icon className="h-5 w-5" />
-                    {item.label}
+                    <Icon className="h-5 w-5 shrink-0" />
+                    <span>{item.label}</span>
                   </Link>
                 )
               })}
@@ -191,7 +193,7 @@ export default function Layout() {
         </div>
       )}
 
-      <div className="flex-1 md:pl-[260px] flex flex-col min-w-0">
+      <div className="flex-1 md:pl-56 flex flex-col min-w-0">
         <header className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 md:px-8 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Button
