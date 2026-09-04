@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react'
 import {
   Search,
   Send,
@@ -12,6 +12,7 @@ import {
   FileText,
   Sparkles,
   RefreshCw,
+  ChevronDown,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -38,7 +39,14 @@ export default function WhatsAppAtendimento() {
   const [inputText, setInputText] = useState('')
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [hasUnreadBelow, setHasUnreadBelow] = useState(false)
+
+  const chatContainerRef = useRef<HTMLDivElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const isNearBottomRef = useRef(true)
+  const prevCustomerIdRef = useRef<string | null>(null)
+  const prevMessagesCountRef = useRef<number>(0)
+  const shouldScrollOnSendRef = useRef(false)
 
   const fetchData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsRefreshing(true)
@@ -85,9 +93,83 @@ export default function WhatsAppAtendimento() {
 
   const activeCustomer = customers.find((c) => c.id === selectedCustomerId) || customers[0]
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [activeCustomer?.messages])
+  const checkIfNearBottom = () => {
+    const el = chatContainerRef.current
+    if (!el) return true
+    const threshold = 120
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    return distanceToBottom <= threshold
+  }
+
+  const handleChatScroll = () => {
+    const isNear = checkIfNearBottom()
+    isNearBottomRef.current = isNear
+    if (isNear && hasUnreadBelow) {
+      setHasUnreadBelow(false)
+    }
+  }
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTo({
+        top: chatContainerRef.current.scrollHeight,
+        behavior,
+      })
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior })
+    }
+    setHasUnreadBelow(false)
+    isNearBottomRef.current = true
+  }
+
+  // Controle inteligente de scroll
+  useLayoutEffect(() => {
+    if (!activeCustomer) return
+
+    const currentCustId = activeCustomer.id
+    const currentMessagesCount = activeCustomer.messages.length
+    const isNewConversation = prevCustomerIdRef.current !== currentCustId
+    const hadMessages = prevMessagesCountRef.current
+    const messageAdded = currentMessagesCount > hadMessages
+
+    if (isNewConversation) {
+      // (a) Ao abrir/selecionar conversa pela primeira vez: rolar direto para o fim
+      prevCustomerIdRef.current = currentCustId
+      prevMessagesCountRef.current = currentMessagesCount
+      setHasUnreadBelow(false)
+      // timeout pequeno para dar tempo do container medir layout se acabou de renderizar
+      requestAnimationFrame(() => {
+        scrollToBottom('auto')
+      })
+      return
+    }
+
+    // Mesmo cliente já aberto
+    if (shouldScrollOnSendRef.current) {
+      // (b) Envio do próprio usuário: sempre rolar para o fim
+      shouldScrollOnSendRef.current = false
+      prevMessagesCountRef.current = currentMessagesCount
+      requestAnimationFrame(() => {
+        scrollToBottom('smooth')
+      })
+      return
+    }
+
+    if (messageAdded) {
+      // Nova mensagem de terceiro ou atualização de dados
+      if (isNearBottomRef.current) {
+        // Usuário já está perto do fim: rolar suavemente
+        requestAnimationFrame(() => {
+          scrollToBottom('smooth')
+        })
+      } else {
+        // Usuário está rolando para cima lendo histórico: NÃO mover o scroll
+        setHasUnreadBelow(true)
+      }
+    }
+
+    prevMessagesCountRef.current = currentMessagesCount
+  }, [activeCustomer?.id, activeCustomer?.messages])
 
   const filteredCustomers = customers.filter((c) => {
     if (statusFilter !== 'todos' && c.status !== statusFilter) return false
@@ -120,6 +202,8 @@ export default function WhatsAppAtendimento() {
       sender: 'agent',
       timestamp: now.getTime(),
     }
+
+    shouldScrollOnSendRef.current = true
 
     setCustomers((prev) =>
       prev.map((c) => {
@@ -483,7 +567,11 @@ export default function WhatsAppAtendimento() {
               - Mensagens do cliente à direita (verde)
               - Respostas da IA ou do atendente à esquerda (branco/cinza)
             */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3.5">
+            <div
+              ref={chatContainerRef}
+              onScroll={handleChatScroll}
+              className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3.5 relative"
+            >
               <div className="flex justify-center my-2">
                 <span className="text-[11px] bg-white/80 border border-slate-200 text-slate-500 px-3 py-1 rounded-full shadow-xs">
                   Criptografia de ponta a ponta simulada • Atendimento RPA Auto Parts
@@ -539,6 +627,21 @@ export default function WhatsAppAtendimento() {
               })}
               <div ref={messagesEndRef} />
             </div>
+
+            {/* Indicador discreto "Novas mensagens ↓" se o usuário estiver navegando o histórico */}
+            {hasUnreadBelow && (
+              <div className="absolute bottom-16 right-6 z-20">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => scrollToBottom('smooth')}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs shadow-md rounded-full px-3 py-1.5 flex items-center gap-1.5 border border-emerald-500 animate-in fade-in slide-in-from-bottom-2 duration-200"
+                >
+                  <span>Novas mensagens</span>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            )}
 
             {/* Barra inferior: Campo de texto para resposta manual e botão Enviar */}
             <form
