@@ -71,7 +71,7 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
-      <aside className="hidden md:flex w-56 flex-col bg-white border-r border-slate-200 fixed inset-y-0 z-30">
+      <aside className="hidden md:flex w-[200px] flex-col bg-white border-r border-slate-200 fixed inset-y-0 z-30">
         <div className="p-3.5 flex flex-col items-center justify-center border-b border-slate-100 bg-white">
           <Link to="/" className="flex flex-col items-center justify-center w-full group py-1">
             <img
@@ -193,7 +193,7 @@ export default function Layout() {
         </div>
       )}
 
-      <div className="flex-1 md:pl-56 flex flex-col min-w-0">
+      <div className="flex-1 md:pl-[200px] flex flex-col min-w-0">
         <header className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 md:px-8 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Button
