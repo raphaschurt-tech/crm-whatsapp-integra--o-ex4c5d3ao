@@ -64,9 +64,9 @@ export default function FamilyList() {
 
   const handleOpenEdit = (fam: ItemFamily) => {
     setEditingFamily(fam)
-    setName(fam.name)
+    setName(fam.name || '')
     setDescription(fam.description || '')
-    setSelectedProductIds(Array.isArray(fam.products) ? fam.products : [])
+    setSelectedProductIds(Array.isArray(fam.products) ? [...fam.products] : [])
     setProductSearch('')
     setModalOpen(true)
   }
@@ -241,7 +241,7 @@ export default function FamilyList() {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {famProducts.map((p) => {
-                            const isLow = p.stock_quantity <= (p.min_stock || 0)
+                            const isLow = (p.stock_quantity || 0) <= (p.min_stock || 0)
                             return (
                               <tr key={p.id} className="hover:bg-slate-50/60 transition-colors">
                                 <td className="py-3 px-5">
@@ -268,7 +268,7 @@ export default function FamilyList() {
                                       isLow ? 'text-amber-600' : 'text-slate-800'
                                     }`}
                                   >
-                                    {p.stock_quantity} un.
+                                    {p.stock_quantity || 0} un.
                                   </span>
                                   {isLow && (
                                     <span className="text-[10px] text-amber-600 ml-1.5 font-normal">
@@ -277,10 +277,10 @@ export default function FamilyList() {
                                   )}
                                 </td>
                                 <td className="py-3 px-4 font-semibold text-emerald-700">
-                                  {p.cost ? formatCurrency(p.cost) : 'R$ 0,00'}
+                                  {p.cost ? formatCurrency(p.cost || 0) : 'R$ 0,00'}
                                 </td>
                                 <td className="py-3 px-4 text-right font-medium text-slate-700">
-                                  {formatCurrency(p.price)}
+                                  {formatCurrency(p.price || 0)}
                                 </td>
                               </tr>
                             )

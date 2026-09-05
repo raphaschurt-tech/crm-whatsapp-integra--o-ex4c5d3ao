@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { AuthProvider } from '@/hooks/use-auth'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import Layout from '@/components/Layout'
+import ErrorBoundary from '@/components/ErrorBoundary'
 
 // Pages
 import Login from '@/pages/Login'
@@ -34,57 +35,59 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <Routes>
-          {/* Rota pública: Login */}
-          <Route path="/login" element={<Login />} />
+        <ErrorBoundary>
+          <Routes>
+            {/* Rota pública: Login */}
+            <Route path="/login" element={<Login />} />
 
-          {/* Rota pública: Checkout / Pagamento do Orçamento para clientes */}
-          <Route path="/pagamento/:id" element={<PaymentPage />} />
+            {/* Rota pública: Checkout / Pagamento do Orçamento para clientes */}
+            <Route path="/pagamento/:id" element={<PaymentPage />} />
 
-          {/* Rotas protegidas (exigem autenticação e utilizam o Layout) */}
-          <Route element={<ProtectedRoute />}>
-            <Route element={<Layout />}>
-              <Route path="/" element={<Dashboard />} />
-              {/* Pipeline de Vendas */}
-              <Route path="/pipeline" element={<PipelineBoard />} />
-              {/* Atendimento WhatsApp */}
-              <Route path="/atendimento" element={<WhatsAppAtendimento />} />
-              {/* Orçamentos */}
-              <Route path="/orcamentos" element={<QuoteList />} />
-              <Route path="/orcamentos/novo" element={<QuoteForm />} />
-              <Route path="/orcamentos/:id" element={<QuoteDetail />} />
-              <Route path="/orcamentos/:id/editar" element={<QuoteForm />} />
-              {/* Clientes */}
-              <Route path="/clientes" element={<CustomerList />} />
-              <Route path="/clientes/novo" element={<CustomerForm />} />
-              <Route path="/clientes/:id" element={<CustomerDetail />} />
-              <Route path="/clientes/:id/editar" element={<CustomerForm />} />
-              {/* Gestão de Usuários (Admin) */}
-              <Route element={<ProtectedRoute adminOnly />}>
-                <Route path="/usuarios" element={<UserList />} />
+            {/* Rotas protegidas (exigem autenticação e utilizam o Layout) */}
+            <Route element={<ProtectedRoute />}>
+              <Route element={<Layout />}>
+                <Route path="/" element={<Dashboard />} />
+                {/* Pipeline de Vendas */}
+                <Route path="/pipeline" element={<PipelineBoard />} />
+                {/* Atendimento WhatsApp */}
+                <Route path="/atendimento" element={<WhatsAppAtendimento />} />
+                {/* Orçamentos */}
+                <Route path="/orcamentos" element={<QuoteList />} />
+                <Route path="/orcamentos/novo" element={<QuoteForm />} />
+                <Route path="/orcamentos/:id" element={<QuoteDetail />} />
+                <Route path="/orcamentos/:id/editar" element={<QuoteForm />} />
+                {/* Clientes */}
+                <Route path="/clientes" element={<CustomerList />} />
+                <Route path="/clientes/novo" element={<CustomerForm />} />
+                <Route path="/clientes/:id" element={<CustomerDetail />} />
+                <Route path="/clientes/:id/editar" element={<CustomerForm />} />
+                {/* Gestão de Usuários (Admin) */}
+                <Route element={<ProtectedRoute adminOnly />}>
+                  <Route path="/usuarios" element={<UserList />} />
+                </Route>
+                {/* Produtos / Estoque (Suporta tanto /produtos quanto /estoque para compatibilidade) */}
+                <Route path="/produtos" element={<ProductList />} />
+                <Route path="/produtos/novo" element={<ProductForm />} />
+                <Route path="/produtos/:id" element={<ProductDetail />} />
+                <Route path="/produtos/:id/editar" element={<ProductForm />} />
+                <Route path="/estoque" element={<ProductList />} />
+                <Route path="/estoque/novo" element={<ProductForm />} />
+                <Route path="/estoque/:id" element={<ProductDetail />} />
+                <Route path="/estoque/:id/editar" element={<ProductForm />} />
+                {/* PCP / Famílias e Ordens de Produção */}
+                <Route path="/familias" element={<FamilyList />} />
+                <Route path="/ordens-producao" element={<ProductionOrderList />} />
+                {/* Configurações (Admin) */}
+                <Route element={<ProtectedRoute adminOnly />}>
+                  <Route path="/configuracoes" element={<SettingsPage />} />
+                </Route>{' '}
               </Route>
-              {/* Produtos / Estoque (Suporta tanto /produtos quanto /estoque para compatibilidade) */}
-              <Route path="/produtos" element={<ProductList />} />
-              <Route path="/produtos/novo" element={<ProductForm />} />
-              <Route path="/produtos/:id" element={<ProductDetail />} />
-              <Route path="/produtos/:id/editar" element={<ProductForm />} />
-              <Route path="/estoque" element={<ProductList />} />
-              <Route path="/estoque/novo" element={<ProductForm />} />
-              <Route path="/estoque/:id" element={<ProductDetail />} />
-              <Route path="/estoque/:id/editar" element={<ProductForm />} />
-              {/* PCP / Famílias e Ordens de Produção */}
-              <Route path="/familias" element={<FamilyList />} />
-              <Route path="/ordens-producao" element={<ProductionOrderList />} />
-              {/* Configurações (Admin) */}
-              <Route element={<ProtectedRoute adminOnly />}>
-                <Route path="/configuracoes" element={<SettingsPage />} />
-              </Route>{' '}
             </Route>
-          </Route>
 
-          {/* Fallback 404 */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+            {/* Fallback 404 */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </ErrorBoundary>
       </TooltipProvider>
     </AuthProvider>
   </BrowserRouter>

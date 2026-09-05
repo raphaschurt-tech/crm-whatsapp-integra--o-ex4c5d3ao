@@ -202,7 +202,7 @@ export default function ProductList() {
             </Label>
             <Select value={natureFilter} onValueChange={(val: any) => setNatureFilter(val)}>
               <SelectTrigger className="w-44 text-xs h-9 bg-white">
-                <SelectValue />
+                <SelectValue placeholder="Todas as naturezas" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="todas">Todas as naturezas</SelectItem>
@@ -326,13 +326,15 @@ export default function ProductList() {
                         </div>
                       </td>
                       <td className="p-4 font-semibold text-slate-900">
-                        {formatCurrency(p.price)}
+                        {formatCurrency(p.price || 0)}
                       </td>
                       <td className="p-4 text-xs font-semibold text-slate-600">
-                        {p.cost ? formatCurrency(p.cost) : '—'}
+                        {p.cost ? formatCurrency(p.cost || 0) : '—'}
                       </td>
-                      <td className="p-4 font-bold text-slate-800">{p.stock_quantity} un.</td>
-                      <td className="p-4">{getStockBadge(p.stock_quantity, p.min_stock)}</td>
+                      <td className="p-4 font-bold text-slate-800">{p.stock_quantity || 0} un.</td>
+                      <td className="p-4">
+                        {getStockBadge(p.stock_quantity || 0, p.min_stock || 0)}
+                      </td>
                       <td className="p-4 text-right space-x-1">
                         <Button
                           variant="ghost"

@@ -84,18 +84,18 @@ export default function QuoteList() {
   const handleSendWhatsApp = (quote: Quote) => {
     const phone = quote.expand?.customer?.phone || whatsappNumber
     const origin = window.location.origin
-    const link = `${origin}/pagamento/${quote.id}?token=${quote.payment_token}`
+    const link = `${origin}/pagamento/${quote.id}?token=${quote.payment_token || ''}`
     const msg = buildQuoteMessage(
-      quote.number,
+      quote.number || 'Orçamento',
       quote.expand?.customer?.name || 'Cliente',
-      quote.total,
+      quote.total || 0,
       link,
     )
     openWhatsApp(phone, msg)
   }
 
-  const getStatusBadge = (status: Quote['status']) => {
-    const map = {
+  const getStatusBadge = (status?: Quote['status'] | null) => {
+    const map: Record<string, { label: string; class: string }> = {
       rascunho: { label: 'Rascunho', class: 'bg-slate-100 text-slate-700 border-slate-200' },
       enviado: { label: 'Enviado', class: 'bg-blue-100 text-blue-700 border-blue-200' },
       aprovado: { label: 'Aprovado', class: 'bg-green-100 text-green-700 border-green-200' },
@@ -105,7 +105,7 @@ export default function QuoteList() {
         class: 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold',
       },
     }
-    const item = map[status] || map.rascunho
+    const item = (status && map[status]) || map.rascunho
     return (
       <Badge variant="outline" className={item.class}>
         {item.label}
@@ -202,7 +202,7 @@ export default function QuoteList() {
                       {new Date(quote.created).toLocaleDateString('pt-BR')}
                     </td>
                     <td className="p-4 font-semibold text-slate-900">
-                      {formatCurrency(quote.total)}
+                      {formatCurrency(quote.total || 0)}
                     </td>
                     <td className="p-4">{getStatusBadge(quote.status)}</td>
                     <td className="p-4 text-right space-x-1">
@@ -257,7 +257,7 @@ export default function QuoteList() {
                 </div>
                 <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                   <span className="text-base font-bold text-slate-900">
-                    {formatCurrency(quote.total)}
+                    {formatCurrency(quote.total || 0)}
                   </span>
                   <div className="flex gap-1">
                     <Button
