@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-04T23:35:37.378Z",
+  "generatedAt": "2026-09-05T22:19:28.691Z",
   "collections": [
     {
       "name": "users",
@@ -660,6 +660,18 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "is_audio",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "audio_url",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -754,6 +766,18 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "is_audio",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "audio_url",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

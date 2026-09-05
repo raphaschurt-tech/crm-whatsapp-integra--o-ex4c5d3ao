@@ -15,6 +15,7 @@ import {
   ChevronDown,
   PackageSearch,
   History,
+  Mic,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -678,6 +679,15 @@ export default function WhatsAppAtendimento() {
                               Atendente RPA
                             </span>
                           )}
+                        </div>
+                      )}
+
+                      {/* Badge discreto quando a mensagem do cliente veio de áudio transcrito */}
+                      {isClient && msg.isAudio && (
+                        <div className="flex items-center gap-1 mb-1">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-600/10 text-emerald-800 border border-emerald-600/20">
+                            <Mic className="w-2.5 h-2.5 text-emerald-700" /> Áudio transcrito
+                          </span>
                         </div>
                       )}
 

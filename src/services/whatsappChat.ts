@@ -14,6 +14,8 @@ export interface WhatsAppMessage {
   sender: WhatsAppSender
   timestamp: number
   messageId?: string
+  isAudio?: boolean
+  audioUrl?: string
 }
 
 export interface WhatsAppCustomer {
@@ -42,6 +44,8 @@ export interface WebhookReceivedRecord extends RecordModel {
   messageId?: string
   instanceId?: string
   moment?: number
+  is_audio?: boolean
+  audio_url?: string
 }
 
 export interface MessageProcessingRecord extends RecordModel {
@@ -55,6 +59,8 @@ export interface MessageProcessingRecord extends RecordModel {
   zapiStatus?: number
   errorMessage?: string
   retryCount?: number
+  is_audio?: boolean
+  audio_url?: string
 }
 
 /**
@@ -295,6 +301,8 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         sender,
         timestamp,
         messageId: rec.messageId,
+        isAudio: Boolean(rec.is_audio),
+        audioUrl: rec.audio_url || undefined,
       })
 
       if (rec.messageId) {
@@ -320,6 +328,8 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
           sender: 'client',
           timestamp: procDate.getTime(),
           messageId: proc.messageId,
+          isAudio: Boolean(proc.is_audio),
+          audioUrl: proc.audio_url || undefined,
         })
         seenMessageIds.add(proc.messageId)
       }
