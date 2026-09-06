@@ -41,6 +41,9 @@ export default function PipelineBoard() {
   // Filtros
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>('all')
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
+  const [sourceFilter, setSourceFilter] = useState<
+    'ALL' | 'whatsapp' | 'instagram' | 'google' | 'other'
+  >('ALL')
   const [selectedUser, setSelectedUser] = useState<string>('all')
   const [search, setSearch] = useState('')
 
@@ -104,6 +107,14 @@ export default function PipelineBoard() {
         return false
       }
 
+      // Origem do Lead (Filtro por Canal)
+      if (sourceFilter !== 'ALL') {
+        const itemSource = item.customer.lead_source || 'other'
+        if (itemSource !== sourceFilter) {
+          return false
+        }
+      }
+
       // 2. Período baseado na última interação ou data de criação do cliente
       const targetTime = item.lastInteractionTimestamp || new Date(item.customer.created).getTime()
       if (periodFilter === 'today' && targetTime < startOfToday) {
@@ -143,7 +154,7 @@ export default function PipelineBoard() {
 
       return true
     })
-  }, [cards, typeFilter, periodFilter, selectedUser, search])
+  }, [cards, typeFilter, sourceFilter, periodFilter, selectedUser, search])
 
   // Agrupamento por colunas
   const columnsData = useMemo(() => {
@@ -407,6 +418,22 @@ export default function PipelineBoard() {
 
         {/* Filtros de Período e Responsável */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
+          {/* Origem do Lead */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+            <select
+              aria-label="Filtrar por origem do lead"
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value as any)}
+              className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer"
+            >
+              <option value="ALL">Todas as origens</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="instagram">Instagram</option>
+              <option value="google">Google</option>
+              <option value="other">Outros</option>
+            </select>
+          </div>
+
           {/* Período */}
           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
             <Calendar className="h-3.5 w-3.5 text-slate-400" />

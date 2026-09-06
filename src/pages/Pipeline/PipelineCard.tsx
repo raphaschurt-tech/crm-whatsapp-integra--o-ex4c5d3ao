@@ -3,6 +3,7 @@ import { Phone, Clock, DollarSign, GripVertical, FileText, Building2 } from 'luc
 import { PipelineCardData } from '@/services/pipelineService'
 import { formatCurrency } from '@/lib/whatsapp'
 import { formatPhoneDisplay } from '@/services/whatsappChat'
+import { LeadSourceBadge } from '@/components/LeadSourceBadge'
 
 interface PipelineCardProps {
   card: PipelineCardData
@@ -27,7 +28,7 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({ card, onClick, onDra
       onClick={onClick}
       className="group relative bg-white border border-slate-200/90 rounded-xl p-3.5 shadow-xs hover:shadow-md hover:border-emerald-300 transition-all cursor-pointer select-none space-y-2.5 active:scale-[0.99] active:shadow-xs"
     >
-      {/* Top Header: Tipo + Nome + Grip */}
+      {/* Top Header: Tipo + Origem + Nome + Grip */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <span
@@ -39,6 +40,7 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({ card, onClick, onDra
           >
             {resolvedType}
           </span>
+          <LeadSourceBadge source={customer.lead_source} />
           <h4 className="font-bold text-slate-900 text-xs sm:text-sm truncate group-hover:text-emerald-700 transition-colors">
             {customer.name}
           </h4>

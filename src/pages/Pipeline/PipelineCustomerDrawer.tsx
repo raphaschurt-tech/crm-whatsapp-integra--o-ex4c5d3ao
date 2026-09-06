@@ -19,6 +19,7 @@ import { formatCurrency, openWhatsApp } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useNavigate } from 'react-router-dom'
+import { LeadSourceBadge } from '@/components/LeadSourceBadge'
 
 interface PipelineCustomerDrawerProps {
   card: PipelineCardData | null
@@ -64,6 +65,7 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
                 >
                   {resolvedType}
                 </span>
+                <LeadSourceBadge source={customer.lead_source} size="md" />
                 <span
                   className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
                     currentColumnDef?.badgeBg || 'bg-slate-100 text-slate-700'

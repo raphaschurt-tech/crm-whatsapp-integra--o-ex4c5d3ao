@@ -8,6 +8,7 @@ import { formatCurrency, openWhatsApp } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { LeadSourceBadge } from '@/components/LeadSourceBadge'
 
 export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>()
@@ -67,7 +68,7 @@ export default function CustomerDetail() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold text-slate-900">{customer.name}</h1>
               <Badge
                 className={
@@ -78,6 +79,7 @@ export default function CustomerDetail() {
               >
                 {customer.type || (customer.cnpj ? 'PJ' : 'PF')}
               </Badge>
+              <LeadSourceBadge source={customer.lead_source} size="md" />
             </div>
           </div>
         </div>
@@ -102,6 +104,12 @@ export default function CustomerDetail() {
                   ? 'Pessoa Jurídica (PJ)'
                   : 'Pessoa Física (PF)'}
               </p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 uppercase font-semibold">Origem do Lead</p>
+              <div className="mt-1">
+                <LeadSourceBadge source={customer.lead_source} size="sm" />
+              </div>
             </div>
             {customer.cpf && (
               <div>

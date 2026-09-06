@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-06T02:19:31.491Z",
+  "generatedAt": "2026-09-06T02:26:06.028Z",
   "collections": [
     {
       "name": "users",
@@ -142,6 +142,13 @@
           "type": "text",
           "required": false,
           "system": false
+        },
+        {
+          "name": "lead_source",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["whatsapp", "instagram", "google", "other"]
         }
       ],
       "indexes": [

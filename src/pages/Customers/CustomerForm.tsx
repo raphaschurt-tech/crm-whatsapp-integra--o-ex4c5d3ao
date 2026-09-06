@@ -7,13 +7,14 @@ import {
   checkDuplicateDocument,
   cleanDocument,
 } from '@/services/customers'
-import { CustomerType } from '@/types/crm'
+import { CustomerType, LeadSource } from '@/types/crm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/hooks/use-toast'
 import { User, Building2, AlertCircle } from 'lucide-react'
+import { LEAD_SOURCE_OPTIONS, LEAD_SOURCE_CONFIG } from '@/components/LeadSourceBadge'
 
 // Funções utilitárias de formatação
 const maskCPF = (val: string) => {
@@ -44,6 +45,7 @@ export default function CustomerForm() {
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [company, setCompany] = useState('')
+  const [leadSource, setLeadSource] = useState<LeadSource>('other')
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
   const [documentError, setDocumentError] = useState<string | null>(null)
@@ -59,6 +61,11 @@ export default function CustomerForm() {
           setEmail(c.email || '')
           setCompany(c.company || '')
           setNotes(c.notes || '')
+          if (c.lead_source) {
+            setLeadSource(c.lead_source)
+          } else {
+            setLeadSource('other')
+          }
           if (c.type) {
             setType(c.type)
           } else if (c.cnpj) {
@@ -112,6 +119,7 @@ export default function CustomerForm() {
         company,
         notes,
         type,
+        lead_source: leadSource,
         cpf: type === 'PF' ? cpf : '',
         cnpj: type === 'PJ' ? cnpj : '',
       }
@@ -273,6 +281,28 @@ export default function CustomerForm() {
             />
           </div>
         )}
+
+        {/* Origem do Lead */}
+        <div className="space-y-1.5">
+          <Label htmlFor="lead-source">Origem do Lead</Label>
+          <div className="relative">
+            <select
+              id="lead-source"
+              value={leadSource}
+              onChange={(e) => setLeadSource(e.target.value as LeadSource)}
+              className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {LEAD_SOURCE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="text-xs text-slate-500">
+            Canal de aquisição pelo qual o cliente entrou em contato pela primeira vez.
+          </p>
+        </div>
 
         <div className="space-y-1.5">
           <Label>Observações</Label>

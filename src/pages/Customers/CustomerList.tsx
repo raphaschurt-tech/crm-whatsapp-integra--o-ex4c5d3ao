@@ -18,6 +18,7 @@ import { useRealtime } from '@/hooks/use-realtime'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from '@/hooks/use-toast'
+import { LeadSourceBadge } from '@/components/LeadSourceBadge'
 
 export default function CustomerList() {
   const navigate = useNavigate()
@@ -168,6 +169,7 @@ export default function CustomerList() {
                 <tr className="bg-slate-50 text-xs uppercase font-semibold text-slate-500 border-b">
                   <th className="p-4">Tipo</th>
                   <th className="p-4">Nome</th>
+                  <th className="p-4">Origem</th>
                   <th className="p-4">Documento</th>
                   <th className="p-4">Telefone</th>
                   <th className="p-4">E-mail</th>
@@ -193,6 +195,9 @@ export default function CustomerList() {
                         </span>
                       </td>
                       <td className="p-4 font-bold text-slate-900">{c.name}</td>
+                      <td className="p-4">
+                        <LeadSourceBadge source={c.lead_source} />
+                      </td>
                       <td className="p-4 text-slate-600 font-mono text-xs">{doc || '-'}</td>
                       <td className="p-4 text-slate-700">{c.phone}</td>
                       <td className="p-4 text-slate-500">{c.email || '-'}</td>
@@ -255,6 +260,7 @@ export default function CustomerList() {
                         >
                           {resolvedType}
                         </span>
+                        <LeadSourceBadge source={c.lead_source} />
                         <p className="font-bold text-slate-900">{c.name}</p>
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">{c.phone}</p>

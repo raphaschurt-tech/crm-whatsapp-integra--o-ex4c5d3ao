@@ -483,6 +483,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         newCust.set('notes', 'Lead originado pelo WhatsApp')
         newCust.set('type', 'PF')
         newCust.set('pipeline_status', 'novo_lead')
+        newCust.set('lead_source', 'whatsapp')
         $app.save(newCust)
 
         console.log(
