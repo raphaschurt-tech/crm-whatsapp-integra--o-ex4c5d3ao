@@ -437,8 +437,77 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     console.log('[WEBHOOK-PERSIST-ERR]', err.message || String(err))
   }
 
-  // 3. Validações de segurança e regras para enfileiramento na message_processing
-  // Regra: Ignorar mensagens enviadas pelo próprio bot (fromMe=true)
+  // ==========================================
+  // AUTO-CRIAÇÃO DE CLIENTE NO CRM (WHATSAPP LEAD)
+  // ==========================================
+  // Se o número de telefone de uma mensagem recebida de cliente (!isFromMe) ainda não tem cliente
+  // cadastrado no banco, cria automaticamente o registro de cliente usando:
+  // - Nome: o próprio número como nome provisório (a IA no worker tentará detectar se o cliente se apresentar)
+  // - Telefone: o número normalizado
+  // - Nota: 'Lead originado pelo WhatsApp'
+  // - pipeline_status: 'novo_lead'
+  // Se o número já existir, apenas reaproveita — nunca duplica.
+  if (
+    !isFromMe &&
+    normalizedPhone &&
+    normalizedPhone.length >= 10 &&
+    normalizedPhone.length <= 13
+  ) {
+    try {
+      const cleanDigits = normalizedPhone.replace(/\D/g, '')
+      let withoutDdi = cleanDigits
+      if (withoutDdi.startsWith('55') && withoutDdi.length >= 12) {
+        withoutDdi = withoutDdi.slice(2)
+      }
+
+      let existingCustomer = null
+      try {
+        const matchingCustomers = $app.findRecordsByFilter(
+          'customers',
+          'phone ~ {:p1} || phone ~ {:p2}',
+          '-created',
+          1,
+          0,
+          { p1: cleanDigits, p2: withoutDdi },
+        )
+        if (matchingCustomers && matchingCustomers.length > 0) {
+          existingCustomer = matchingCustomers[0]
+        }
+      } catch (_) {}
+
+      if (!existingCustomer) {
+        const custCol = $app.findCollectionByNameOrId('customers')
+        const newCust = new Record(custCol)
+        newCust.set('name', normalizedPhone)
+        newCust.set('phone', normalizedPhone)
+        newCust.set('notes', 'Lead originado pelo WhatsApp')
+        newCust.set('type', 'PF')
+        newCust.set('pipeline_status', 'novo_lead')
+        $app.save(newCust)
+
+        console.log(
+          '[CUSTOMER-AUTO-CREATED-WEBHOOK]',
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            customerId: newCust.id,
+            phone: maskedSenderPhone,
+            messageId: messageId,
+          }),
+        )
+      }
+    } catch (autoCustErr) {
+      console.log(
+        '[CUSTOMER-AUTO-CREATE-ERROR]',
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          error: autoCustErr.message || String(autoCustErr),
+          phone: maskedSenderPhone,
+        }),
+      )
+    }
+  }
+
+  // 3. Validações de segurança e regras para enfileiramento na message_processing  // Regra: Ignorar mensagens enviadas pelo próprio bot (fromMe=true)
   if (isFromMe) {
     return e.json(200, { status: 'ignored_from_me' })
   }

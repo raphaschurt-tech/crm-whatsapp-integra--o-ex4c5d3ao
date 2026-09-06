@@ -271,6 +271,188 @@ onRecordAfterCreateSuccess((e) => {
   // Mensagem atual do usuário como último turno
   chatMessages.push({ role: 'user', content: incomingText })
 
+  // ==========================================
+  // DETECÇÃO AUTOMÁTICA DE NOME DO CLIENTE PELA IA / REFINAMENTO DE CADASTRO
+  // ==========================================
+  // Verifica se o cliente já está cadastrado ou precisa ser criado / ter o nome atualizado.
+  try {
+    const cleanPhoneDigits = String(phone || '').replace(/\D/g, '')
+    let withoutDdi = cleanPhoneDigits
+    if (withoutDdi.startsWith('55') && withoutDdi.length >= 12) {
+      withoutDdi = withoutDdi.slice(2)
+    }
+
+    let customerRecord = null
+    try {
+      const foundList = $app.findRecordsByFilter(
+        'customers',
+        'phone ~ {:p1} || phone ~ {:p2}',
+        '-created',
+        1,
+        0,
+        { p1: cleanPhoneDigits, p2: withoutDdi },
+      )
+      if (foundList && foundList.length > 0) {
+        customerRecord = foundList[0]
+      }
+    } catch (_) {}
+
+    // Se o cliente não existir (por exemplo se a mensagem foi enfileirada diretamente), cria agora
+    if (!customerRecord) {
+      try {
+        const custCol = $app.findCollectionByNameOrId('customers')
+        customerRecord = new Record(custCol)
+        customerRecord.set('name', phone) // nome provisório
+        customerRecord.set('phone', phone)
+        customerRecord.set('notes', 'Lead originado pelo WhatsApp')
+        customerRecord.set('type', 'PF')
+        customerRecord.set('pipeline_status', 'novo_lead')
+        $app.save(customerRecord)
+      } catch (createErr) {
+        console.log('[AI-WORKER-CUSTOMER-CREATE-ERR]', createErr.message || String(createErr))
+      }
+    }
+
+    // Se o nome atual do cliente for provisório (apenas dígitos numéricos ou igual ao telefone)
+    // tenta extrair da mensagem se o cliente se apresentou (ex: "Meu nome é Lucas", "Aqui é o Marcos", "Sou a Renata")
+    if (customerRecord) {
+      const currentCustName = String(customerRecord.getString('name') || '').trim()
+      const isDigitsOnly = /^[0-9+\s()-]+$/.test(currentCustName)
+
+      if (isDigitsOnly || currentCustName === phone) {
+        // 1. Tentar extração rápida via regex em português
+        let detectedName = ''
+        const textSample = incomingText.trim()
+
+        const namePatterns = [
+          /(?:meu\s+nome\s+é|me\s+chamo|chamo-me|sou\s+o|sou\s+a|aqui\s+é\s+o|aqui\s+é\s+a|falo\s+com|aqui\s+quem\s+fala\s+é\s+o|aqui\s+quem\s+fala\s+é\s+a)\s+([A-ZÀ-Úa-zà-ú]{2,}(?:\s+[A-ZÀ-Úa-zà-ú]{2,})?)/i,
+          /(?:olá|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,\s]+(?:eu\s+sou\s+o|eu\s+sou\s+a|sou\s+o|sou\s+a|meu\s+nome\s+é|aqui\s+é)\s+([A-ZÀ-Úa-zà-ú]{2,}(?:\s+[A-ZÀ-Úa-zà-ú]{2,})?)/i,
+        ]
+
+        for (let np = 0; np < namePatterns.length; np++) {
+          const match = textSample.match(namePatterns[np])
+          if (match && match[1]) {
+            const rawCandidate = match[1].trim()
+            // Evitar falsos positivos com palavras comuns
+            const stopWords = [
+              'bom',
+              'dia',
+              'tarde',
+              'noite',
+              'ola',
+              'olá',
+              'favor',
+              'uma',
+              'peca',
+              'peça',
+              'orcamento',
+              'orçamento',
+              'amigo',
+              'irmao',
+              'irmão',
+            ]
+            if (
+              !stopWords.includes(rawCandidate.toLowerCase()) &&
+              rawCandidate.length >= 2 &&
+              rawCandidate.length <= 40
+            ) {
+              // Capitalizar nome
+              detectedName = rawCandidate
+                .split(/\s+/)
+                .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                .join(' ')
+              break
+            }
+          }
+        }
+
+        // Se regex não pegou, mas o texto contém indícios fortes de apresentação,
+        // podemos pedir à IA uma extração rápida estruturada caso openaiKey ou skipAi esteja disponível
+        if (
+          !detectedName &&
+          (textSample.toLowerCase().includes('nome') ||
+            textSample.toLowerCase().includes('chamo') ||
+            textSample.toLowerCase().includes('aqui é'))
+        ) {
+          try {
+            const extractMessages = [
+              {
+                role: 'system',
+                content:
+                  'Identifique se o usuário informou o próprio nome nesta mensagem. Se informou, retorne APENAS o nome próprio formatado (Ex: "Lucas Silva"). Se não houver nome de pessoa se apresentando, responda exatamente "NAO". Não adicione pontuação ou explicações.',
+              },
+              { role: 'user', content: textSample },
+            ]
+
+            let aiNameResp = ''
+            if (openaiKey) {
+              const resAi = $http.send({
+                url: 'https://api.openai.com/v1/chat/completions',
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: 'Bearer ' + openaiKey,
+                },
+                body: JSON.stringify({
+                  model: 'gpt-4o-mini',
+                  messages: extractMessages,
+                  max_tokens: 15,
+                  temperature: 0.0,
+                }),
+                timeout: 5,
+              })
+              if (
+                resAi.statusCode === 200 &&
+                resAi.json &&
+                resAi.json.choices &&
+                resAi.json.choices[0]
+              ) {
+                aiNameResp = String(resAi.json.choices[0].message.content || '').trim()
+              }
+            } else {
+              const resAi = $ai.chat({
+                model: 'fast',
+                messages: extractMessages,
+              })
+              if (resAi && resAi.choices && resAi.choices[0]) {
+                aiNameResp = String(resAi.choices[0].message.content || '').trim()
+              }
+            }
+
+            if (
+              aiNameResp &&
+              !aiNameResp.toUpperCase().includes('NAO') &&
+              !aiNameResp.toUpperCase().includes('NÃO') &&
+              aiNameResp.length >= 2 &&
+              aiNameResp.length <= 50
+            ) {
+              detectedName = aiNameResp.replace(/["'.]/g, '').trim()
+            }
+          } catch (_) {
+            // Falha silenciosa na IA auxiliar, mantém o provisório
+          }
+        }
+
+        // Se detectou nome válido, atualiza o registro do cliente
+        if (detectedName) {
+          customerRecord.set('name', detectedName)
+          $app.save(customerRecord)
+          console.log(
+            '[CUSTOMER-NAME-DETECTED]',
+            JSON.stringify({
+              timestamp: new Date().toISOString(),
+              customerId: customerRecord.id,
+              detectedName: detectedName,
+              phone: maskedPhone,
+            }),
+          )
+        }
+      }
+    }
+  } catch (custDetectErr) {
+    console.log('[CUSTOMER-NAME-DETECTION-ERROR]', custDetectErr.message || String(custDetectErr))
+  }
+
   // 7. Início do processamento de IA
   const usedModel = 'gpt-4o-mini'
   console.log(
