@@ -503,6 +503,130 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
+  // ==========================================
+  // DEDUPLICAÇÃO DE ECOS (fromMe = true)
+  // ==========================================
+  // Quando uma mensagem é enviada (pelo atendente via send-message / AgentSentMessage
+  // ou pela IA via Z-API no ai_message_worker), a Z-API devolve um eco assíncrono
+  // "ReceivedCallback" com fromMe=true e messageId diferente do original.
+  // Para evitar duplicar a mensagem no chat e evitar que respostas da IA recebam badge de "Atendente RPA",
+  // verificamos se este eco já existe:
+  // (a) um webhook_received recente do mesmo telefone, fromMe=true, com o mesmo texto (últimos ~10 minutos); OU
+  // (b) um message_processing recente do mesmo telefone cujo aiReplyText seja igual ao texto do eco.
+  // Se existir qualquer um dos dois, NÃO gravamos o eco (return early sem persistir nada).
+  if (isFromMe && normalizedPhone) {
+    const trimmedIncoming = incomingText ? incomingText.trim() : ''
+    const tenMinutesAgoIso = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+
+    // (a) Verificar se já existe webhook_received recente com mesmo telefone, fromMe=true e mesmo texto
+    let isDuplicateWebhook = false
+    try {
+      const recentFromMeList = $app.findRecordsByFilter(
+        'webhook_received',
+        'fromMe = true && created >= {:cutoff}',
+        '-created',
+        30,
+        0,
+        { cutoff: tenMinutesAgoIso },
+      )
+
+      for (let i = 0; i < recentFromMeList.length; i++) {
+        const item = recentFromMeList[i]
+        // Se for o mesmíssimo messageId (já persistido), é duplicação direta
+        if (messageId && item.getString('messageId') === messageId) {
+          isDuplicateWebhook = true
+          break
+        }
+
+        // Comparar telefone
+        let itemPhone = ''
+        const pVal = item.get('phone')
+        if (typeof pVal === 'string') itemPhone = pVal
+        else if (pVal && typeof pVal === 'object')
+          itemPhone = String(pVal.phone || pVal.number || '')
+        const itemDigits = itemPhone.replace(/\D/g, '')
+        const normItemDigits =
+          itemDigits.length === 10 || itemDigits.length === 11 ? '55' + itemDigits : itemDigits
+
+        if (normItemDigits === normalizedPhone) {
+          // Comparar texto
+          let itemText = ''
+          const tVal = item.get('text')
+          if (typeof tVal === 'string') itemText = tVal
+          else if (tVal && typeof tVal === 'object') {
+            itemText = String(tVal.message || tVal.text || tVal.conversation || '')
+          }
+          if (trimmedIncoming && itemText.trim() === trimmedIncoming) {
+            isDuplicateWebhook = true
+            break
+          }
+        }
+      }
+    } catch (checkWhErr) {
+      console.log('[WEBHOOK-DEDUP-CHECK-WH-ERR]', checkWhErr.message || String(checkWhErr))
+    }
+
+    if (isDuplicateWebhook) {
+      console.log(
+        '[WEBHOOK-ECHO-DEDUPLICATED-AGENT]',
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          phone: maskedSenderPhone,
+          messageId: messageId,
+          textSample: trimmedIncoming.slice(0, 40),
+          reason: 'Duplicate of recent fromMe webhook_received (e.g. AgentSentMessage)',
+        }),
+      )
+      return e.json(200, { status: 'ignored_duplicate_echo' })
+    }
+
+    // (b) Verificar se já existe message_processing recente cujo aiReplyText seja igual ao texto do eco
+    let isDuplicateAiReply = false
+    try {
+      const recentAiList = $app.findRecordsByFilter(
+        'message_processing',
+        'replySent = true && created >= {:cutoff}',
+        '-created',
+        20,
+        0,
+        { cutoff: tenMinutesAgoIso },
+      )
+
+      for (let j = 0; j < recentAiList.length; j++) {
+        const aiItem = recentAiList[j]
+        const aiPhoneDigits = String(aiItem.getString('phone') || '').replace(/\D/g, '')
+        const normAiPhone =
+          aiPhoneDigits.length === 10 || aiPhoneDigits.length === 11
+            ? '55' + aiPhoneDigits
+            : aiPhoneDigits
+
+        if (normAiPhone === normalizedPhone) {
+          const aiReply = String(aiItem.getString('aiReplyText') || '').trim()
+          if (trimmedIncoming && aiReply === trimmedIncoming) {
+            isDuplicateAiReply = true
+            break
+          }
+        }
+      }
+    } catch (checkAiErr) {
+      console.log('[WEBHOOK-DEDUP-CHECK-AI-ERR]', checkAiErr.message || String(checkAiErr))
+    }
+
+    if (isDuplicateAiReply) {
+      console.log(
+        '[WEBHOOK-ECHO-DEDUPLICATED-AI]',
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          phone: maskedSenderPhone,
+          messageId: messageId,
+          textSample: trimmedIncoming.slice(0, 40),
+          reason: 'Duplicate of recent AI reply in message_processing',
+        }),
+      )
+      return e.json(200, { status: 'ignored_duplicate_ai_echo' })
+    }
+  }
+
   // 2. Persistir na collection webhook_received (para rastreabilidade/auditoria)
   try {
     if (normalizedPhone) {
