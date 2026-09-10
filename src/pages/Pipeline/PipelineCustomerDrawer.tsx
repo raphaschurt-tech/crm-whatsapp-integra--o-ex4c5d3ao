@@ -5,6 +5,7 @@ import {
   Mail,
   Building2,
   FileText,
+  User,
   MessageCircle,
   ExternalLink,
   Sparkles,
@@ -192,6 +193,16 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
                     <span className="font-semibold text-slate-800 flex items-center gap-1.5 mt-0.5">
                       <Building2 className="h-3.5 w-3.5 text-slate-500" />
                       {customer.company}
+                    </span>
+                  </div>
+                )}
+
+                {customer.contact_name && (
+                  <div className="col-span-2">
+                    <span className="text-slate-400 block font-medium">Pessoa de Contato</span>
+                    <span className="font-semibold text-slate-800 flex items-center gap-1.5 mt-0.5">
+                      <User className="h-3.5 w-3.5 text-emerald-600" />
+                      {customer.contact_name}
                     </span>
                   </div>
                 )}

@@ -69,6 +69,7 @@ export default function CustomerList() {
 
     const matchSearch =
       c.name.toLowerCase().includes(search.toLowerCase()) ||
+      (c.contact_name || '').toLowerCase().includes(search.toLowerCase()) ||
       c.phone.includes(search) ||
       (c.company || '').toLowerCase().includes(search.toLowerCase()) ||
       (c.cpf || '').includes(search) ||
@@ -281,7 +282,14 @@ export default function CustomerList() {
                           {resolvedType}
                         </span>
                       </td>
-                      <td className="p-4 font-bold text-slate-900">{c.name}</td>
+                      <td className="p-4 font-bold text-slate-900">
+                        <div>{c.name}</div>
+                        {c.contact_name && c.contact_name !== c.name && (
+                          <div className="text-xs font-normal text-slate-500">
+                            Contato: {c.contact_name}
+                          </div>
+                        )}
+                      </td>
                       <td className="p-4">
                         <LeadSourceBadge source={c.lead_source} />
                       </td>
@@ -350,6 +358,9 @@ export default function CustomerList() {
                         <LeadSourceBadge source={c.lead_source} />
                         <p className="font-bold text-slate-900">{c.name}</p>
                       </div>
+                      {c.contact_name && c.contact_name !== c.name && (
+                        <p className="text-xs text-slate-500">Contato: {c.contact_name}</p>
+                      )}
                       <p className="text-xs text-slate-500 mt-0.5">{c.phone}</p>
                       {doc && <p className="text-xs text-slate-400 font-mono">{doc}</p>}
                     </div>

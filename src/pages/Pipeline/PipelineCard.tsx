@@ -1,5 +1,5 @@
 import React from 'react'
-import { Phone, Clock, DollarSign, GripVertical, FileText, Building2 } from 'lucide-react'
+import { Phone, Clock, DollarSign, GripVertical, FileText, Building2, User } from 'lucide-react'
 import { PipelineCardData } from '@/services/pipelineService'
 import { formatCurrency } from '@/lib/whatsapp'
 import { formatPhoneDisplay } from '@/services/whatsappChat'
@@ -14,6 +14,16 @@ interface PipelineCardProps {
 export const PipelineCard: React.FC<PipelineCardProps> = ({ card, onClick, onDragStart }) => {
   const { customer, isManualOverride, activeQuote, totalQuoteAmount, lastInteractionText } = card
   const resolvedType = customer.type || (customer.cnpj ? 'PJ' : 'PF')
+
+  // Nome da pessoa de contato: só exibe se preenchido e não for apenas o número de telefone
+  const rawContactName = customer.contact_name?.trim() || ''
+  const cleanPhone = (customer.phone || '').replace(/\D/g, '')
+  const cleanContact = rawContactName.replace(/\D/g, '')
+  const hasContactPerson =
+    Boolean(rawContactName) &&
+    rawContactName !== customer.phone &&
+    cleanContact !== cleanPhone &&
+    !/^[0-9+\s()-]+$/.test(rawContactName)
 
   const handleCardDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('text/plain', customer.id)
@@ -59,17 +69,26 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({ card, onClick, onDra
         </div>
       </div>
 
-      {/* Telefone e Empresa */}
+      {/* Telefone, Empresa e Pessoa de Contato */}
       <div className="space-y-1 text-xs text-slate-500">
         <div className="flex items-center gap-1.5 font-medium text-slate-700">
           <Phone className="h-3.5 w-3.5 text-slate-400 shrink-0" />
           <span className="truncate">{customer.phone}</span>
         </div>
 
+        {/* Empresa */}
         {customer.company && (
           <div className="flex items-center gap-1.5 text-[11px] text-slate-500 truncate">
             <Building2 className="h-3 w-3 text-slate-400 shrink-0" />
             <span className="truncate">{customer.company}</span>
+          </div>
+        )}
+
+        {/* Pessoa de Contato */}
+        {hasContactPerson && (
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 truncate">
+            <User className="h-3 w-3 text-slate-400 shrink-0" />
+            <span className="truncate font-medium">{rawContactName}</span>
           </div>
         )}
       </div>

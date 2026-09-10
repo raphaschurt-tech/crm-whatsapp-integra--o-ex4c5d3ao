@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T22:02:47.758Z",
+  "generatedAt": "2026-09-10T22:36:33.725Z",
   "collections": [
     {
       "name": "users",
@@ -149,6 +149,12 @@
           "required": false,
           "system": false,
           "selectValues": ["whatsapp", "instagram", "google", "other"]
+        },
+        {
+          "name": "contact_name",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

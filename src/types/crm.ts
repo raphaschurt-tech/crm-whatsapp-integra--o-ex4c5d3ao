@@ -15,6 +15,7 @@ export type LeadSource = 'whatsapp' | 'instagram' | 'google' | 'other'
 
 export interface Customer extends RecordModel {
   name: string
+  contact_name?: string
   phone: string
   email?: string
   company?: string

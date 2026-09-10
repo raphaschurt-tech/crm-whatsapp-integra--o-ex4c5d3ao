@@ -105,6 +105,12 @@ export default function CustomerDetail() {
                   : 'Pessoa Física (PF)'}
               </p>
             </div>
+            {customer.contact_name && (
+              <div>
+                <p className="text-xs text-slate-400 uppercase font-semibold">Pessoa de Contato</p>
+                <p className="font-semibold text-slate-800">{customer.contact_name}</p>
+              </div>
+            )}
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold">Origem do Lead</p>
               <div className="mt-1">

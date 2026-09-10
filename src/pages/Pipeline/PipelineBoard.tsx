@@ -144,6 +144,7 @@ export default function PipelineBoard() {
         const s = search.toLowerCase()
         const match =
           item.customer.name.toLowerCase().includes(s) ||
+          (item.customer.contact_name || '').toLowerCase().includes(s) ||
           item.customer.phone.includes(s) ||
           (item.customer.company || '').toLowerCase().includes(s) ||
           (item.customer.cpf || '').includes(s) ||

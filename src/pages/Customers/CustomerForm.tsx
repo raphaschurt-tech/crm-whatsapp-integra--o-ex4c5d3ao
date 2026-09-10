@@ -42,6 +42,7 @@ export default function CustomerForm() {
   const [cpf, setCpf] = useState('')
   const [cnpj, setCnpj] = useState('')
   const [name, setName] = useState('')
+  const [contactName, setContactName] = useState('')
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [company, setCompany] = useState('')
@@ -57,6 +58,7 @@ export default function CustomerForm() {
       getCustomer(id)
         .then((c) => {
           setName(c.name)
+          setContactName(c.contact_name || '')
           setPhone(c.phone)
           setEmail(c.email || '')
           setCompany(c.company || '')
@@ -114,6 +116,7 @@ export default function CustomerForm() {
     try {
       const payload = {
         name,
+        contact_name: contactName.trim() || undefined,
         phone,
         email,
         company,
@@ -236,6 +239,20 @@ export default function CustomerForm() {
             required
             placeholder={type === 'PF' ? 'Ex: Carlos Silva' : 'Ex: Auto Peças Silva Ltda'}
           />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>
+            Nome da Pessoa de Contato {type === 'PJ' ? '(Responsável / Comprador)' : '(opcional)'}
+          </Label>
+          <Input
+            value={contactName}
+            onChange={(e) => setContactName(e.target.value)}
+            placeholder="Ex: Carlos Silva, Roberto, Maria..."
+          />
+          <p className="text-xs text-slate-500">
+            Exibido nos cards do Pipeline de Vendas junto com a empresa.
+          </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
