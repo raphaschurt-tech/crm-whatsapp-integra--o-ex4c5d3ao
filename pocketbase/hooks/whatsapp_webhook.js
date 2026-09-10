@@ -49,22 +49,54 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     return s.includes('@g.us') || s.includes('-group')
   }
 
-  // Extração resiliente de telefone e detecção de LID/Grupo
-  const candidatePhones = [
-    body.phone && typeof body.phone === 'object'
-      ? body.phone.phone || body.phone.number
-      : body.phone,
-    body.senderPhone,
-    body.participantPhone,
-    body.connectedPhone,
-    body.userPhone,
-    body.chat && typeof body.chat === 'object' ? body.chat.phone || body.chat.chatId : body.chat,
-    body.sender && typeof body.sender === 'object'
-      ? body.sender.phone || body.sender.id
-      : body.sender,
-    body.data && body.data.key && body.data.key.remoteJid,
-    body.data && body.data.key && body.data.key.participant,
-  ]
+  const isFromMe = Boolean(
+    body.fromMe === true ||
+    body.fromMe === 'true' ||
+    (body.data &&
+      body.data.key &&
+      (body.data.key.fromMe === true || body.data.key.fromMe === 'true')),
+  )
+
+  // Extração resiliente de telefone e detecção de LID/Grupo.
+  // Quando isFromMe = true (mensagem enviada pelo celular ou número conectado),
+  // o destinatário real da conversa deve ter PRECEDÊNCIA sobre o próprio número conectado:
+  // - data.key.remoteJid (Baileys / Z-API data)
+  // - body.to, body.recipient, body.recipientPhone, body.destPhone, body.chatId, body.chat
+  // - se ainda for o connectedPhone, buscar conversa mais recente no banco antes de cair em si mesmo
+  const candidatePhones = isFromMe
+    ? [
+        body.data && body.data.key && body.data.key.remoteJid,
+        body.recipientPhone,
+        body.recipient,
+        body.to,
+        body.destPhone,
+        body.chatId,
+        body.chat && typeof body.chat === 'object'
+          ? body.chat.phone || body.chat.chatId || body.chat.id
+          : body.chat,
+        body.data && body.data.key && body.data.key.participant,
+        body.phone && typeof body.phone === 'object'
+          ? body.phone.phone || body.phone.number
+          : body.phone,
+        body.senderPhone,
+        body.participantPhone,
+      ]
+    : [
+        body.phone && typeof body.phone === 'object'
+          ? body.phone.phone || body.phone.number
+          : body.phone,
+        body.senderPhone,
+        body.participantPhone,
+        body.userPhone,
+        body.chat && typeof body.chat === 'object'
+          ? body.chat.phone || body.chat.chatId || body.chat.id
+          : body.chat,
+        body.sender && typeof body.sender === 'object'
+          ? body.sender.phone || body.sender.id
+          : body.sender,
+        body.data && body.data.key && body.data.key.remoteJid,
+        body.data && body.data.key && body.data.key.participant,
+      ]
 
   let resolvedPhone = ''
   let hasLid = false
@@ -73,7 +105,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   for (let i = 0; i < candidatePhones.length; i++) {
     const candidate = candidatePhones[i]
     if (!candidate) continue
-    const candStr = String(candidate)
+    const candStr = String(candidate).trim()
 
     if (isGroupString(candStr)) {
       isGroup = true
@@ -82,7 +114,13 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       hasLid = true
     }
 
-    const digits = candStr.replace(/\D/g, '')
+    // Se contiver @s.whatsapp.net ou @c.us, extrair o prefixo
+    let cleanCandidate = candStr
+    if (cleanCandidate.includes('@')) {
+      cleanCandidate = cleanCandidate.split('@')[0]
+    }
+
+    const digits = cleanCandidate.replace(/\D/g, '')
     // Se não é grupo, não contém @lid e tem comprimento típico de telefone (10 a 13 dígitos)
     if (!candStr.toLowerCase().includes('@lid') && !candStr.toLowerCase().includes('@g.us')) {
       if (digits.length >= 10 && digits.length <= 13) {
@@ -102,6 +140,75 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   let normalizedPhone = resolvedPhone
   if (normalizedPhone.length === 10 || normalizedPhone.length === 11) {
     normalizedPhone = '55' + normalizedPhone
+  }
+
+  // Se a mensagem foi enviada por nós (fromMe=true) e o número resolvido ainda coincidir com o
+  // número conectado configurado em settings (ou body.connectedPhone), precisamos resolver o cliente real!
+  if (isFromMe) {
+    let connectedNumberDigits = ''
+    if (body.connectedPhone) {
+      connectedNumberDigits = String(body.connectedPhone).replace(/\D/g, '')
+      if (connectedNumberDigits.length === 10 || connectedNumberDigits.length === 11) {
+        connectedNumberDigits = '55' + connectedNumberDigits
+      }
+    }
+    if (!connectedNumberDigits) {
+      try {
+        const setRec = $app.findRecordsByFilter(
+          'settings',
+          "whatsapp_number != ''",
+          '-created',
+          1,
+          0,
+        )
+        if (setRec && setRec.length > 0) {
+          connectedNumberDigits = String(setRec[0].get('whatsapp_number') || '').replace(/\D/g, '')
+          if (connectedNumberDigits.length === 10 || connectedNumberDigits.length === 11) {
+            connectedNumberDigits = '55' + connectedNumberDigits
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Se o número resolvido é exatamente o número conectado, o webhook da Z-API não informou o cliente diretamente
+    // nos campos primários. Nesse caso, buscamos o cliente ativo mais recente que nos enviou mensagem nos últimos 30 minutos!
+    if (normalizedPhone && connectedNumberDigits && normalizedPhone === connectedNumberDigits) {
+      try {
+        const recentIncoming = $app.findRecordsByFilter(
+          'webhook_received',
+          "fromMe = false && phone != ''",
+          '-created',
+          1,
+          0,
+        )
+        if (recentIncoming && recentIncoming.length > 0) {
+          const incRec = recentIncoming[0]
+          let incPhone = ''
+          const pVal = incRec.get('phone')
+          if (typeof pVal === 'string') incPhone = pVal
+          else if (pVal && typeof pVal === 'object' && pVal.phone) incPhone = String(pVal.phone)
+          const cleanInc = incPhone.replace(/\D/g, '')
+          if (
+            cleanInc &&
+            cleanInc !== connectedNumberDigits &&
+            cleanInc.length >= 10 &&
+            cleanInc.length <= 13
+          ) {
+            normalizedPhone =
+              cleanInc.length === 10 || cleanInc.length === 11 ? '55' + cleanInc : cleanInc
+            console.log(
+              '[WEBHOOK-FROM-ME-RESOLVED-FROM-RECENT-CHAT]',
+              JSON.stringify({
+                original: connectedNumberDigits,
+                resolvedToClient: normalizedPhone.slice(0, 4) + '****' + normalizedPhone.slice(-2),
+              }),
+            )
+          }
+        }
+      } catch (errRec) {
+        console.log('[WEBHOOK-RESOLVE-CLIENT-ERR]', errRec.message || String(errRec))
+      }
+    }
   }
 
   let maskedSenderPhone = ''
@@ -202,12 +309,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       incomingText = String(body.message)
     }
   }
-
-  const isFromMe = Boolean(
-    body.fromMe === true ||
-    body.fromMe === 'true' ||
-    (body.data && body.data.key && body.data.key.fromMe),
-  )
 
   // Log sanitizado de recepção do webhook (sem expor credenciais nem telefones completos)
   console.log(
@@ -412,8 +513,13 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       rec.set('fromMe', isFromMe)
       rec.set('text', body.text || { message: incomingText })
       rec.set('chat', { phone: normalizedPhone })
-      rec.set('sender', body.sender || null)
-      rec.set('status', String(body.status || 'RECEIVED'))
+      // Se for fromMe vindo do celular do atendente, marcar explicitamente role: 'agent'
+      if (isFromMe) {
+        rec.set('sender', body.sender || { role: 'agent', source: 'mobile_whatsapp' })
+      } else {
+        rec.set('sender', body.sender || null)
+      }
+      rec.set('status', String(body.status || (isFromMe ? 'SENT' : 'RECEIVED')))
       rec.set('messageId', messageId)
       rec.set('instanceId', rawInstanceId)
       rec.set('moment', Number(body.moment) || Math.floor(Date.now() / 1000))

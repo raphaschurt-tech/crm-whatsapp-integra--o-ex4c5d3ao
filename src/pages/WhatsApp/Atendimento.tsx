@@ -671,12 +671,12 @@ export default function WhatsAppAtendimento() {
                       {!isClient && (
                         <div className="flex items-center gap-1 mb-1">
                           {isAi ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
                               <Sparkles className="w-3 h-3 text-emerald-600" /> Assistente IA
                             </span>
                           ) : (
-                            <span className="text-[11px] font-bold text-slate-600">
-                              Atendente RPA
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                              <User className="w-3 h-3 text-blue-600" /> Atendente RPA
                             </span>
                           )}
                         </div>

@@ -289,9 +289,35 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       const timestamp = msgDate.getTime()
       const timeStr = formatActivityTime(msgDate)
 
-      // Determinar remetente: se fromMe é agent/bot, se false é client
-      const sender: WhatsAppSender = isFromMe ? 'ai' : 'client'
-      const msgId = rec.messageId || rec.id
+      // Determinar remetente:
+      // Se não for fromMe: 'client'
+      // Se for fromMe: diferenciar atendente humano de IA
+      // Verifica marcações de atendente (ex: type: AgentSentMessage, sender.role: agent, ou ID agent_*)
+      // Versus respostas de IA gravadas pelo ai_message_worker / Z-API
+      let sender: WhatsAppSender = 'client'
+      if (isFromMe) {
+        const senderRole =
+          rec.sender && typeof rec.sender === 'object'
+            ? String(rec.sender.role || rec.sender.type || '')
+            : ''
+        const recType = String(rec.type || '')
+        const msgIdStr = String(rec.messageId || '')
+
+        if (
+          senderRole === 'agent' ||
+          recType === 'AgentSentMessage' ||
+          msgIdStr.startsWith('agent_')
+        ) {
+          sender = 'agent'
+        } else if (senderRole === 'ai' || recType === 'AISentMessage') {
+          sender = 'ai'
+        } else {
+          // Mensagem enviada pelo celular (WhatsApp oficial) pelo atendente:
+          // A IA só envia quando ai_message_worker processa (e cria com messageId específico).
+          // Se veio pelo celular ou webhook sem marcação explícita de IA, é resposta manual do Atendente!
+          sender = 'agent'
+        }
+      }
 
       const conv = getOrCreateConv(normalized)
       conv.messages.push({
