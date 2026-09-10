@@ -267,6 +267,24 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
     // Conjunto de messageIds para evitar duplicidade entre webhook e message_processing
     const seenMessageIds = new Set<string>()
 
+    // Conjunto de respostas da IA já mapeadas de message_processing por telefone e texto (para ignorar ecos)
+    const aiRepliesByPhone = new Map<string, Array<{ text: string; time: number }>>()
+    for (const proc of processingList) {
+      if (!proc.phone) continue
+      const norm = extractNormalizedPhone(proc.phone)
+      if (!norm) continue
+      const key = norm.length === 10 || norm.length === 11 ? `55${norm}` : norm
+      const reply = (proc.aiReplyText || '').trim()
+      if (reply && (proc.replySent || proc.status === 'completed')) {
+        const list = aiRepliesByPhone.get(key) || []
+        list.push({
+          text: reply,
+          time: new Date(proc.created).getTime(),
+        })
+        aiRepliesByPhone.set(key, list)
+      }
+    }
+
     // 1. Processar webhook_received
     for (const rec of webhookList) {
       // Tenta extrair telefone válido de múltiplos campos possíveis
@@ -288,6 +306,25 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       const msgDate = rec.moment ? new Date(rec.moment * 1000) : new Date(rec.created)
       const timestamp = msgDate.getTime()
       const timeStr = formatActivityTime(msgDate)
+
+      const phoneKey =
+        normalized.length === 10 || normalized.length === 11 ? `55${normalized}` : normalized
+
+      // Se for fromMe e o texto coincide exatamente com uma resposta enviada pela IA no message_processing
+      // para esse mesmo número, trata-se de um eco assíncrono da Z-API (ReceivedCallback) que não deve
+      // ser exibido como Atendente RPA duplicado.
+      if (isFromMe && rec.type !== 'AgentSentMessage') {
+        const aiList = aiRepliesByPhone.get(phoneKey) || []
+        const isAiEcho = aiList.some(
+          (ai) =>
+            (ai.text === text || text.startsWith(ai.text.slice(0, 50))) &&
+            Math.abs(timestamp - ai.time) < 30 * 60 * 1000,
+        )
+        if (isAiEcho) {
+          // Ignora o eco — a resposta da IA legítima já é carregada via message_processing
+          continue
+        }
+      }
 
       // Determinar remetente:
       // Se não for fromMe: 'client'
@@ -320,6 +357,21 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       }
 
       const conv = getOrCreateConv(normalized)
+
+      // Deduplicação defensiva: se a mesma conversa já tiver uma mensagem do mesmo remetente
+      // com o mesmo texto em intervalo de até 5 minutos (eco de AgentSentMessage recebido como ReceivedCallback),
+      // não duplica na visualização!
+      const isDuplicateInConv = conv.messages.some(
+        (m) =>
+          m.sender === sender &&
+          m.text.trim() === text.trim() &&
+          Math.abs(m.timestamp - timestamp) < 5 * 60 * 1000,
+      )
+
+      if (isDuplicateInConv) {
+        continue
+      }
+
       conv.messages.push({
         id: `wh-${rec.id}`,
         text,
