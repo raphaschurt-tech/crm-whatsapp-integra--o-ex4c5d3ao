@@ -60,3 +60,21 @@ export const updateCustomer = (id: string, data: Partial<Customer>) =>
   pb.collection<Customer>('customers').update(id, data)
 
 export const deleteCustomer = (id: string) => pb.collection('customers').delete(id)
+
+export interface SyncContactsResult {
+  ok: boolean
+  imported: number
+  updated: number
+  ignored: number
+  totalFetched: number
+  error?: string
+}
+
+/**
+ * Dispara a sincronização manual de contatos do WhatsApp (Z-API) no backend.
+ */
+export const syncWhatsAppContacts = async (): Promise<SyncContactsResult> => {
+  return await pb.send<SyncContactsResult>('/backend/v1/whatsapp/sync-contacts', {
+    method: 'POST',
+  })
+}

@@ -9,8 +9,15 @@ import {
   Trash2,
   RefreshCw,
   AlertTriangle,
+  Users,
+  CheckCircle2,
 } from 'lucide-react'
-import { getCustomers, deleteCustomer } from '@/services/customers'
+import {
+  getCustomers,
+  deleteCustomer,
+  syncWhatsAppContacts,
+  SyncContactsResult,
+} from '@/services/customers'
 import { Customer } from '@/types/crm'
 import { openWhatsApp } from '@/lib/whatsapp'
 import { useAuth } from '@/hooks/use-auth'
@@ -28,6 +35,8 @@ export default function CustomerList() {
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncSummary, setSyncSummary] = useState<SyncContactsResult | null>(null)
 
   const loadData = async () => {
     setLoading(true)
@@ -79,6 +88,31 @@ export default function CustomerList() {
     }
   }
 
+  const handleSyncContacts = async () => {
+    setIsSyncing(true)
+    setSyncSummary(null)
+    try {
+      const res = await syncWhatsAppContacts()
+      setSyncSummary(res)
+      toast({
+        title: 'Sincronização concluída!',
+        description: `${res.imported} importados, ${res.updated} atualizados, ${res.ignored} ignorados.`,
+      })
+      await loadData()
+    } catch (err: any) {
+      console.error('Erro ao sincronizar contatos:', err)
+      const errorMsg =
+        err?.data?.error || err?.message || 'Falha ao sincronizar contatos do WhatsApp.'
+      toast({
+        title: 'Erro na sincronização',
+        description: errorMsg,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -86,13 +120,66 @@ export default function CustomerList() {
           <h1 className="text-2xl font-bold text-slate-900">Clientes</h1>
           <p className="text-sm text-slate-500">Base de contatos para envio de propostas</p>
         </div>
-        <Button
-          onClick={() => navigate('/clientes/novo')}
-          className="bg-emerald-500 hover:bg-emerald-600 text-white font-medium shadow"
-        >
-          <Plus className="mr-1.5 h-4 w-4" /> Novo Cliente
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleSyncContacts}
+            disabled={isSyncing}
+            className="border-emerald-600 text-emerald-700 hover:bg-emerald-50 font-medium"
+          >
+            {isSyncing ? (
+              <>
+                <RefreshCw className="mr-1.5 h-4 w-4 animate-spin text-emerald-600" />
+                Sincronizando contatos...
+              </>
+            ) : (
+              <>
+                <Users className="mr-1.5 h-4 w-4 text-emerald-600" />
+                Sincronizar contatos
+              </>
+            )}
+          </Button>
+          <Button
+            onClick={() => navigate('/clientes/novo')}
+            className="bg-emerald-500 hover:bg-emerald-600 text-white font-medium shadow"
+          >
+            <Plus className="mr-1.5 h-4 w-4" /> Novo Cliente
+          </Button>
+        </div>
       </div>
+
+      {syncSummary && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2 bg-emerald-100 rounded-lg text-emerald-700 shrink-0">
+              <CheckCircle2 className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-emerald-950">
+                Sincronização do WhatsApp concluída
+              </p>
+              <p className="text-xs text-emerald-800 mt-0.5">
+                Resumo: <span className="font-bold">{syncSummary.imported} importados</span>,{' '}
+                <span className="font-bold">{syncSummary.updated} atualizados</span> e{' '}
+                <span className="font-bold">{syncSummary.ignored} ignorados</span>
+                {syncSummary.totalFetched
+                  ? ` (${syncSummary.totalFetched} contatos lidos da Z-API)`
+                  : ''}
+                .
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSyncSummary(null)}
+            className="text-xs text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 self-end sm:self-auto"
+          >
+            Fechar resumo
+          </Button>
+        </div>
+      )}
 
       <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="relative w-full sm:w-80">
