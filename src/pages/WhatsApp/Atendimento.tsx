@@ -27,6 +27,7 @@ import {
   WhatsAppMessage,
   WhatsAppStatus,
   loadWhatsAppConversations,
+  markWhatsAppAsRead,
 } from '@/services/whatsappChat'
 import { useRealtime } from '@/hooks/use-realtime'
 import { sendWhatsAppMessage } from '@/services/quotes'
@@ -94,6 +95,9 @@ export default function WhatsAppAtendimento() {
   useRealtime('message_processing', () => {
     fetchData(true)
   })
+  useRealtime('whatsapp_read_states', () => {
+    fetchData(true)
+  })
 
   // Polling leve a cada 12 segundos para garantir sincronização caso realtime falhe
   useEffect(() => {
@@ -104,6 +108,34 @@ export default function WhatsAppAtendimento() {
   }, [fetchData])
 
   const activeCustomer = customers.find((c) => c.id === selectedCustomerId) || customers[0]
+
+  // Persistir leitura sempre que uma conversa for selecionada / aberta
+  useEffect(() => {
+    if (!activeCustomer) return
+    const msgs = activeCustomer.messages
+    if (msgs.length === 0) return
+
+    const lastMsg = msgs[msgs.length - 1]
+    const targetPhone = activeCustomer.rawPhone || activeCustomer.phone
+    const currentLastRead = activeCustomer.lastReadAt || 0
+
+    // Se houver mensagens não lidas ou o último timestamp for maior que lastReadAt
+    if (
+      lastMsg.timestamp > currentLastRead ||
+      (activeCustomer.unreadCount && activeCustomer.unreadCount > 0)
+    ) {
+      // Atualiza o estado local imediatamente
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === activeCustomer.id
+            ? { ...c, unreadCount: 0, lastReadAt: lastMsg.timestamp, status: 'em_atendimento' }
+            : c,
+        ),
+      )
+      // Grava no banco de dados para persistência definitiva
+      markWhatsAppAsRead(targetPhone, lastMsg.timestamp)
+    }
+  }, [activeCustomer?.id, activeCustomer?.messages?.length])
 
   const checkIfNearBottom = () => {
     const el = chatContainerRef.current
@@ -457,11 +489,22 @@ export default function WhatsAppAtendimento() {
                     key={customer.id}
                     onClick={() => {
                       setSelectedCustomerId(customer.id)
-                      // marca lido
-                      if (customer.unreadCount) {
+                      const lastMsg = customer.messages[customer.messages.length - 1]
+                      if (lastMsg) {
+                        const targetPhone = customer.rawPhone || customer.phone
                         setCustomers((prev) =>
-                          prev.map((c) => (c.id === customer.id ? { ...c, unreadCount: 0 } : c)),
+                          prev.map((c) =>
+                            c.id === customer.id
+                              ? {
+                                  ...c,
+                                  unreadCount: 0,
+                                  lastReadAt: lastMsg.timestamp,
+                                  status: 'em_atendimento',
+                                }
+                              : c,
+                          ),
                         )
+                        markWhatsAppAsRead(targetPhone, lastMsg.timestamp)
                       }
                     }}
                     className={`p-3.5 flex items-start gap-3 cursor-pointer transition-colors border-l-4 ${

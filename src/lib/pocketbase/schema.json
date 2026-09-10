@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T21:55:10.137Z",
+  "generatedAt": "2026-09-10T22:02:47.758Z",
   "collections": [
     {
       "name": "users",
@@ -1028,6 +1028,48 @@
       "indexes": [
         "CREATE UNIQUE INDEX idx_whatsapp_lid_maps_lid ON whatsapp_lid_maps (lid)",
         "CREATE INDEX idx_whatsapp_lid_maps_phone ON whatsapp_lid_maps (phone)"
+      ]
+    },
+    {
+      "name": "whatsapp_read_states",
+      "type": "base",
+      "apiRules": {
+        "list": "",
+        "view": "",
+        "create": "",
+        "update": "",
+        "delete": ""
+      },
+      "fields": [
+        {
+          "name": "phone",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "lastReadAt",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_whatsapp_read_states_phone ON whatsapp_read_states (phone)"
       ]
     }
   ]

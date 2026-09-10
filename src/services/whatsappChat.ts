@@ -30,7 +30,13 @@ export interface WhatsAppCustomer {
   unreadCount?: number
   lastActivity: string
   lastTimestamp: number
+  lastReadAt?: number
   messages: WhatsAppMessage[]
+}
+
+export interface WhatsAppReadStateRecord extends RecordModel {
+  phone: string
+  lastReadAt: number
 }
 
 export interface WebhookReceivedRecord extends RecordModel {
@@ -189,6 +195,80 @@ export function formatPhoneDisplay(phoneStr: string): string {
 }
 
 /**
+ * Normaliza uma chave de telefone para busca e persistência de leitura (sempre com 55 se 10/11 dígitos)
+ */
+export function normalizePhoneKey(phone: string): string {
+  const norm = extractNormalizedPhone(phone)
+  if (!norm) return phone.replace(/\D/g, '')
+  if (norm.length === 10 || norm.length === 11) {
+    return `55${norm}`
+  }
+  return norm
+}
+
+/**
+ * Carrega todos os registros de leitura persistidos
+ */
+export async function loadWhatsAppReadStates(): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  try {
+    const list = await withRetry(
+      () =>
+        pb
+          .collection<WhatsAppReadStateRecord>('whatsapp_read_states')
+          .getFullList({ sort: '-updated' }),
+      { retries: 2, delayMs: 400 },
+    )
+    for (const rec of list) {
+      if (rec.phone && typeof rec.lastReadAt === 'number') {
+        const key = normalizePhoneKey(rec.phone)
+        map.set(key, rec.lastReadAt)
+      }
+    }
+  } catch (err) {
+    console.warn('Erro ao carregar whatsapp_read_states:', err)
+  }
+  return map
+}
+
+/**
+ * Marca uma conversa como lida até o timestamp especificado no banco PocketBase
+ */
+export async function markWhatsAppAsRead(rawPhone: string, readTimestamp: number): Promise<void> {
+  if (!rawPhone || !readTimestamp) return
+  const key = normalizePhoneKey(rawPhone)
+  if (!key) return
+
+  try {
+    // Tenta encontrar registro existente por phone
+    let existingRecord: WhatsAppReadStateRecord | null = null
+    try {
+      existingRecord = await pb
+        .collection<WhatsAppReadStateRecord>('whatsapp_read_states')
+        .getFirstListItem(`phone = "${key}"`)
+    } catch (_) {
+      // Registro não existe ainda
+    }
+
+    if (existingRecord) {
+      // Atualiza se o novo timestamp for maior ou igual ao gravado
+      if (readTimestamp >= (existingRecord.lastReadAt || 0)) {
+        await pb
+          .collection('whatsapp_read_states')
+          .update(existingRecord.id, { lastReadAt: readTimestamp })
+      }
+    } else {
+      await pb.collection('whatsapp_read_states').create({
+        phone: key,
+        lastReadAt: readTimestamp,
+      })
+    }
+  } catch (err) {
+    console.error(`Erro ao salvar marcação de leitura para ${key}:`, err)
+  }
+}
+
+/**
  * Carrega todas as conversas reais do WhatsApp do banco de dados PocketBase:
  * 1. Busca mensagens de `webhook_received`
  * 2. Busca respostas da IA de `message_processing`
@@ -198,7 +278,7 @@ export function formatPhoneDisplay(phoneStr: string): string {
  */
 export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
   try {
-    const [webhookList, processingList, customersList] = await Promise.all([
+    const [webhookList, processingList, customersList, readStatesMap] = await Promise.all([
       withRetry(
         () =>
           pb.collection<WebhookReceivedRecord>('webhook_received').getFullList({ sort: 'created' }),
@@ -218,6 +298,7 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         return [] as MessageProcessingRecord[]
       }),
       getCustomers().catch(() => [] as Customer[]),
+      loadWhatsAppReadStates().catch(() => new Map<string, number>()),
     ])
 
     // Mapa de clientes para rápida associação por telefone normalizado
@@ -450,9 +531,17 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       const lastActivity = lastMsg ? lastMsg.time : ''
       const lastTimestamp = lastMsg ? lastMsg.timestamp : 0
 
-      // Se a última mensagem for do cliente, marcar como "novo", caso contrário "em_atendimento"
-      const status: WhatsAppStatus = lastMsg.sender === 'client' ? 'novo' : 'em_atendimento'
-      const unreadCount = lastMsg.sender === 'client' ? 1 : 0
+      // Estado de leitura persistido
+      const lastReadAt =
+        readStatesMap.get(conv.phoneKey) || readStatesMap.get(conv.phoneKey.replace(/^55/, '')) || 0
+
+      // Contar quantas mensagens do cliente são estritamente posteriores a lastReadAt
+      const unreadCount = conv.messages.filter(
+        (m) => m.sender === 'client' && m.timestamp > lastReadAt,
+      ).length
+
+      // Se houver mensagens não lidas do cliente, marcar como "novo"; caso contrário "em_atendimento"
+      const status: WhatsAppStatus = unreadCount > 0 ? 'novo' : 'em_atendimento'
 
       const displayName = matchedCustomer ? matchedCustomer.name : formatPhoneDisplay(conv.phoneKey)
       const customerType: 'PF' | 'PJ' = matchedCustomer
@@ -469,6 +558,7 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         company: matchedCustomer?.company,
         status,
         unreadCount,
+        lastReadAt,
         lastActivity,
         lastTimestamp,
         messages: conv.messages,
