@@ -42,6 +42,18 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     return false
   }
 
+  // Função auxiliar interna para extrair o LID limpo (apenas dígitos)
+  const extractLidDigits = (val) => {
+    if (!val) return ''
+    const s = String(val).trim()
+    if (!isLidString(s)) return ''
+    let clean = s
+    if (clean.includes('@')) {
+      clean = clean.split('@')[0]
+    }
+    return clean.replace(/\D/g, '')
+  }
+
   // Função auxiliar interna para verificar se é grupo do WhatsApp
   const isGroupString = (val) => {
     if (!val) return false
@@ -100,6 +112,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
 
   let resolvedPhone = ''
   let hasLid = false
+  let detectedLid = ''
   let isGroup = false
 
   for (let i = 0; i < candidatePhones.length; i++) {
@@ -112,6 +125,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
     if (isLidString(candStr)) {
       hasLid = true
+      if (!detectedLid) {
+        detectedLid = extractLidDigits(candStr)
+      }
     }
 
     // Se contiver @s.whatsapp.net ou @c.us, extrair o prefixo
@@ -130,16 +146,141 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
+  // Também verificar campos explícitos de LID no payload caso não tenha sido pego nos candidatePhones
+  if (!detectedLid) {
+    const lidCandidates = [
+      body.lid,
+      body.chatLid,
+      body.authorLid,
+      body.senderLid,
+      body.recipientLid,
+      body.data && body.data.key && body.data.key.remoteJid && isLidString(body.data.key.remoteJid)
+        ? body.data.key.remoteJid
+        : '',
+      body.data &&
+      body.data.key &&
+      body.data.key.participant &&
+      isLidString(body.data.key.participant)
+        ? body.data.key.participant
+        : '',
+      body.chat && typeof body.chat === 'object' ? body.chat.lid || body.chat.chatLid : '',
+      body.sender && typeof body.sender === 'object' ? body.sender.lid : '',
+    ]
+    for (let l = 0; l < lidCandidates.length; l++) {
+      const c = lidCandidates[l]
+      if (c && isLidString(c)) {
+        detectedLid = extractLidDigits(c)
+        hasLid = true
+        break
+      }
+    }
+  }
+
   // Se é grupo, ignorar imediatamente (não processar nem poluir chat/IA)
   if (isGroup) {
     console.log('[WEBHOOK-IGNORED-GROUP]', JSON.stringify({ instanceId: maskedInstanceId }))
     return e.json(200, { status: 'ignored_group' })
   }
 
-  // Normalização final de telefone
+  // Normalização preliminar de telefone
   let normalizedPhone = resolvedPhone
   if (normalizedPhone.length === 10 || normalizedPhone.length === 11) {
     normalizedPhone = '55' + normalizedPhone
+  }
+
+  // ==========================================
+  // MAPA PERSISTIDO LID -> TELEFONE REAL
+  // ==========================================
+  // 1. ALIMENTAÇÃO: se for mensagem de cliente (!isFromMe) e tivermos tanto LID quanto telefone real válido,
+  // gravamos ou atualizamos na coleção whatsapp_lid_maps
+  if (
+    !isFromMe &&
+    detectedLid &&
+    normalizedPhone &&
+    normalizedPhone.length >= 10 &&
+    normalizedPhone.length <= 13
+  ) {
+    try {
+      let existingLidRec = null
+      try {
+        const foundMaps = $app.findRecordsByFilter(
+          'whatsapp_lid_maps',
+          'lid = {:lid}',
+          '-created',
+          1,
+          0,
+          { lid: detectedLid },
+        )
+        if (foundMaps && foundMaps.length > 0) {
+          existingLidRec = foundMaps[0]
+        }
+      } catch (_) {}
+
+      if (existingLidRec) {
+        if (existingLidRec.getString('phone') !== normalizedPhone) {
+          existingLidRec.set('phone', normalizedPhone)
+          $app.save(existingLidRec)
+          console.log(
+            '[LID-MAP-UPDATED]',
+            JSON.stringify({
+              lid: detectedLid,
+              phone: normalizedPhone.slice(0, 4) + '****' + normalizedPhone.slice(-2),
+            }),
+          )
+        }
+      } else {
+        const lidCol = $app.findCollectionByNameOrId('whatsapp_lid_maps')
+        const newLidRec = new Record(lidCol)
+        newLidRec.set('lid', detectedLid)
+        newLidRec.set('phone', normalizedPhone)
+        $app.save(newLidRec)
+        console.log(
+          '[LID-MAP-CREATED]',
+          JSON.stringify({
+            lid: detectedLid,
+            phone: normalizedPhone.slice(0, 4) + '****' + normalizedPhone.slice(-2),
+          }),
+        )
+      }
+    } catch (lidMapSaveErr) {
+      console.log('[LID-MAP-SAVE-ERR]', lidMapSaveErr.message || String(lidMapSaveErr))
+    }
+  }
+
+  // 2. RESOLUÇÃO: se for fromMe=true e NÃO tiver telefone resolvido, mas tiver detectedLid (ou hasLid),
+  // consultamos whatsapp_lid_maps para encontrar o telefone real correspondente!
+  if (isFromMe && !normalizedPhone && detectedLid) {
+    try {
+      const foundLidRecords = $app.findRecordsByFilter(
+        'whatsapp_lid_maps',
+        'lid = {:lid}',
+        '-created',
+        1,
+        0,
+        { lid: detectedLid },
+      )
+      if (foundLidRecords && foundLidRecords.length > 0) {
+        const mappedPhone = foundLidRecords[0].getString('phone')
+        if (mappedPhone) {
+          const cleanMapped = mappedPhone.replace(/\D/g, '')
+          if (cleanMapped.length >= 10 && cleanMapped.length <= 13) {
+            normalizedPhone =
+              cleanMapped.length === 10 || cleanMapped.length === 11
+                ? '55' + cleanMapped
+                : cleanMapped
+            console.log(
+              '[WEBHOOK-LID-RESOLVED-FROM-MAP]',
+              JSON.stringify({
+                lid: detectedLid,
+                resolvedPhone: normalizedPhone.slice(0, 4) + '****' + normalizedPhone.slice(-2),
+              }),
+            )
+          }
+        }
+      }
+    } catch (lidLookupErr) {
+      console.log('[LID-LOOKUP-ERR]', lidLookupErr.message || String(lidLookupErr))
+    }
   }
 
   // Se a mensagem foi enviada por nós (fromMe=true) e o número resolvido ainda coincidir com o
@@ -514,6 +655,10 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   // (a) um webhook_received recente do mesmo telefone, fromMe=true, com o mesmo texto (últimos ~10 minutos); OU
   // (b) um message_processing recente do mesmo telefone cujo aiReplyText seja igual ao texto do eco.
   // Se existir qualquer um dos dois, NÃO gravamos o eco (return early sem persistir nada).
+  // NOTA TÉCNICA GOJA: os campos phone/text/chat são do tipo JSON em webhook_received.
+  // item.get() retorna JSONRaw na runtime Goja do PocketBase v0.36.
+  // Usar item.getString('phone') e item.getString('text') com JSON.parse para extrair
+  // confiavelmente o telefone e o texto, conforme padrão da migration 0037.
   if (isFromMe && normalizedPhone) {
     const trimmedIncoming = incomingText ? incomingText.trim() : ''
     const tenMinutesAgoIso = new Date(Date.now() - 10 * 60 * 1000).toISOString()
@@ -538,24 +683,55 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
           break
         }
 
-        // Comparar telefone
+        // Extrair telefone com getString + JSON.parse resiliente
         let itemPhone = ''
-        const pVal = item.get('phone')
-        if (typeof pVal === 'string') itemPhone = pVal
-        else if (pVal && typeof pVal === 'object')
-          itemPhone = String(pVal.phone || pVal.number || '')
+        const rawPhoneStr = item.getString('phone') || item.getString('chat') || ''
+        if (rawPhoneStr) {
+          try {
+            const parsedP = JSON.parse(rawPhoneStr)
+            if (parsedP && typeof parsedP === 'object') {
+              itemPhone = String(parsedP.phone || parsedP.number || parsedP.id || '')
+            } else if (typeof parsedP === 'string') {
+              itemPhone = parsedP
+            }
+          } catch (_) {
+            itemPhone = rawPhoneStr
+          }
+        }
+        if (!itemPhone) {
+          const pVal = item.get('phone')
+          if (typeof pVal === 'string') itemPhone = pVal
+          else if (pVal && typeof pVal === 'object')
+            itemPhone = String(pVal.phone || pVal.number || '')
+        }
         const itemDigits = itemPhone.replace(/\D/g, '')
         const normItemDigits =
           itemDigits.length === 10 || itemDigits.length === 11 ? '55' + itemDigits : itemDigits
 
         if (normItemDigits === normalizedPhone) {
-          // Comparar texto
+          // Extrair texto com getString + JSON.parse resiliente
           let itemText = ''
-          const tVal = item.get('text')
-          if (typeof tVal === 'string') itemText = tVal
-          else if (tVal && typeof tVal === 'object') {
-            itemText = String(tVal.message || tVal.text || tVal.conversation || '')
+          const rawTextStr = item.getString('text') || ''
+          if (rawTextStr) {
+            try {
+              const parsedT = JSON.parse(rawTextStr)
+              if (parsedT && typeof parsedT === 'object') {
+                itemText = String(parsedT.message || parsedT.text || parsedT.conversation || '')
+              } else if (typeof parsedT === 'string') {
+                itemText = parsedT
+              }
+            } catch (_) {
+              itemText = rawTextStr
+            }
           }
+          if (!itemText) {
+            const tVal = item.get('text')
+            if (typeof tVal === 'string') itemText = tVal
+            else if (tVal && typeof tVal === 'object') {
+              itemText = String(tVal.message || tVal.text || tVal.conversation || '')
+            }
+          }
+
           if (trimmedIncoming && itemText.trim() === trimmedIncoming) {
             isDuplicateWebhook = true
             break
@@ -653,15 +829,45 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       }
       $app.save(rec)
     } else {
-      console.log(
-        '[WEBHOOK-LID-WITHOUT-PHONE]',
+      // PLANO B: Se não foi possível resolver o telefone real (ex: LID ainda não mapeado),
+      // persistir mesmo assim com o LID ou identificador para não perder a mensagem,
+      // emitindo log de WARNING explícito para acompanhamento do operador/desenvolvedor.
+      const fallbackTarget = detectedLid || 'unknown_lid'
+      console.warn(
+        '[WEBHOOK-LID-UNRESOLVED-FALLBACK-WARNING]',
         JSON.stringify({
+          timestamp: new Date().toISOString(),
           eventType: eventType,
           messageId: messageId,
           fromMe: isFromMe,
           hasLid: hasLid,
+          lid: detectedLid || null,
+          warning:
+            'LID não foi resolvido para telefone no mapa. Mensagem persistida no plano B (apenas LID, sem criar conversa de cliente).',
         }),
       )
+
+      const colWebhook = $app.findCollectionByNameOrId('webhook_received')
+      const rec = new Record(colWebhook)
+      rec.set('type', eventType || 'ReceivedCallback')
+      rec.set('phone', { phone: fallbackTarget, isLid: true })
+      rec.set('fromMe', isFromMe)
+      rec.set('text', body.text || { message: incomingText })
+      rec.set('chat', { phone: fallbackTarget, isLid: true })
+      if (isFromMe) {
+        rec.set('sender', body.sender || { role: 'agent', source: 'mobile_whatsapp' })
+      } else {
+        rec.set('sender', body.sender || null)
+      }
+      rec.set('status', String(body.status || (isFromMe ? 'SENT' : 'RECEIVED')))
+      rec.set('messageId', messageId)
+      rec.set('instanceId', rawInstanceId)
+      rec.set('moment', Number(body.moment) || Math.floor(Date.now() / 1000))
+      rec.set('is_audio', isAudio)
+      if (rawAudioUrl) {
+        rec.set('audio_url', rawAudioUrl)
+      }
+      $app.save(rec)
     }
   } catch (err) {
     console.log('[WEBHOOK-PERSIST-ERR]', err.message || String(err))

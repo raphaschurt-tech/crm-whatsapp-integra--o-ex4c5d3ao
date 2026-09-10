@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T20:57:30.664Z",
+  "generatedAt": "2026-09-10T21:55:10.137Z",
   "collections": [
     {
       "name": "users",
@@ -985,6 +985,49 @@
         "CREATE INDEX idx_po_product ON production_orders (product)",
         "CREATE INDEX idx_po_status ON production_orders (status)",
         "CREATE INDEX idx_po_created ON production_orders (created DESC)"
+      ]
+    },
+    {
+      "name": "whatsapp_lid_maps",
+      "type": "base",
+      "apiRules": {
+        "list": "",
+        "view": "",
+        "create": "",
+        "update": "",
+        "delete": ""
+      },
+      "fields": [
+        {
+          "name": "lid",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "phone",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_whatsapp_lid_maps_lid ON whatsapp_lid_maps (lid)",
+        "CREATE INDEX idx_whatsapp_lid_maps_phone ON whatsapp_lid_maps (phone)"
       ]
     }
   ]
