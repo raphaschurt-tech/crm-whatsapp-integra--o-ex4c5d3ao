@@ -301,8 +301,25 @@ export async function loadPipelineBoardData(): Promise<{
 export async function updateCustomerPipelineStatus(
   customerId: string,
   targetColumn: PipelineColumnId | '',
+  lostReasonData?: {
+    lost_reason?: string
+    lost_reason_detail?: string
+  },
 ): Promise<Customer> {
-  return updateCustomer(customerId, {
+  const payload: Partial<Customer> = {
     pipeline_status: targetColumn,
-  })
+  }
+
+  if (targetColumn === 'perdido') {
+    if (lostReasonData?.lost_reason) {
+      payload.lost_reason = lostReasonData.lost_reason
+      payload.lost_reason_detail = lostReasonData.lost_reason_detail || ''
+    }
+  } else {
+    // Ao mover para qualquer outra coluna diferente de Perdido, limpa lost_reason e lost_reason_detail
+    payload.lost_reason = ''
+    payload.lost_reason_detail = ''
+  }
+
+  return updateCustomer(customerId, payload)
 }

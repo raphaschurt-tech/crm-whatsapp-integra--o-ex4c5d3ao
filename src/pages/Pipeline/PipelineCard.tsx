@@ -40,7 +40,14 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({
   onDelete,
 }) => {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const { customer, isManualOverride, activeQuote, totalQuoteAmount, lastInteractionText } = card
+  const {
+    customer,
+    columnId,
+    isManualOverride,
+    activeQuote,
+    totalQuoteAmount,
+    lastInteractionText,
+  } = card
   const resolvedType = customer.type || (customer.cnpj ? 'PJ' : 'PF')
   const isSupplier = customer.customer_type === 'fornecedor'
 
@@ -142,6 +149,16 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({
           <div className="flex items-center gap-1.5 text-[11px] text-slate-500 truncate">
             <User className="h-3 w-3 text-slate-400 shrink-0" />
             <span className="truncate font-medium">{rawContactName}</span>
+          </div>
+        )}
+
+        {/* Motivo de perda resumido no card caso esteja em Perdido */}
+        {columnId === 'perdido' && customer.lost_reason && (
+          <div className="mt-1.5 bg-rose-50 border border-rose-100 rounded-md p-1.5 text-[11px] text-rose-800 leading-tight">
+            <span className="font-semibold block text-[10px] text-rose-600 uppercase">
+              Motivo da perda:
+            </span>
+            <span className="line-clamp-2">{customer.lost_reason}</span>
           </div>
         )}
       </div>

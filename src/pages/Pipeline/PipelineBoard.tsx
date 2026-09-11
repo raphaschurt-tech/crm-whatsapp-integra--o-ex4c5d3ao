@@ -29,6 +29,7 @@ import { useRealtime } from '@/hooks/use-realtime'
 import { useNavigate } from 'react-router-dom'
 import { PipelineCard } from './PipelineCard'
 import { PipelineCustomerDrawer } from './PipelineCustomerDrawer'
+import { LostReasonModal } from './LostReasonModal'
 
 export default function PipelineBoard() {
   const navigate = useNavigate()
@@ -84,6 +85,13 @@ export default function PipelineBoard() {
 
   // Drawer lateral
   const [selectedCard, setSelectedCard] = useState<PipelineCardData | null>(null)
+
+  // Modal de Motivo de Perda
+  const [lostReasonTarget, setLostReasonTarget] = useState<{
+    customerId: string
+    customerName: string
+  } | null>(null)
+  const [isSavingLostReason, setIsSavingLostReason] = useState(false)
 
   // Carga dos dados
   const loadData = useCallback(async (isSilent = false) => {
@@ -235,20 +243,29 @@ export default function PipelineBoard() {
     }
   }, [filteredCards, columnsData])
 
-  // Movimentação de coluna (Drag and Drop ou Drawer)
-  const handleMoveCustomerToColumn = async (customerId: string, targetCol: PipelineColumnId) => {
-    // Encontrar o card
+  // Executa efetivamente a movimentação da coluna com ou sem dados de motivo de perda
+  const executeMoveCustomer = async (
+    customerId: string,
+    targetCol: PipelineColumnId,
+    lostReasonData?: { lost_reason?: string; lost_reason_detail?: string },
+  ) => {
     const targetCard = cards.find((c) => c.customer.id === customerId)
     if (!targetCard) return
-
-    if (targetCard.columnId === targetCol) return
 
     // Otimisticamente atualizar no estado local
     setCards((prev) =>
       prev.map((c) => {
         if (c.customer.id === customerId) {
+          const updatedCustomer = {
+            ...c.customer,
+            pipeline_status: targetCol,
+            lost_reason: targetCol === 'perdido' ? lostReasonData?.lost_reason || '' : '',
+            lost_reason_detail:
+              targetCol === 'perdido' ? lostReasonData?.lost_reason_detail || '' : '',
+          }
           return {
             ...c,
+            customer: updatedCustomer,
             columnId: targetCol,
             isManualOverride: true,
           }
@@ -258,13 +275,21 @@ export default function PipelineBoard() {
     )
 
     if (selectedCard && selectedCard.customer.id === customerId) {
-      setSelectedCard((prev) =>
-        prev ? { ...prev, columnId: targetCol, isManualOverride: true } : null,
-      )
+      setSelectedCard((prev) => {
+        if (!prev) return null
+        const updatedCustomer = {
+          ...prev.customer,
+          pipeline_status: targetCol,
+          lost_reason: targetCol === 'perdido' ? lostReasonData?.lost_reason || '' : '',
+          lost_reason_detail:
+            targetCol === 'perdido' ? lostReasonData?.lost_reason_detail || '' : '',
+        }
+        return { ...prev, customer: updatedCustomer, columnId: targetCol, isManualOverride: true }
+      })
     }
 
     try {
-      await updateCustomerPipelineStatus(customerId, targetCol)
+      await updateCustomerPipelineStatus(customerId, targetCol, lostReasonData)
       const colDef = PIPELINE_COLUMNS.find((col) => col.id === targetCol)
       toast({
         title: 'Status atualizado',
@@ -280,6 +305,53 @@ export default function PipelineBoard() {
       // Reverter
       loadData(true)
     }
+  }
+
+  // Movimentação de coluna (Drag and Drop ou Drawer)
+  const handleMoveCustomerToColumn = async (customerId: string, targetCol: PipelineColumnId) => {
+    // Encontrar o card
+    const targetCard = cards.find((c) => c.customer.id === customerId)
+    if (!targetCard) return
+
+    if (targetCard.columnId === targetCol) return
+
+    // Se estiver sendo movido para a coluna 'perdido', intercepta para abrir o modal de motivo
+    if (targetCol === 'perdido') {
+      setLostReasonTarget({
+        customerId,
+        customerName: targetCard.customer.name,
+      })
+      return
+    }
+
+    // Se for outra coluna, move direto (se estava em perdido, limpa lost_reason no backend e frontend)
+    await executeMoveCustomer(customerId, targetCol)
+  }
+
+  // Confirmação do motivo no modal
+  const handleConfirmLostReason = async ({
+    reason,
+    detail,
+  }: {
+    reason: string
+    detail?: string
+  }) => {
+    if (!lostReasonTarget) return
+    setIsSavingLostReason(true)
+    try {
+      await executeMoveCustomer(lostReasonTarget.customerId, 'perdido', {
+        lost_reason: reason,
+        lost_reason_detail: detail,
+      })
+      setLostReasonTarget(null)
+    } finally {
+      setIsSavingLostReason(false)
+    }
+  }
+
+  // Cancelamento do modal: mantém o card onde está
+  const handleCancelLostReason = () => {
+    setLostReasonTarget(null)
   }
 
   // Restaurar cálculo automático
@@ -643,6 +715,15 @@ export default function PipelineBoard() {
           onResetAuto={handleResetToAuto}
         />
       )}
+
+      {/* Modal Obrigatório de Motivo de Perda */}
+      <LostReasonModal
+        isOpen={Boolean(lostReasonTarget)}
+        customerName={lostReasonTarget?.customerName || ''}
+        onClose={handleCancelLostReason}
+        onConfirm={handleConfirmLostReason}
+        isSubmitting={isSavingLostReason}
+      />
     </div>
   )
 }

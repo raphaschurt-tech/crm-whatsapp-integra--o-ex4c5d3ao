@@ -14,6 +14,7 @@ import {
   DollarSign,
   ArrowRight,
   RotateCcw,
+  AlertCircle,
 } from 'lucide-react'
 import { PipelineCardData, PIPELINE_COLUMNS, PipelineColumnId } from '@/services/pipelineService'
 import { formatCurrency, openWhatsApp } from '@/lib/whatsapp'
@@ -157,6 +158,27 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
 
           {/* Body Content with Tabs or Sections */}
           <div className="flex-1 overflow-y-auto p-5 space-y-6">
+            {/* Seção Alerta de Motivo de Perda (quando existir) */}
+            {customer.lost_reason && (
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-2">
+                <div className="flex items-center gap-2 text-rose-800">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                  <h3 className="text-xs uppercase font-bold tracking-wider">
+                    Motivo da Perda (Lead Perdido)
+                  </h3>
+                </div>
+                <div className="bg-white/80 p-3 rounded-lg border border-rose-100 space-y-1">
+                  <p className="text-xs font-semibold text-rose-950">{customer.lost_reason}</p>
+                  {customer.lost_reason_detail && (
+                    <p className="text-xs text-slate-600 mt-1 whitespace-pre-wrap">
+                      <strong className="text-slate-700">Detalhe: </strong>
+                      {customer.lost_reason_detail}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Seção 1: Dados Cadastrais */}
             <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-4 space-y-3">
               <h3 className="text-xs uppercase font-bold text-slate-500 tracking-wider">

@@ -30,6 +30,8 @@ export interface Customer extends RecordModel {
   lead_source?: LeadSource
   deleted?: boolean
   deleted_at?: string
+  lost_reason?: string
+  lost_reason_detail?: string
 }
 
 export type ProductType = 'comprado' | 'produzido'
