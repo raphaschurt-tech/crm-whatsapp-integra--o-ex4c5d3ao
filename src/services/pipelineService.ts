@@ -148,7 +148,7 @@ export function deriveAutoStatus(
     return 'em_atendimento'
   }
 
-  // 5. Novo lead por padrão
+  // 5. Novo lead por padrão (caso pipeline_status seja novo_lead)
   return 'novo_lead'
 }
 
@@ -197,7 +197,26 @@ export async function loadPipelineBoardData(): Promise<{
     quotesByCustomer.set(q.customer, list)
   }
 
-  const cards: PipelineCardData[] = customers.map((customer) => {
+  // Regra: Contatos importados criados sem pipeline_status não entram no Pipeline.
+  // Somente clientes com pipeline_status preenchido (ou com orçamentos/interações reais) devem aparecer no Pipeline.
+  // E clientes com deleted=true nunca aparecem no Pipeline.
+  const activeCustomers = customers.filter((c) => {
+    if (c.deleted) return false
+    const rawStatus = (c.pipeline_status || '').trim()
+    const hasQuotes = (quotesByCustomer.get(c.id) || []).length > 0
+    const cleanPhone = normalizeDigits(c.phone)
+    const hasMessages = Boolean(
+      (convByCustomerId.get(c.id)?.messages.length || 0) > 0 ||
+      (convByPhone.get(cleanPhone)?.messages.length || 0) > 0,
+    )
+    // Se o cliente não tem pipeline_status e também não tem interação/orçamento (ex: acabou de ser importado), fica fora do funil
+    if (!rawStatus && !hasQuotes && !hasMessages) {
+      return false
+    }
+    return true
+  })
+
+  const cards: PipelineCardData[] = activeCustomers.map((customer) => {
     const custQuotes = quotesByCustomer.get(customer.id) || []
     // Ordenar orçamentos do cliente por data mais recente
     custQuotes.sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime())

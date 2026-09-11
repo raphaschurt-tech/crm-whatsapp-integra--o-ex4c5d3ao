@@ -64,15 +64,20 @@ routerAdd(
       console.log('[SYNC-CONTACTS-FETCH-CUSTOMERS-ERR]', custErr.message || String(custErr))
     }
 
-    // Mapa de telefone normalizado (com 55) -> Record
+    // Mapa de telefone normalizado (com 55) -> Record, e mapa de telefones excluídos (deleted=true)
     const customerByPhone = {}
+    const deletedPhones = {}
     for (let c = 0; c < existingCustomers.length; c++) {
       const custRec = existingCustomers[c]
+      const isDeleted = Boolean(custRec.get('deleted'))
       const pRaw = String(custRec.getString('phone') || '')
       let pDigits = pRaw.replace(/\D/g, '')
       if (pDigits) {
         if (pDigits.length === 10 || pDigits.length === 11) {
           pDigits = '55' + pDigits
+        }
+        if (isDeleted) {
+          deletedPhones[pDigits] = true
         }
         if (!customerByPhone[pDigits]) {
           customerByPhone[pDigits] = custRec
@@ -213,6 +218,12 @@ routerAdd(
         }
         processedPhonesInRun[normalizedPhone] = true
 
+        // Regra: clientes excluídos (deleted=true) são completamente ignorados (nunca recriar nem atualizar)
+        if (deletedPhones[normalizedPhone]) {
+          ignoredCount++
+          continue
+        }
+
         // Resolver melhor nome: prioridade name > short > vname > notify > telefone
         let resolvedName = rawName || rawShort || rawVname || rawNotify || normalizedPhone
         resolvedName = resolvedName.trim()
@@ -223,7 +234,7 @@ routerAdd(
         const existingRec = customerByPhone[normalizedPhone]
 
         if (!existingRec) {
-          // Criar novo cliente
+          // Criar novo cliente SEM pipeline_status (vazio) — aparece em /clientes mas não entra no Pipeline
           try {
             const newCust = new Record(custCol)
             newCust.set('name', resolvedName)
@@ -231,7 +242,7 @@ routerAdd(
             newCust.set('type', 'PF')
             newCust.set('lead_source', 'whatsapp')
             newCust.set('notes', 'Contato importado do WhatsApp')
-            newCust.set('pipeline_status', 'novo_lead')
+            newCust.set('pipeline_status', '')
             $app.save(newCust)
 
             customerByPhone[normalizedPhone] = newCust

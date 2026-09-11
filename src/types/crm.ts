@@ -28,6 +28,8 @@ export interface Customer extends RecordModel {
   cnpj?: string
   pipeline_status?: string
   lead_source?: LeadSource
+  deleted?: boolean
+  deleted_at?: string
 }
 
 export type ProductType = 'comprado' | 'produzido'

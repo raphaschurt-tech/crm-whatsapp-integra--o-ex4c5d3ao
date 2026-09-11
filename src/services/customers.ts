@@ -2,10 +2,15 @@ import pb from '@/lib/pocketbase/client'
 import { withRetry } from '@/lib/retry'
 import { Customer } from '@/types/crm'
 
-export const getCustomers = async (): Promise<Customer[]> => {
+export const getCustomers = async (includeDeleted = false): Promise<Customer[]> => {
   try {
+    const filter = includeDeleted ? '' : 'deleted != true'
     return await withRetry(
-      () => pb.collection<Customer>('customers').getFullList({ sort: 'name' }),
+      () =>
+        pb.collection<Customer>('customers').getFullList({
+          sort: 'name',
+          filter: filter || undefined,
+        }),
       { retries: 3, delayMs: 800 },
     )
   } catch (error) {
@@ -59,7 +64,17 @@ export const createCustomer = (data: Partial<Customer>) =>
 export const updateCustomer = (id: string, data: Partial<Customer>) =>
   pb.collection<Customer>('customers').update(id, data)
 
-export const deleteCustomer = (id: string) => pb.collection('customers').delete(id)
+/**
+ * Soft delete de cliente: marca deleted = true e deleted_at com timestamp atual.
+ * Nunca realiza remoção física do registro no banco de dados.
+ * Protegido no backend: apenas role 'admin' tem permissão de executar.
+ */
+export const deleteCustomer = async (id: string): Promise<Customer> => {
+  return await pb.collection<Customer>('customers').update(id, {
+    deleted: true,
+    deleted_at: new Date().toISOString(),
+  })
+}
 
 export interface SyncContactsResult {
   ok: boolean

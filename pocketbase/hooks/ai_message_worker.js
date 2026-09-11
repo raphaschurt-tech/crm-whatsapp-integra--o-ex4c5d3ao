@@ -311,6 +311,18 @@ onRecordAfterCreateSuccess((e) => {
       } catch (createErr) {
         console.log('[AI-WORKER-CUSTOMER-CREATE-ERR]', createErr.message || String(createErr))
       }
+    } else {
+      // Se já existe e não tem pipeline_status e não está excluído, define novo_lead
+      const isCustDeleted = Boolean(customerRecord.get('deleted'))
+      if (!isCustDeleted) {
+        const curStatus = String(customerRecord.getString('pipeline_status') || '').trim()
+        if (!curStatus) {
+          customerRecord.set('pipeline_status', 'novo_lead')
+          try {
+            $app.save(customerRecord)
+          } catch (_) {}
+        }
+      }
     }
 
     // Se o nome atual do cliente for provisório (apenas dígitos numéricos ou igual ao telefone)

@@ -85,13 +85,17 @@ export default function CustomerList() {
   })
 
   const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Excluir o cliente ${name}?`)) return
+    if (!confirm(`Tem certeza que deseja excluir o cliente ${name}?`)) return
     try {
       await deleteCustomer(id)
-      toast({ title: 'Cliente excluído' })
+      toast({ title: 'Cliente excluído com sucesso' })
       loadData()
-    } catch (_) {
-      toast({ title: 'Erro ao excluir', variant: 'destructive' })
+    } catch (err: any) {
+      const errorMsg =
+        err?.status === 403 || err?.data?.message?.includes('administradores')
+          ? 'Apenas administradores têm permissão para excluir clientes.'
+          : 'Erro ao excluir'
+      toast({ title: errorMsg, variant: 'destructive' })
     }
   }
 

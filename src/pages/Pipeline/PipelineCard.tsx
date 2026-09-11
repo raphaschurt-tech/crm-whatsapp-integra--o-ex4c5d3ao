@@ -1,17 +1,45 @@
-import React from 'react'
-import { Phone, Clock, DollarSign, GripVertical, FileText, Building2, User } from 'lucide-react'
+import React, { useState } from 'react'
+import {
+  Phone,
+  Clock,
+  DollarSign,
+  GripVertical,
+  FileText,
+  Building2,
+  User,
+  Trash2,
+} from 'lucide-react'
 import { PipelineCardData } from '@/services/pipelineService'
 import { formatCurrency } from '@/lib/whatsapp'
 import { formatPhoneDisplay } from '@/services/whatsappChat'
 import { LeadSourceBadge } from '@/components/LeadSourceBadge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface PipelineCardProps {
   card: PipelineCardData
   onClick: () => void
   onDragStart: (e: React.DragEvent<HTMLDivElement>, customerId: string) => void
+  isAdmin?: boolean
+  onDelete?: (customerId: string, customerName: string) => void
 }
 
-export const PipelineCard: React.FC<PipelineCardProps> = ({ card, onClick, onDragStart }) => {
+export const PipelineCard: React.FC<PipelineCardProps> = ({
+  card,
+  onClick,
+  onDragStart,
+  isAdmin = false,
+  onDelete,
+}) => {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const { customer, isManualOverride, activeQuote, totalQuoteAmount, lastInteractionText } = card
   const resolvedType = customer.type || (customer.cnpj ? 'PJ' : 'PF')
   const isSupplier = customer.customer_type === 'fornecedor'
@@ -74,6 +102,22 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({ card, onClick, onDra
               Manual
             </span>
           )}
+
+          {isAdmin && onDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowDeleteConfirm(true)
+              }}
+              className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+              title="Excluir este lead"
+              aria-label="Excluir este lead"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+
           <GripVertical className="h-3.5 w-3.5 text-slate-300 group-hover:text-slate-500 cursor-grab" />
         </div>
       </div>
@@ -123,6 +167,40 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({ card, onClick, onDra
           <span>{lastInteractionText || 'Recente'}</span>
         </div>
       </div>
+
+      {/* Confirmação de Exclusão de Lead (apenas admin) */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir lead</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este lead?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowDeleteConfirm(false)
+              }}
+            >
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowDeleteConfirm(false)
+                if (onDelete) {
+                  onDelete(customer.id, customer.name)
+                }
+              }}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -874,7 +874,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   }
 
   // ==========================================
-  // AUTO-CRIAÇÃO DE CLIENTE NO CRM (WHATSAPP LEAD)
+  // AUTO-CRIAÇÃO / PROMOÇÃO DE CLIENTE NO CRM (WHATSAPP LEAD)
   // ==========================================
   // Se o número de telefone de uma mensagem recebida de cliente (!isFromMe) ainda não tem cliente
   // cadastrado no banco, cria automaticamente o registro de cliente usando:
@@ -882,7 +882,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   // - Telefone: o número normalizado
   // - Nota: 'Lead originado pelo WhatsApp'
   // - pipeline_status: 'novo_lead'
-  // Se o número já existir, apenas reaproveita — nunca duplica.
+  // Se o cliente já existir:
+  // - Se deleted=true, é ignorado (nunca recria nem reativa o mesmo telefone excluído)
+  // - Se não tiver pipeline_status (vazio/limpo), ao receber mensagem define "novo_lead" (promove a lead real por interação)
   if (
     !isFromMe &&
     normalizedPhone &&
@@ -931,6 +933,28 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             messageId: messageId,
           }),
         )
+      } else {
+        // Se o cliente foi excluído (deleted=true), não recriar nem alterar
+        const isCustDeleted = Boolean(existingCustomer.get('deleted'))
+        if (!isCustDeleted) {
+          const currentPipelineStatus = String(
+            existingCustomer.getString('pipeline_status') || '',
+          ).trim()
+          // Se o cliente não tem pipeline_status (vazio), promove-o a lead real ("novo_lead") por interação
+          if (!currentPipelineStatus) {
+            existingCustomer.set('pipeline_status', 'novo_lead')
+            $app.save(existingCustomer)
+            console.log(
+              '[CUSTOMER-PROMOTED-TO-NOVO-LEAD]',
+              JSON.stringify({
+                timestamp: new Date().toISOString(),
+                customerId: existingCustomer.id,
+                phone: maskedSenderPhone,
+                messageId: messageId,
+              }),
+            )
+          }
+        }
       }
     } catch (autoCustErr) {
       console.log(

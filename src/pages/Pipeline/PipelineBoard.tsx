@@ -17,6 +17,8 @@ import {
   loadPipelineBoardData,
   updateCustomerPipelineStatus,
 } from '@/services/pipelineService'
+import { deleteCustomer } from '@/services/customers'
+import { useAuth } from '@/hooks/use-auth'
 import { getUsers } from '@/services/users'
 import { User } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
@@ -30,6 +32,34 @@ import { PipelineCustomerDrawer } from './PipelineCustomerDrawer'
 
 export default function PipelineBoard() {
   const navigate = useNavigate()
+  const { isAdmin } = useAuth()
+
+  // Handler de exclusão de lead (apenas admin)
+  const handleDeleteLead = async (customerId: string, customerName: string) => {
+    try {
+      await deleteCustomer(customerId)
+      toast({
+        title: 'Lead excluído',
+        description: `O lead "${customerName}" foi removido do funil.`,
+      })
+      // Remove do estado local imediatamente
+      setCards((prev) => prev.filter((c) => c.customer.id !== customerId))
+      if (selectedCard && selectedCard.customer.id === customerId) {
+        setSelectedCard(null)
+      }
+    } catch (err: any) {
+      console.error('Erro ao excluir lead:', err)
+      const errorMsg =
+        err?.status === 403 || err?.data?.message?.includes('administradores')
+          ? 'Apenas administradores têm permissão para excluir clientes ou leads.'
+          : err?.message || 'Falha ao excluir o lead.'
+      toast({
+        title: 'Erro ao excluir lead',
+        description: errorMsg,
+        variant: 'destructive',
+      })
+    }
+  }
 
   // Estado dos dados
   const [cards, setCards] = useState<PipelineCardData[]>([])
@@ -589,6 +619,8 @@ export default function PipelineBoard() {
                         <PipelineCard
                           key={card.customer.id}
                           card={card}
+                          isAdmin={isAdmin}
+                          onDelete={handleDeleteLead}
                           onClick={() => setSelectedCard(card)}
                           onDragStart={handleDragStart}
                         />
