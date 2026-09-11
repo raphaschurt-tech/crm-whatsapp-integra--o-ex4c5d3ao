@@ -713,6 +713,7 @@ export default function PipelineBoard() {
           onClose={() => setSelectedCard(null)}
           onMoveColumn={handleMoveCustomerToColumn}
           onResetAuto={handleResetToAuto}
+          onMessageSent={() => loadData(true)}
         />
       )}
 
