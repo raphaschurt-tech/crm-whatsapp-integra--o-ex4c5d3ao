@@ -11,6 +11,8 @@ export interface User extends RecordModel {
 
 export type CustomerType = 'PF' | 'PJ'
 
+export type EntityCustomerType = 'cliente' | 'fornecedor'
+
 export type LeadSource = 'whatsapp' | 'instagram' | 'google' | 'other'
 
 export interface Customer extends RecordModel {
@@ -21,6 +23,7 @@ export interface Customer extends RecordModel {
   company?: string
   notes?: string
   type?: CustomerType
+  customer_type?: EntityCustomerType
   cpf?: string
   cnpj?: string
   pipeline_status?: string

@@ -14,6 +14,7 @@ interface PipelineCardProps {
 export const PipelineCard: React.FC<PipelineCardProps> = ({ card, onClick, onDragStart }) => {
   const { customer, isManualOverride, activeQuote, totalQuoteAmount, lastInteractionText } = card
   const resolvedType = customer.type || (customer.cnpj ? 'PJ' : 'PF')
+  const isSupplier = customer.customer_type === 'fornecedor'
 
   // Nome da pessoa de contato: só exibe se preenchido e não for apenas o número de telefone
   const rawContactName = customer.contact_name?.trim() || ''
@@ -41,6 +42,14 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({ card, onClick, onDra
       {/* Top Header: Tipo + Origem + Nome + Grip */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          {isSupplier && (
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 bg-amber-100 text-amber-800"
+              title="Fornecedor"
+            >
+              Fornecedor
+            </span>
+          )}
           <span
             className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
               resolvedType === 'PJ'

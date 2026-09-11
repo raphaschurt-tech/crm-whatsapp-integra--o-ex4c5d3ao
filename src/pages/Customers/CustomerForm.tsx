@@ -7,14 +7,14 @@ import {
   checkDuplicateDocument,
   cleanDocument,
 } from '@/services/customers'
-import { CustomerType, LeadSource } from '@/types/crm'
+import { CustomerType, EntityCustomerType, LeadSource } from '@/types/crm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/hooks/use-toast'
-import { User, Building2, AlertCircle } from 'lucide-react'
-import { LEAD_SOURCE_OPTIONS, LEAD_SOURCE_CONFIG } from '@/components/LeadSourceBadge'
+import { User, Building2, AlertCircle, Truck, Users } from 'lucide-react'
+import { LEAD_SOURCE_OPTIONS } from '@/components/LeadSourceBadge'
 
 // Funções utilitárias de formatação
 const maskCPF = (val: string) => {
@@ -38,6 +38,7 @@ export default function CustomerForm() {
   const { id } = useParams()
   const navigate = useNavigate()
 
+  const [customerType, setCustomerType] = useState<EntityCustomerType>('cliente')
   const [type, setType] = useState<CustomerType>('PF')
   const [cpf, setCpf] = useState('')
   const [cnpj, setCnpj] = useState('')
@@ -63,6 +64,7 @@ export default function CustomerForm() {
           setEmail(c.email || '')
           setCompany(c.company || '')
           setNotes(c.notes || '')
+          setCustomerType(c.customer_type === 'fornecedor' ? 'fornecedor' : 'cliente')
           if (c.lead_source) {
             setLeadSource(c.lead_source)
           } else {
@@ -122,6 +124,7 @@ export default function CustomerForm() {
         company,
         notes,
         type,
+        customer_type: customerType,
         lead_source: leadSource,
         cpf: type === 'PF' ? cpf : '',
         cnpj: type === 'PJ' ? cnpj : '',
@@ -132,7 +135,12 @@ export default function CustomerForm() {
       } else {
         await createCustomer(payload)
       }
-      toast({ title: 'Cliente salvo com sucesso!' })
+      toast({
+        title:
+          customerType === 'fornecedor'
+            ? 'Fornecedor salvo com sucesso!'
+            : 'Cliente salvo com sucesso!',
+      })
       navigate('/clientes')
     } catch (_) {
       toast({ title: 'Erro ao salvar cliente', variant: 'destructive' })
@@ -151,9 +159,47 @@ export default function CustomerForm() {
         onSubmit={handleSubmit}
         className="bg-white p-6 rounded-xl border border-slate-200 space-y-5"
       >
+        {/* Classificação: Cliente ou Fornecedor */}
+        <div className="space-y-1.5">
+          <Label className="text-sm font-semibold text-slate-700">
+            Tipo de Contato / Cadastro *
+          </Label>
+          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-lg max-w-sm">
+            <button
+              type="button"
+              onClick={() => setCustomerType('cliente')}
+              className={`flex items-center justify-center gap-2 py-2 px-3 text-sm font-medium rounded-md transition-all ${
+                customerType === 'cliente'
+                  ? 'bg-white text-emerald-700 font-semibold shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Users className="h-4 w-4" />
+              Cliente
+            </button>
+            <button
+              type="button"
+              onClick={() => setCustomerType('fornecedor')}
+              className={`flex items-center justify-center gap-2 py-2 px-3 text-sm font-medium rounded-md transition-all ${
+                customerType === 'fornecedor'
+                  ? 'bg-white text-amber-700 font-semibold shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Truck className="h-4 w-4" />
+              Fornecedor
+            </button>
+          </div>
+          <p className="text-xs text-slate-500">
+            Fornecedores são exibidos na coluna dedicada &quot;Fornecedores&quot; no Pipeline.
+          </p>
+        </div>
+
         {/* Seletor Tipo: PF ou PJ */}
         <div className="space-y-1.5">
-          <Label className="text-sm font-semibold text-slate-700">Tipo de Cliente *</Label>
+          <Label className="text-sm font-semibold text-slate-700">
+            Pessoa Física ou Jurídica *
+          </Label>
           <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-lg max-w-sm">
             <button
               type="button"

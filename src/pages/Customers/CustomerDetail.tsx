@@ -72,6 +72,15 @@ export default function CustomerDetail() {
               <h1 className="text-2xl font-bold text-slate-900">{customer.name}</h1>
               <Badge
                 className={
+                  customer.customer_type === 'fornecedor'
+                    ? 'bg-amber-100 text-amber-800 hover:bg-amber-100 border-none font-bold'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-100 border-none'
+                }
+              >
+                {customer.customer_type === 'fornecedor' ? 'Fornecedor' : 'Cliente'}
+              </Badge>
+              <Badge
+                className={
                   (customer.type || (customer.cnpj ? 'PJ' : 'PF')) === 'PJ'
                     ? 'bg-blue-100 text-blue-800 hover:bg-blue-100 border-none'
                     : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-none'
@@ -98,7 +107,13 @@ export default function CustomerDetail() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div>
-              <p className="text-xs text-slate-400 uppercase font-semibold">Tipo</p>
+              <p className="text-xs text-slate-400 uppercase font-semibold">Classificação</p>
+              <p className="font-semibold text-slate-800">
+                {customer.customer_type === 'fornecedor' ? 'Fornecedor' : 'Cliente'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 uppercase font-semibold">Tipo (Documento)</p>
               <p className="font-semibold text-slate-800">
                 {(customer.type || (customer.cnpj ? 'PJ' : 'PF')) === 'PJ'
                   ? 'Pessoa Jurídica (PJ)'

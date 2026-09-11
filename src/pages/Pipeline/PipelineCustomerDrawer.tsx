@@ -41,6 +41,7 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
 
   const { customer, columnId, isManualOverride, allQuotes, whatsappConversation } = card
   const resolvedType = customer.type || (customer.cnpj ? 'PJ' : 'PF')
+  const isSupplier = customer.customer_type === 'fornecedor'
   const currentColumnDef = PIPELINE_COLUMNS.find((c) => c.id === columnId)
 
   return (
@@ -57,6 +58,15 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
           <div className="p-5 border-b border-slate-200 bg-slate-50 flex items-start justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2 flex-wrap">
+                {isSupplier ? (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-800">
+                    Fornecedor
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700">
+                    Cliente
+                  </span>
+                )}
                 <span
                   className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
                     resolvedType === 'PJ'
@@ -153,6 +163,13 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
                 Dados Cadastrais
               </h3>
               <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-slate-400 block font-medium">Classificação</span>
+                  <span className="font-semibold text-slate-800 mt-0.5 block">
+                    {isSupplier ? 'Fornecedor' : 'Cliente'}
+                  </span>
+                </div>
+
                 <div>
                   <span className="text-slate-400 block font-medium">Telefone</span>
                   <span className="font-semibold text-slate-800 flex items-center gap-1.5 mt-0.5">

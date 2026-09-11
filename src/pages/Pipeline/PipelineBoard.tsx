@@ -41,6 +41,7 @@ export default function PipelineBoard() {
   // Filtros
   const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'week' | 'month'>('all')
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
+  const [entityFilter, setEntityFilter] = useState<'ALL' | 'cliente' | 'fornecedor'>('ALL')
   const [sourceFilter, setSourceFilter] = useState<
     'ALL' | 'whatsapp' | 'instagram' | 'google' | 'other'
   >('ALL')
@@ -101,6 +102,11 @@ export default function PipelineBoard() {
     const startOfMonth = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).getTime()
 
     return cards.filter((item) => {
+      // Classificação Cliente ou Fornecedor
+      const isSupplier = item.customer.customer_type === 'fornecedor'
+      if (entityFilter === 'cliente' && isSupplier) return false
+      if (entityFilter === 'fornecedor' && !isSupplier) return false
+
       // 1. Tipo (PF / PJ / ALL)
       const cType = item.customer.type || (item.customer.cnpj ? 'PJ' : 'PF')
       if (typeFilter !== 'ALL' && cType !== typeFilter) {
@@ -155,11 +161,12 @@ export default function PipelineBoard() {
 
       return true
     })
-  }, [cards, typeFilter, sourceFilter, periodFilter, selectedUser, search])
+  }, [cards, entityFilter, typeFilter, sourceFilter, periodFilter, selectedUser, search])
 
   // Agrupamento por colunas
   const columnsData = useMemo(() => {
     const grouped: Record<PipelineColumnId, PipelineCardData[]> = {
+      fornecedores: [],
       novo_lead: [],
       em_atendimento: [],
       orcamento_enviado: [],
@@ -171,6 +178,8 @@ export default function PipelineBoard() {
     for (const card of filteredCards) {
       if (grouped[card.columnId]) {
         grouped[card.columnId].push(card)
+      } else if (card.customer.customer_type === 'fornecedor') {
+        grouped.fornecedores.push(card)
       } else {
         grouped.novo_lead.push(card)
       }
@@ -379,41 +388,79 @@ export default function PipelineBoard() {
             />
           </div>
 
-          {/* Filtro PF / PJ */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg self-start sm:self-auto text-xs">
-            <button
-              type="button"
-              onClick={() => setTypeFilter('ALL')}
-              className={`px-2.5 py-1 font-semibold rounded-md transition-colors ${
-                typeFilter === 'ALL'
-                  ? 'bg-white text-emerald-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Todos
-            </button>
-            <button
-              type="button"
-              onClick={() => setTypeFilter('PF')}
-              className={`px-2.5 py-1 font-semibold rounded-md transition-colors ${
-                typeFilter === 'PF'
-                  ? 'bg-white text-emerald-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              PF
-            </button>
-            <button
-              type="button"
-              onClick={() => setTypeFilter('PJ')}
-              className={`px-2.5 py-1 font-semibold rounded-md transition-colors ${
-                typeFilter === 'PJ'
-                  ? 'bg-white text-emerald-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              PJ
-            </button>
+          {/* Filtro Cliente / Fornecedor e PF / PJ */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg self-start sm:self-auto text-xs">
+              <button
+                type="button"
+                onClick={() => setEntityFilter('ALL')}
+                className={`px-2.5 py-1 font-semibold rounded-md transition-colors ${
+                  entityFilter === 'ALL'
+                    ? 'bg-white text-emerald-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Todos
+              </button>
+              <button
+                type="button"
+                onClick={() => setEntityFilter('cliente')}
+                className={`px-2.5 py-1 font-semibold rounded-md transition-colors ${
+                  entityFilter === 'cliente'
+                    ? 'bg-white text-emerald-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Clientes
+              </button>
+              <button
+                type="button"
+                onClick={() => setEntityFilter('fornecedor')}
+                className={`px-2.5 py-1 font-semibold rounded-md transition-colors ${
+                  entityFilter === 'fornecedor'
+                    ? 'bg-white text-amber-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Fornecedores
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg self-start sm:self-auto text-xs">
+              <button
+                type="button"
+                onClick={() => setTypeFilter('ALL')}
+                className={`px-2 py-1 font-semibold rounded-md transition-colors ${
+                  typeFilter === 'ALL'
+                    ? 'bg-white text-emerald-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Todos
+              </button>
+              <button
+                type="button"
+                onClick={() => setTypeFilter('PF')}
+                className={`px-2 py-1 font-semibold rounded-md transition-colors ${
+                  typeFilter === 'PF'
+                    ? 'bg-white text-emerald-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                PF
+              </button>
+              <button
+                type="button"
+                onClick={() => setTypeFilter('PJ')}
+                className={`px-2 py-1 font-semibold rounded-md transition-colors ${
+                  typeFilter === 'PJ'
+                    ? 'bg-white text-emerald-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                PJ
+              </button>
+            </div>
           </div>
         </div>
 
@@ -487,9 +534,9 @@ export default function PipelineBoard() {
           </Button>
         </div>
       ) : (
-        /* Quadro Kanban com 6 Colunas */
+        /* Quadro Kanban com 7 Colunas (Fornecedores primeiro + 6 etapas) */
         <div className="overflow-x-auto pb-6">
-          <div className="flex gap-4 min-w-[1320px] items-start">
+          <div className="flex gap-4 min-w-[1540px] items-start">
             {PIPELINE_COLUMNS.map((col) => {
               const columnCards = columnsData[col.id] || []
               const columnTotalAmount = columnCards.reduce(

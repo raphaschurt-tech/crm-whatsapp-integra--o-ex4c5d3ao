@@ -12,6 +12,7 @@ import {
 } from '@/services/whatsappChat'
 
 export type PipelineColumnId =
+  | 'fornecedores'
   | 'novo_lead'
   | 'em_atendimento'
   | 'orcamento_enviado'
@@ -28,6 +29,13 @@ export interface PipelineColumnDef {
 }
 
 export const PIPELINE_COLUMNS: PipelineColumnDef[] = [
+  {
+    id: 'fornecedores',
+    label: 'Fornecedores',
+    color: 'text-amber-700',
+    badgeBg: 'bg-amber-50 text-amber-700 border-amber-200',
+    borderColor: 'border-t-amber-500',
+  },
   {
     id: 'novo_lead',
     label: 'Novo Lead',
@@ -101,6 +109,11 @@ export function deriveAutoStatus(
   customerQuotes: Quote[],
   whatsappConv: WhatsAppCustomer | null,
 ): PipelineColumnId {
+  // 0. Se for fornecedor, fica na coluna de fornecedores e nunca participa das transições automáticas de lead
+  if (customer.customer_type === 'fornecedor') {
+    return 'fornecedores'
+  }
+
   // 1. Se tem orçamento pago -> "fechado"
   const hasPaidQuote = customerQuotes.some((q) => q.status === 'pago')
   if (hasPaidQuote) {
@@ -226,12 +239,19 @@ export async function loadPipelineBoardData(): Promise<{
     const totalQuoteAmount = custQuotes.reduce((acc, q) => acc + (q.total || 0), 0)
 
     // Determinar coluna
+    const isSupplier = customer.customer_type === 'fornecedor'
     const rawManualStatus = (customer.pipeline_status || '').trim()
     const isValidManual = PIPELINE_COLUMNS.some((col) => col.id === rawManualStatus)
     const isManualOverride = isValidManual && rawManualStatus.length > 0
-    const columnId: PipelineColumnId = isManualOverride
+    let columnId: PipelineColumnId = isManualOverride
       ? (rawManualStatus as PipelineColumnId)
       : deriveAutoStatus(customer, custQuotes, whatsappConv)
+
+    // Fornecedores nunca devem cair em etapas de vendas automáticas.
+    // Se não tiver override manual, ou se tiver override inválido, fica em 'fornecedores'.
+    if (isSupplier && !isManualOverride) {
+      columnId = 'fornecedores'
+    }
 
     return {
       customer,

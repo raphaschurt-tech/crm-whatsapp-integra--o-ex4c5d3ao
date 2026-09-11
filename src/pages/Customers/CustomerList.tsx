@@ -33,6 +33,7 @@ export default function CustomerList() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
+  const [entityFilter, setEntityFilter] = useState<'ALL' | 'cliente' | 'fornecedor'>('ALL')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
@@ -61,6 +62,11 @@ export default function CustomerList() {
   })
 
   const filtered = customers.filter((c) => {
+    // Filtro por entidade: cliente ou fornecedor
+    const isSupplier = c.customer_type === 'fornecedor'
+    if (entityFilter === 'cliente' && isSupplier) return false
+    if (entityFilter === 'fornecedor' && !isSupplier) return false
+
     // Filtro por tipo: Se o registro não tiver type explicito, deduz por cnpj ou assume PF
     const cType = c.type || (c.cnpj ? 'PJ' : 'PF')
     if (typeFilter !== 'ALL' && cType !== typeFilter) {
@@ -193,41 +199,79 @@ export default function CustomerList() {
           />
         </div>
 
-        {/* Filtros PF / PJ / Todos */}
-        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg self-start sm:self-auto">
-          <button
-            type="button"
-            onClick={() => setTypeFilter('ALL')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              typeFilter === 'ALL'
-                ? 'bg-white text-emerald-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Todos
-          </button>
-          <button
-            type="button"
-            onClick={() => setTypeFilter('PF')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              typeFilter === 'PF'
-                ? 'bg-white text-emerald-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Pessoa Física (PF)
-          </button>
-          <button
-            type="button"
-            onClick={() => setTypeFilter('PJ')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              typeFilter === 'PJ'
-                ? 'bg-white text-emerald-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Pessoa Jurídica (PJ)
-          </button>
+        {/* Filtros de Entidade (Cliente/Fornecedor) e Tipo (PF/PJ) */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setEntityFilter('ALL')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                entityFilter === 'ALL'
+                  ? 'bg-white text-emerald-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Todos
+            </button>
+            <button
+              type="button"
+              onClick={() => setEntityFilter('cliente')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                entityFilter === 'cliente'
+                  ? 'bg-white text-emerald-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Clientes
+            </button>
+            <button
+              type="button"
+              onClick={() => setEntityFilter('fornecedor')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                entityFilter === 'fornecedor'
+                  ? 'bg-white text-amber-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Fornecedores
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+            <button
+              type="button"
+              onClick={() => setTypeFilter('ALL')}
+              className={`px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                typeFilter === 'ALL'
+                  ? 'bg-white text-emerald-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Todos
+            </button>
+            <button
+              type="button"
+              onClick={() => setTypeFilter('PF')}
+              className={`px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                typeFilter === 'PF'
+                  ? 'bg-white text-emerald-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              PF
+            </button>
+            <button
+              type="button"
+              onClick={() => setTypeFilter('PJ')}
+              className={`px-2.5 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                typeFilter === 'PJ'
+                  ? 'bg-white text-emerald-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              PJ
+            </button>
+          </div>
         </div>
       </div>
 
@@ -268,19 +312,31 @@ export default function CustomerList() {
               <tbody className="divide-y divide-slate-100 text-sm">
                 {filtered.map((c) => {
                   const resolvedType = c.type || (c.cnpj ? 'PJ' : 'PF')
+                  const isSupplier = c.customer_type === 'fornecedor'
                   const doc = resolvedType === 'PF' ? c.cpf : c.cnpj
                   return (
                     <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="p-4">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
-                            resolvedType === 'PJ'
-                              ? 'bg-blue-100 text-blue-800'
-                              : 'bg-emerald-100 text-emerald-800'
-                          }`}
-                        >
-                          {resolvedType}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {isSupplier ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-800">
+                              Fornecedor
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700">
+                              Cliente
+                            </span>
+                          )}
+                          <span
+                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${
+                              resolvedType === 'PJ'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            {resolvedType}
+                          </span>
+                        </div>
                       </td>
                       <td className="p-4 font-bold text-slate-900">
                         <div>{c.name}</div>
@@ -340,12 +396,22 @@ export default function CustomerList() {
           <div className="md:hidden divide-y">
             {filtered.map((c) => {
               const resolvedType = c.type || (c.cnpj ? 'PJ' : 'PF')
+              const isSupplier = c.customer_type === 'fornecedor'
               const doc = resolvedType === 'PF' ? c.cpf : c.cnpj
               return (
                 <div key={c.id} className="p-4 space-y-2">
                   <div className="flex justify-between items-start">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {isSupplier ? (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                            Fornecedor
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                            Cliente
+                          </span>
+                        )}
                         <span
                           className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
                             resolvedType === 'PJ'
