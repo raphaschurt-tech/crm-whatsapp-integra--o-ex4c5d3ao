@@ -9,6 +9,7 @@ import {
   DollarSign,
   UserCheck,
   Calendar,
+  ArrowUpDown,
 } from 'lucide-react'
 import {
   PIPELINE_COLUMNS,
@@ -78,6 +79,30 @@ export default function PipelineBoard() {
   >('ALL')
   const [selectedUser, setSelectedUser] = useState<string>('all')
   const [search, setSearch] = useState('')
+
+  // Ordenação dos cards nas colunas: 'recentes' (padrão) ou 'antigos'
+  // Persistência durante a sessão via sessionStorage
+  const [sortOrder, setSortOrder] = useState<'recentes' | 'antigos'>(() => {
+    try {
+      const saved = sessionStorage.getItem('pipeline_sort_order')
+      if (saved === 'recentes' || saved === 'antigos') {
+        return saved
+      }
+    } catch {
+      // sessionStorage não disponível (ex: modo restrito)
+    }
+    return 'recentes'
+  })
+
+  // Atualiza sessionStorage quando a ordem mudar
+  const handleSortOrderChange = (order: 'recentes' | 'antigos') => {
+    setSortOrder(order)
+    try {
+      sessionStorage.setItem('pipeline_sort_order', order)
+    } catch {
+      // ignore
+    }
+  }
 
   // Drag and drop state
   const [draggedCustomerId, setDraggedCustomerId] = useState<string | null>(null)
@@ -223,8 +248,21 @@ export default function PipelineBoard() {
       }
     }
 
+    // Ordenar cards de TODAS as colunas simultaneamente com base na data de entrada na etapa
+    // 'recentes': primeiro os que entraram por último na etapa (descendente: maior timestamp primeiro)
+    // 'antigos': primeiro os que estão há mais tempo na etapa (ascendente: menor timestamp primeiro)
+    ;(Object.keys(grouped) as PipelineColumnId[]).forEach((colId) => {
+      grouped[colId].sort((a, b) => {
+        const timeA =
+          a.stageEnteredTimestamp || new Date(a.customer.updated || a.customer.created).getTime()
+        const timeB =
+          b.stageEnteredTimestamp || new Date(b.customer.updated || b.customer.created).getTime()
+        return sortOrder === 'recentes' ? timeB - timeA : timeA - timeB
+      })
+    })
+
     return grouped
-  }, [filteredCards])
+  }, [filteredCards, sortOrder])
 
   // Métricas gerais
   const metrics = useMemo(() => {
@@ -256,9 +294,11 @@ export default function PipelineBoard() {
     setCards((prev) =>
       prev.map((c) => {
         if (c.customer.id === customerId) {
+          const nowIso = new Date().toISOString()
           const updatedCustomer = {
             ...c.customer,
             pipeline_status: targetCol,
+            updated: nowIso,
             lost_reason: targetCol === 'perdido' ? lostReasonData?.lost_reason || '' : '',
             lost_reason_detail:
               targetCol === 'perdido' ? lostReasonData?.lost_reason_detail || '' : '',
@@ -267,6 +307,7 @@ export default function PipelineBoard() {
             ...c,
             customer: updatedCustomer,
             columnId: targetCol,
+            stageEnteredTimestamp: Date.now(),
             isManualOverride: true,
           }
         }
@@ -277,14 +318,22 @@ export default function PipelineBoard() {
     if (selectedCard && selectedCard.customer.id === customerId) {
       setSelectedCard((prev) => {
         if (!prev) return null
+        const nowIso = new Date().toISOString()
         const updatedCustomer = {
           ...prev.customer,
           pipeline_status: targetCol,
+          updated: nowIso,
           lost_reason: targetCol === 'perdido' ? lostReasonData?.lost_reason || '' : '',
           lost_reason_detail:
             targetCol === 'perdido' ? lostReasonData?.lost_reason_detail || '' : '',
         }
-        return { ...prev, customer: updatedCustomer, columnId: targetCol, isManualOverride: true }
+        return {
+          ...prev,
+          customer: updatedCustomer,
+          columnId: targetCol,
+          stageEnteredTimestamp: Date.now(),
+          isManualOverride: true,
+        }
       })
     }
 
@@ -616,6 +665,39 @@ export default function PipelineBoard() {
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* Seletor de Ordenação de Cards (Mais recentes / Mais antigos) */}
+          <div
+            className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs"
+            title="Ordenar cards em todas as colunas por data de entrada na etapa"
+          >
+            <span className="flex items-center gap-1 px-1.5 text-slate-500 font-medium text-[11px]">
+              <ArrowUpDown className="h-3 w-3 text-slate-400" />
+              Ordem:
+            </span>
+            <button
+              type="button"
+              onClick={() => handleSortOrderChange('recentes')}
+              className={`px-2 py-1 font-semibold rounded-md transition-colors ${
+                sortOrder === 'recentes'
+                  ? 'bg-white text-emerald-700 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Mais recentes
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSortOrderChange('antigos')}
+              className={`px-2 py-1 font-semibold rounded-md transition-colors ${
+                sortOrder === 'antigos'
+                  ? 'bg-white text-emerald-700 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Mais antigos
+            </button>
           </div>
         </div>
       </div>

@@ -87,6 +87,7 @@ export interface PipelineCardData {
   lastInteractionText: string
   lastInteractionDate: Date | null
   lastInteractionTimestamp: number
+  stageEnteredTimestamp: number
   activeQuote: Quote | null
   allQuotes: Quote[]
   totalQuoteAmount: number
@@ -272,6 +273,58 @@ export async function loadPipelineBoardData(): Promise<{
       columnId = 'fornecedores'
     }
 
+    // Determinar timestamp de entrada na etapa atual:
+    // Se o cliente tem status manual salvo no backend (override), customer.updated reflete quando o status foi modificado/movido.
+    // Se o status foi derivado automaticamente por eventos de vendas/atendimento:
+    // - Para fechado: data em que o orçamento pago foi aprovado/pago (updated do quote pago)
+    // - Para aguardando_pagamento: data em que o link foi gerado ou quote aprovado
+    // - Para orcamento_enviado: data do envio do orçamento (created ou updated do quote enviado)
+    // - Para em_atendimento: timestamp da primeira interação ou orçamento que causou a transição para em_atendimento
+    // - Para novo_lead ou fornecedores: data de cadastro/criação do cliente
+    let stageEnteredTimestamp = new Date(customer.updated || customer.created).getTime()
+    if (!isManualOverride) {
+      if (columnId === 'fechado') {
+        const paidQuote = custQuotes.find((q) => q.status === 'pago')
+        if (paidQuote) {
+          stageEnteredTimestamp = new Date(paidQuote.updated || paidQuote.created).getTime()
+        }
+      } else if (columnId === 'aguardando_pagamento') {
+        const awaitingQuote = custQuotes.find(
+          (q) =>
+            q.status === 'aprovado' ||
+            ((q.status === 'enviado' || (q.status as string) === 'aprovado') &&
+              Boolean(q.payment_link?.trim())),
+        )
+        if (awaitingQuote) {
+          stageEnteredTimestamp = new Date(awaitingQuote.updated || awaitingQuote.created).getTime()
+        }
+      } else if (columnId === 'orcamento_enviado') {
+        const sentQuote = custQuotes.find((q) => q.status === 'enviado')
+        if (sentQuote) {
+          stageEnteredTimestamp = new Date(sentQuote.updated || sentQuote.created).getTime()
+        }
+      } else if (columnId === 'em_atendimento') {
+        // Momento em que entrou em atendimento: primeira mensagem do WhatsApp ou primeiro orçamento
+        let firstInteraction = new Date(customer.created).getTime()
+        if (whatsappConv && whatsappConv.messages.length > 0) {
+          const firstMsg = whatsappConv.messages[0]
+          if (firstMsg?.timestamp) {
+            firstInteraction = firstMsg.timestamp
+          }
+        }
+        if (custQuotes.length > 0) {
+          const earliestQuote = custQuotes[custQuotes.length - 1]
+          const quoteTime = new Date(earliestQuote.created).getTime()
+          if (quoteTime > 0 && quoteTime < firstInteraction) {
+            firstInteraction = quoteTime
+          }
+        }
+        stageEnteredTimestamp = firstInteraction
+      } else if (columnId === 'novo_lead' || columnId === 'fornecedores') {
+        stageEnteredTimestamp = new Date(customer.created).getTime()
+      }
+    }
+
     return {
       customer,
       columnId,
@@ -279,6 +332,7 @@ export async function loadPipelineBoardData(): Promise<{
       lastInteractionText,
       lastInteractionDate,
       lastInteractionTimestamp,
+      stageEnteredTimestamp,
       activeQuote,
       allQuotes: custQuotes,
       totalQuoteAmount,
