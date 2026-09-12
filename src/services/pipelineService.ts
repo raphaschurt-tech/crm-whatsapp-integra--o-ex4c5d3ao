@@ -92,6 +92,8 @@ export interface PipelineCardData {
   allQuotes: Quote[]
   totalQuoteAmount: number
   whatsappConversation: WhatsAppCustomer | null
+  activePurchaseCount?: number
+  firstActivePurchaseId?: string
 }
 
 /**
@@ -162,13 +164,29 @@ export async function loadPipelineBoardData(): Promise<{
   quotes: Quote[]
   whatsappConversations: WhatsAppCustomer[]
 }> {
-  const [customers, quotes, whatsappConversations] = await Promise.all([
+  const [customers, quotes, whatsappConversations, purchaseRequests] = await Promise.all([
     withRetry(() => getCustomers(), { retries: 3, delayMs: 800 }).catch(() => [] as Customer[]),
     withRetry(() => getQuotes(), { retries: 3, delayMs: 800 }).catch(() => [] as Quote[]),
     withRetry(() => loadWhatsAppConversations(), { retries: 3, delayMs: 800 }).catch(
       () => [] as WhatsAppCustomer[],
     ),
+    withRetry(
+      () => pb.collection('purchase_requests').getFullList({ filter: 'status != "entregue"' }),
+      {
+        retries: 2,
+        delayMs: 500,
+      },
+    ).catch(() => [] as any[]),
   ])
+
+  // Mapear solicitações de compras ativas (em andamento) por cliente
+  const activePurchasesByCustomer = new Map<string, any[]>()
+  for (const pr of purchaseRequests) {
+    if (!pr.customer) continue
+    const list = activePurchasesByCustomer.get(pr.customer) || []
+    list.push(pr)
+    activePurchasesByCustomer.set(pr.customer, list)
+  }
 
   // Mapear conversas de WhatsApp por customerId ou por telefone normalizado
   const convByCustomerId = new Map<string, WhatsAppCustomer>()
@@ -325,6 +343,8 @@ export async function loadPipelineBoardData(): Promise<{
       }
     }
 
+    const custPurchases = activePurchasesByCustomer.get(customer.id) || []
+
     return {
       customer,
       columnId,
@@ -337,6 +357,8 @@ export async function loadPipelineBoardData(): Promise<{
       allQuotes: custQuotes,
       totalQuoteAmount,
       whatsappConversation: whatsappConv,
+      activePurchaseCount: custPurchases.length,
+      firstActivePurchaseId: custPurchases[0]?.id,
     }
   })
 

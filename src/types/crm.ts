@@ -174,3 +174,32 @@ export interface MessageProcessingRecord extends RecordModel {
   errorMessage?: string
   retryCount?: number
 }
+
+export type PurchaseRequestStatus =
+  | 'solicitada'
+  | 'cotacao'
+  | 'aprovada'
+  | 'pedido_emitido'
+  | 'em_transito'
+  | 'recebida'
+  | 'entregue'
+
+export interface PurchaseRequest extends RecordModel {
+  part_name: string
+  vehicle: string
+  customer: string
+  supplier?: string
+  status: PurchaseRequestStatus
+  cost_price?: number
+  sell_price?: number
+  delivery_days?: number
+  received_at?: string
+  is_completed?: boolean
+  notes?: string
+  created_by?: string
+  expand?: {
+    customer?: Customer
+    supplier?: Customer
+    created_by?: User
+  }
+}

@@ -156,6 +156,7 @@ export default function PipelineBoard() {
   useRealtime('quotes', () => loadData(true))
   useRealtime('webhook_received', () => loadData(true))
   useRealtime('message_processing', () => loadData(true))
+  useRealtime('purchase_requests', () => loadData(true))
 
   // Filtros aplicados sobre os cards
   const filteredCards = useMemo(() => {

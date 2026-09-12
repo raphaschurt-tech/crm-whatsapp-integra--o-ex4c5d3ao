@@ -8,7 +8,10 @@ import {
   Building2,
   User,
   Trash2,
+  ShoppingBag,
+  ExternalLink,
 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { PipelineCardData } from '@/services/pipelineService'
 import { formatCurrency } from '@/lib/whatsapp'
 import { formatPhoneDisplay } from '@/services/whatsappChat'
@@ -159,6 +162,22 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({
               Motivo da perda:
             </span>
             <span className="line-clamp-2">{customer.lost_reason}</span>
+          </div>
+        )}
+
+        {/* Tag de Compra em Andamento vinculada */}
+        {Boolean(card.activePurchaseCount && card.activePurchaseCount > 0) && (
+          <div className="pt-0.5">
+            <Link
+              to={`/pipeline-compras?search=${encodeURIComponent(customer.name)}`}
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 hover:border-amber-300 transition-colors shadow-2xs group/tag"
+              title="Ver solicitação de compra em andamento"
+            >
+              <ShoppingBag className="h-3 w-3 text-amber-600" />
+              <span>Compra em andamento</span>
+              <ExternalLink className="h-2.5 w-2.5 opacity-60 group-hover/tag:opacity-100" />
+            </Link>
           </div>
         )}
       </div>

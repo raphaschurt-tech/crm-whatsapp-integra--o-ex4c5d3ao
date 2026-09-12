@@ -12,6 +12,7 @@ import ErrorBoundary from '@/components/ErrorBoundary'
 import Login from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
 import PipelineBoard from '@/pages/Pipeline/PipelineBoard'
+import PipelineCompras from '@/pages/PipelineCompras/PipelineCompras'
 import WhatsAppAtendimento from '@/pages/WhatsApp/Atendimento'
 import QuoteList from '@/pages/Quotes/QuoteList'
 import QuoteForm from '@/pages/Quotes/QuoteForm'
@@ -49,6 +50,8 @@ const App = () => (
                 <Route path="/" element={<Dashboard />} />
                 {/* Pipeline de Vendas */}
                 <Route path="/pipeline" element={<PipelineBoard />} />
+                {/* Pipeline de Compras */}
+                <Route path="/pipeline-compras" element={<PipelineCompras />} />
                 {/* Atendimento WhatsApp */}
                 <Route path="/atendimento" element={<WhatsAppAtendimento />} />
                 {/* Orçamentos */}
