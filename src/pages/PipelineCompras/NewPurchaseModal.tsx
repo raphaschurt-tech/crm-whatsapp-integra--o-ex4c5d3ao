@@ -1,16 +1,5 @@
 import React, { useState } from 'react'
-import {
-  Plus,
-  Trash2,
-  Car,
-  User,
-  Truck,
-  DollarSign,
-  Clock,
-  TrendingUp,
-  Hash,
-  Layers,
-} from 'lucide-react'
+import { Plus, Trash2, TrendingUp, Hash, Layers, DollarSign, Truck } from 'lucide-react'
 import { Customer, PurchaseItem, PurchaseRequest, PurchaseRequestStatus } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/button'
@@ -23,6 +12,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { getItemMargin } from '@/services/purchaseRequestsService'
 
 interface NewPurchaseModalProps {
   isOpen: boolean
@@ -32,7 +22,25 @@ interface NewPurchaseModalProps {
   onSubmit: (data: Partial<PurchaseRequest>) => Promise<void>
 }
 
-const MAX_ITEMS = 10
+const MAX_ITEMS = 20
+
+interface FormItemState {
+  part_name: string
+  vehicle: string
+  quantity: number
+  supplier_id?: string
+  cost_price?: string
+  sell_price?: string
+}
+
+const emptyItem: FormItemState = {
+  part_name: '',
+  vehicle: '',
+  quantity: 1,
+  supplier_id: '',
+  cost_price: '',
+  sell_price: '',
+}
 
 export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
   isOpen,
@@ -41,23 +49,15 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
   suppliers,
   onSubmit,
 }) => {
-  const [items, setItems] = useState<PurchaseItem[]>([{ part_name: '', vehicle: '', quantity: 1 }])
+  const [items, setItems] = useState<FormItemState[]>([{ ...emptyItem }])
   const [osNumber, setOsNumber] = useState('')
   const [customerId, setCustomerId] = useState('')
-  const [supplierId, setSupplierId] = useState('')
   const [status, setStatus] = useState<PurchaseRequestStatus>('solicitada')
-  const [costPrice, setCostPrice] = useState('')
-  const [sellPrice, setSellPrice] = useState('')
   const [deliveryDays, setDeliveryDays] = useState('')
   const [notes, setNotes] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const numCost = parseFloat(costPrice) || 0
-  const numSell = parseFloat(sellPrice) || 0
-  const hasBoth = Boolean(costPrice && sellPrice && !isNaN(numCost) && !isNaN(numSell))
-  const margin = hasBoth ? numSell - numCost : null
-
-  const handleItemChange = (index: number, field: keyof PurchaseItem, value: any) => {
+  const handleItemChange = (index: number, field: keyof FormItemState, value: any) => {
     setItems((prev) => {
       const next = [...prev]
       if (field === 'quantity') {
@@ -72,7 +72,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
 
   const handleAddItem = () => {
     if (items.length >= MAX_ITEMS) return
-    setItems((prev) => [...prev, { part_name: '', vehicle: '', quantity: 1 }])
+    setItems((prev) => [...prev, { ...emptyItem }])
   }
 
   const handleRemoveItem = (index: number) => {
@@ -81,13 +81,10 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
   }
 
   const resetForm = () => {
-    setItems([{ part_name: '', vehicle: '', quantity: 1 }])
+    setItems([{ ...emptyItem }])
     setOsNumber('')
     setCustomerId('')
-    setSupplierId('')
     setStatus('solicitada')
-    setCostPrice('')
-    setSellPrice('')
     setDeliveryDays('')
     setNotes('')
   }
@@ -96,17 +93,53 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
     (item) => !item.part_name.trim() || !item.vehicle.trim() || (item.quantity || 1) < 1,
   )
 
+  // Totais gerais calculados somando todos os itens
+  const summaryTotals = items.reduce(
+    (acc, it) => {
+      const qty = Math.max(1, Number(it.quantity) || 1)
+      const cost = parseFloat(it.cost_price || '')
+      const sell = parseFloat(it.sell_price || '')
+      if (!isNaN(cost)) {
+        acc.totalCost += cost * qty
+        acc.hasAnyCost = true
+      }
+      if (!isNaN(sell)) {
+        acc.totalSell += sell * qty
+        acc.hasAnySell = true
+      }
+      return acc
+    },
+    { totalCost: 0, totalSell: 0, hasAnyCost: false, hasAnySell: false },
+  )
+
+  const totalMargin = summaryTotals.totalSell - summaryTotals.totalCost
+  const hasPricingSummary = summaryTotals.hasAnyCost || summaryTotals.hasAnySell
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (hasInvalidItems || !customerId) return
 
     setIsSubmitting(true)
     try {
-      const cleanedItems: PurchaseItem[] = items.map((it) => ({
-        part_name: it.part_name.trim(),
-        vehicle: it.vehicle.trim(),
-        quantity: Math.max(1, Number(it.quantity) || 1),
-      }))
+      const cleanedItems: PurchaseItem[] = items.map((it) => {
+        const costNum = it.cost_price ? parseFloat(it.cost_price) : undefined
+        const sellNum = it.sell_price ? parseFloat(it.sell_price) : undefined
+        const sup = suppliers.find((s) => s.id === it.supplier_id)
+        const supplierName = sup ? sup.name || sup.company || undefined : undefined
+
+        return {
+          part_name: it.part_name.trim(),
+          vehicle: it.vehicle.trim(),
+          quantity: Math.max(1, Number(it.quantity) || 1),
+          supplier_id: it.supplier_id || undefined,
+          supplier_name: supplierName,
+          cost_price: costNum !== undefined && !isNaN(costNum) ? costNum : undefined,
+          sell_price: sellNum !== undefined && !isNaN(sellNum) ? sellNum : undefined,
+        }
+      })
+
+      // O fornecedor global pode ser o do 1º item se houver, ou undefined
+      const firstSupplier = cleanedItems.find((it) => it.supplier_id)?.supplier_id
 
       await onSubmit({
         part_name: cleanedItems[0]?.part_name || '',
@@ -114,10 +147,8 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
         items: cleanedItems,
         os_number: osNumber.trim() || undefined,
         customer: customerId,
-        supplier: supplierId || undefined,
+        supplier: firstSupplier || undefined,
         status,
-        cost_price: costPrice ? parseFloat(costPrice) : undefined,
-        sell_price: sellPrice ? parseFloat(sellPrice) : undefined,
         delivery_days: deliveryDays ? parseInt(deliveryDays, 10) : undefined,
         notes: notes.trim(),
       })
@@ -130,7 +161,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-slate-900">
             <span className="p-1.5 rounded-lg bg-amber-100 text-amber-700">
@@ -141,7 +172,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 py-2">
-          {/* Campo OS (Opcional, digitado manualmente por hora) */}
+          {/* Campo OS (Opcional, digitado manualmente) */}
           <div className="bg-amber-50/60 border border-amber-200/80 rounded-xl p-3">
             <div className="flex items-center justify-between gap-2">
               <label className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
@@ -157,11 +188,31 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
               className="mt-1.5 h-9 bg-white border-amber-200 text-xs font-semibold focus-visible:ring-amber-500"
             />
             <p className="text-[11px] text-amber-700/80 mt-1">
-              Digitada manualmente por enquanto. Aparecerá em destaque no card kanban.
+              Digitada manualmente. Aparecerá em destaque com badge no card kanban.
             </p>
           </div>
 
-          {/* Seção de Itens (Até 10 itens com Peça, Veículo e Quantidade) */}
+          {/* Cliente (Obrigatório) */}
+          <div>
+            <label className="text-xs font-bold text-slate-700 block mb-1">
+              Cliente <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              required
+              className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <option value="">Selecione o cliente que pediu a peça...</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} {c.phone ? `(${c.phone})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Seção de Itens (Até 20 itens com Peça, Veículo, Qtd, Fornecedor, Custo, Venda e Margem do Item) */}
           <div className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
@@ -173,78 +224,172 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
               <span className="text-[11px] text-slate-500">Mínimo 1, Máximo {MAX_ITEMS}</span>
             </div>
 
-            <div className="space-y-2.5">
-              {items.map((item, index) => (
-                <div
-                  key={index}
-                  className="p-3 bg-white rounded-lg border border-slate-200/90 shadow-2xs space-y-2"
-                >
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                    <span>Item {index + 1}</span>
-                    {items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(index)}
-                        className="text-slate-400 hover:text-red-600 transition-colors p-1"
-                        title="Remover este item"
-                        aria-label="Remover item"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
+            <div className="space-y-3">
+              {items.map((item, index) => {
+                const qtyNum = Math.max(1, Number(item.quantity) || 1)
+                const costVal = parseFloat(item.cost_price || '')
+                const sellVal = parseFloat(item.sell_price || '')
+                const itemPurchaseObj: PurchaseItem = {
+                  part_name: item.part_name,
+                  vehicle: item.vehicle,
+                  quantity: qtyNum,
+                  cost_price: !isNaN(costVal) ? costVal : undefined,
+                  sell_price: !isNaN(sellVal) ? sellVal : undefined,
+                }
+                const itemMargin = getItemMargin(itemPurchaseObj)
+
+                return (
+                  <div
+                    key={index}
+                    className="p-3 bg-white rounded-lg border border-slate-200/90 shadow-2xs space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-5 w-5 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center text-[11px]">
+                          {index + 1}
+                        </span>
+                        Item {index + 1}
+                      </span>
+                      {items.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItem(index)}
+                          className="text-slate-400 hover:text-red-600 transition-colors p-1"
+                          title="Remover este item"
+                          aria-label="Remover item"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Linha 1: Peça, Veículo e Quantidade */}
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                      <div className="sm:col-span-5">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Peça <span className="text-red-500">*</span>
+                        </label>
+                        <Input
+                          value={item.part_name}
+                          onChange={(e) => handleItemChange(index, 'part_name', e.target.value)}
+                          placeholder="Ex: Bucha da bandeja..."
+                          required
+                          className="h-8 text-xs"
+                          autoFocus={index === 0}
+                        />
+                      </div>
+
+                      <div className="sm:col-span-5">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Veículo <span className="text-red-500">*</span>
+                        </label>
+                        <Input
+                          value={item.vehicle}
+                          onChange={(e) => handleItemChange(index, 'vehicle', e.target.value)}
+                          placeholder="Ex: Kicks 2016..."
+                          required
+                          className="h-8 text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Qtd <span className="text-red-500">*</span>
+                        </label>
+                        <Input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={item.quantity}
+                          onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
+                          required
+                          className="h-8 text-xs font-bold text-center"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Linha 2: Fornecedor do Item, Preço de Custo, Preço de Venda e Margem do Item */}
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1 border-t border-slate-100">
+                      {/* Fornecedor Próprio */}
+                      <div className="sm:col-span-4">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5 flex items-center gap-1">
+                          <Truck className="h-3 w-3 text-amber-600" /> Fornecedor do item
+                        </label>
+                        <select
+                          value={item.supplier_id || ''}
+                          onChange={(e) => handleItemChange(index, 'supplier_id', e.target.value)}
+                          className="w-full h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        >
+                          <option value="">Nenhum fornecedor</option>
+                          {suppliers.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} {s.company ? `(${s.company})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Custo unitário */}
+                      <div className="sm:col-span-3">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Custo un. (R$)
+                        </label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.cost_price || ''}
+                          onChange={(e) => handleItemChange(index, 'cost_price', e.target.value)}
+                          placeholder="0,00"
+                          className="h-8 text-xs"
+                        />
+                      </div>
+
+                      {/* Venda unitária */}
+                      <div className="sm:col-span-3">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Venda un. (R$)
+                        </label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.sell_price || ''}
+                          onChange={(e) => handleItemChange(index, 'sell_price', e.target.value)}
+                          placeholder="0,00"
+                          className="h-8 text-xs"
+                        />
+                      </div>
+
+                      {/* Margem do Item (calculada automaticamente: venda×qtd − custo×qtd) */}
+                      <div className="sm:col-span-2 flex flex-col justify-end">
+                        <span className="text-[10px] font-semibold text-slate-500 block mb-1">
+                          Margem
+                        </span>
+                        <div
+                          className={`h-8 px-2 rounded-md flex items-center justify-center text-xs font-bold border ${
+                            itemMargin !== null
+                              ? itemMargin >= 0
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : 'bg-rose-50 text-rose-800 border-rose-200'
+                              : 'bg-slate-50 text-slate-400 border-slate-200'
+                          }`}
+                          title={
+                            itemMargin !== null
+                              ? `Margem do item: (${qtyNum}× venda) − (${qtyNum}× custo)`
+                              : 'Preencha custo e/ou venda para calcular a margem'
+                          }
+                        >
+                          {itemMargin !== null ? formatCurrency(itemMargin) : '—'}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                    {/* Peça (Obrigatório) */}
-                    <div className="sm:col-span-5">
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                        Peça <span className="text-red-500">*</span>
-                      </label>
-                      <Input
-                        value={item.part_name}
-                        onChange={(e) => handleItemChange(index, 'part_name', e.target.value)}
-                        placeholder="Ex: Bucha da bandeja..."
-                        required
-                        className="h-8 text-xs"
-                        autoFocus={index === 0}
-                      />
-                    </div>
-
-                    {/* Veículo (Obrigatório) */}
-                    <div className="sm:col-span-5">
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                        Veículo <span className="text-red-500">*</span>
-                      </label>
-                      <Input
-                        value={item.vehicle}
-                        onChange={(e) => handleItemChange(index, 'vehicle', e.target.value)}
-                        placeholder="Ex: Kicks 2016..."
-                        required
-                        className="h-8 text-xs"
-                      />
-                    </div>
-
-                    {/* Quantidade (Obrigatório, min 1, default 1) */}
-                    <div className="sm:col-span-2">
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                        Qtd <span className="text-red-500">*</span>
-                      </label>
-                      <Input
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={item.quantity}
-                        onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
-                        required
-                        className="h-8 text-xs font-bold text-center"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
-            {/* Botão Adicionar Item */}
+            {/* Botão Adicionar Item (Até 20 itens) */}
             {items.length < MAX_ITEMS && (
               <Button
                 type="button"
@@ -256,94 +401,43 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                 <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar item ({items.length}/{MAX_ITEMS})
               </Button>
             )}
+
+            {/* Rodapé da seção de itens: Totais gerais somados de todos os itens */}
+            {hasPricingSummary && (
+              <div className="mt-3 p-3 bg-white rounded-lg border border-amber-200/80 shadow-2xs space-y-1.5">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <DollarSign className="h-3.5 w-3.5 text-emerald-600" /> Totais de todos os itens
+                  da compra
+                </div>
+                <div className="grid grid-cols-3 gap-2 pt-1 text-xs">
+                  <div className="p-2 rounded bg-slate-50 border border-slate-200">
+                    <span className="text-[11px] text-slate-500 block">Total Custo:</span>
+                    <strong className="text-slate-800 font-bold">
+                      {formatCurrency(summaryTotals.totalCost)}
+                    </strong>
+                  </div>
+                  <div className="p-2 rounded bg-slate-50 border border-slate-200">
+                    <span className="text-[11px] text-slate-500 block">Total Venda:</span>
+                    <strong className="text-slate-900 font-bold">
+                      {formatCurrency(summaryTotals.totalSell)}
+                    </strong>
+                  </div>
+                  <div
+                    className={`p-2 rounded border ${
+                      totalMargin >= 0
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        : 'bg-rose-50 border-rose-200 text-rose-800'
+                    }`}
+                  >
+                    <span className="text-[11px] block flex items-center gap-1">
+                      <TrendingUp className="h-3 w-3" /> Margem Total:
+                    </span>
+                    <strong className="font-bold">{formatCurrency(totalMargin)}</strong>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-
-          {/* Logo abaixo dos itens: Fornecedor e Cliente */}
-          <div className="space-y-3 pt-1">
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">
-                Fornecedor (Opcional)
-              </label>
-              <select
-                value={supplierId}
-                onChange={(e) => setSupplierId(e.target.value)}
-                className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-              >
-                <option value="">Nenhum fornecedor selecionado</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} {s.company ? `(${s.company})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">
-                Cliente <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                required
-                className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-              >
-                <option value="">Selecione o cliente que pediu a peça...</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} {c.phone ? `(${c.phone})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Valores Financeiros */}
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            <div>
-              <label className="text-xs font-semibold text-slate-600 block mb-1">
-                Preço de Custo Total (R$)
-              </label>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                value={costPrice}
-                onChange={(e) => setCostPrice(e.target.value)}
-                placeholder="0,00"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-slate-600 block mb-1">
-                Preço de Venda Total (R$)
-              </label>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                value={sellPrice}
-                onChange={(e) => setSellPrice(e.target.value)}
-                placeholder="0,00"
-              />
-            </div>
-          </div>
-
-          {/* Margem calculada */}
-          {margin !== null && (
-            <div
-              className={`p-2.5 rounded-lg border flex items-center justify-between text-xs font-semibold ${
-                margin >= 0
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                  : 'bg-rose-50 border-rose-200 text-rose-900'
-              }`}
-            >
-              <span className="flex items-center gap-1.5">
-                <TrendingUp className="h-3.5 w-3.5" /> Margem prevista:
-              </span>
-              <span>{formatCurrency(margin)}</span>
-            </div>
-          )}
 
           {/* Prazo de entrega */}
           <div>
@@ -365,7 +459,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
             <Textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Informações adicionais da peça, código original, etc."
+              placeholder="Informações adicionais das peças, códigos originais, etc."
               rows={2}
             />
           </div>

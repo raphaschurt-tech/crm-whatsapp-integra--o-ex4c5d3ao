@@ -1,13 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import {
   X,
-  Car,
-  User,
-  Truck,
-  DollarSign,
-  Calendar,
-  CheckCircle2,
-  Clock,
   TrendingUp,
   Save,
   Trash2,
@@ -15,12 +8,16 @@ import {
   Plus,
   Hash,
   Layers,
+  DollarSign,
+  Truck,
+  Clock,
 } from 'lucide-react'
 import { Customer, PurchaseItem, PurchaseRequest, PurchaseRequestStatus } from '@/types/crm'
 import {
   PURCHASE_COLUMNS,
   normalizePurchaseItems,
   formatPurchaseItemsSummary,
+  getItemMargin,
 } from '@/services/purchaseRequestsService'
 import { formatCurrency } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/button'
@@ -38,7 +35,16 @@ interface PurchaseDrawerProps {
   onMoveStatus: (id: string, targetStatus: PurchaseRequestStatus) => Promise<void>
 }
 
-const MAX_ITEMS = 10
+const MAX_ITEMS = 20
+
+interface FormItemState {
+  part_name: string
+  vehicle: string
+  quantity: number
+  supplier_id?: string
+  cost_price?: string
+  sell_price?: string
+}
 
 export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   card,
@@ -49,38 +55,57 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   onDelete,
   onMoveStatus,
 }) => {
-  const [items, setItems] = useState<PurchaseItem[]>([{ part_name: '', vehicle: '', quantity: 1 }])
+  const [items, setItems] = useState<FormItemState[]>([
+    { part_name: '', vehicle: '', quantity: 1, supplier_id: '', cost_price: '', sell_price: '' },
+  ])
   const [osNumber, setOsNumber] = useState('')
   const [customerId, setCustomerId] = useState('')
-  const [supplierId, setSupplierId] = useState('')
   const [status, setStatus] = useState<PurchaseRequestStatus>('solicitada')
-  const [costPrice, setCostPrice] = useState<string>('')
-  const [sellPrice, setSellPrice] = useState<string>('')
   const [deliveryDays, setDeliveryDays] = useState<string>('')
   const [receivedAt, setReceivedAt] = useState<string>('')
   const [isCompleted, setIsCompleted] = useState<boolean>(false)
   const [notes, setNotes] = useState('')
   const [isSaving, setIsSaving] = useState(false)
 
-  // Re-sync on card prop change
+  // Sincronizar ao abrir/mudar card
   useEffect(() => {
     if (!card) return
     const normalized = normalizePurchaseItems(card)
-    setItems(
-      normalized.length > 0
-        ? normalized
-        : [{ part_name: card.part_name || '', vehicle: card.vehicle || '', quantity: 1 }],
-    )
+    if (normalized.length > 0) {
+      setItems(
+        normalized.map((it) => ({
+          part_name: it.part_name || '',
+          vehicle: it.vehicle || '',
+          quantity: it.quantity || 1,
+          supplier_id: it.supplier_id || '',
+          cost_price:
+            it.cost_price !== undefined && it.cost_price !== null ? String(it.cost_price) : '',
+          sell_price:
+            it.sell_price !== undefined && it.sell_price !== null ? String(it.sell_price) : '',
+        })),
+      )
+    } else {
+      setItems([
+        {
+          part_name: card.part_name || '',
+          vehicle: card.vehicle || '',
+          quantity: 1,
+          supplier_id: card.supplier || '',
+          cost_price:
+            card.cost_price !== undefined && card.cost_price !== null
+              ? String(card.cost_price)
+              : '',
+          sell_price:
+            card.sell_price !== undefined && card.sell_price !== null
+              ? String(card.sell_price)
+              : '',
+        },
+      ])
+    }
+
     setOsNumber(card.os_number || '')
     setCustomerId(card.customer || '')
-    setSupplierId(card.supplier || '')
     setStatus(card.status)
-    setCostPrice(
-      card.cost_price !== undefined && card.cost_price !== null ? String(card.cost_price) : '',
-    )
-    setSellPrice(
-      card.sell_price !== undefined && card.sell_price !== null ? String(card.sell_price) : '',
-    )
     setDeliveryDays(
       card.delivery_days !== undefined && card.delivery_days !== null
         ? String(card.delivery_days)
@@ -93,12 +118,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
   if (!card) return null
 
-  const numCost = parseFloat(costPrice) || 0
-  const numSell = parseFloat(sellPrice) || 0
-  const hasBoth = Boolean(costPrice && sellPrice && !isNaN(numCost) && !isNaN(numSell))
-  const margin = hasBoth ? numSell - numCost : null
-
-  const handleItemChange = (index: number, field: keyof PurchaseItem, value: any) => {
+  const handleItemChange = (index: number, field: keyof FormItemState, value: any) => {
     setItems((prev) => {
       const next = [...prev]
       if (field === 'quantity') {
@@ -113,7 +133,17 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
   const handleAddItem = () => {
     if (items.length >= MAX_ITEMS) return
-    setItems((prev) => [...prev, { part_name: '', vehicle: '', quantity: 1 }])
+    setItems((prev) => [
+      ...prev,
+      {
+        part_name: '',
+        vehicle: '',
+        quantity: 1,
+        supplier_id: '',
+        cost_price: '',
+        sell_price: '',
+      },
+    ])
   }
 
   const handleRemoveItem = (index: number) => {
@@ -125,17 +155,52 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
     (item) => !item.part_name.trim() || !item.vehicle.trim() || (item.quantity || 1) < 1,
   )
 
+  // Totais gerais calculados somando todos os itens
+  const summaryTotals = items.reduce(
+    (acc, it) => {
+      const qty = Math.max(1, Number(it.quantity) || 1)
+      const cost = parseFloat(it.cost_price || '')
+      const sell = parseFloat(it.sell_price || '')
+      if (!isNaN(cost)) {
+        acc.totalCost += cost * qty
+        acc.hasAnyCost = true
+      }
+      if (!isNaN(sell)) {
+        acc.totalSell += sell * qty
+        acc.hasAnySell = true
+      }
+      return acc
+    },
+    { totalCost: 0, totalSell: 0, hasAnyCost: false, hasAnySell: false },
+  )
+
+  const totalMargin = summaryTotals.totalSell - summaryTotals.totalCost
+  const hasPricingSummary = summaryTotals.hasAnyCost || summaryTotals.hasAnySell
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (hasInvalidItems || !customerId) return
 
     setIsSaving(true)
     try {
-      const cleanedItems: PurchaseItem[] = items.map((it) => ({
-        part_name: it.part_name.trim(),
-        vehicle: it.vehicle.trim(),
-        quantity: Math.max(1, Number(it.quantity) || 1),
-      }))
+      const cleanedItems: PurchaseItem[] = items.map((it) => {
+        const costNum = it.cost_price ? parseFloat(it.cost_price) : undefined
+        const sellNum = it.sell_price ? parseFloat(it.sell_price) : undefined
+        const sup = suppliers.find((s) => s.id === it.supplier_id)
+        const supplierName = sup ? sup.name || sup.company || undefined : undefined
+
+        return {
+          part_name: it.part_name.trim(),
+          vehicle: it.vehicle.trim(),
+          quantity: Math.max(1, Number(it.quantity) || 1),
+          supplier_id: it.supplier_id || undefined,
+          supplier_name: supplierName,
+          cost_price: costNum !== undefined && !isNaN(costNum) ? costNum : undefined,
+          sell_price: sellNum !== undefined && !isNaN(sellNum) ? sellNum : undefined,
+        }
+      })
+
+      const firstSupplier = cleanedItems.find((it) => it.supplier_id)?.supplier_id
 
       const payload: Partial<PurchaseRequest> = {
         part_name: cleanedItems[0]?.part_name || '',
@@ -143,16 +208,14 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
         items: cleanedItems,
         os_number: osNumber.trim() || '',
         customer: customerId,
-        supplier: supplierId || undefined,
-        cost_price: costPrice ? parseFloat(costPrice) : undefined,
-        sell_price: sellPrice ? parseFloat(sellPrice) : undefined,
+        supplier: firstSupplier || undefined,
         delivery_days: deliveryDays ? parseInt(deliveryDays, 10) : undefined,
         received_at: receivedAt ? new Date(receivedAt).toISOString() : undefined,
         is_completed: isCompleted,
         notes: notes.trim(),
       }
 
-      // Se mudou de status via select, aciona movimentação
+      // Se mudou de status via quick buttons, aciona movimentação
       if (status !== card.status) {
         await onMoveStatus(card.id, status)
       }
@@ -170,7 +233,14 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   }
 
   const selectedCustomer = customers.find((c) => c.id === customerId)
-  const headerTitle = formatPurchaseItemsSummary(card)
+  const supplierMap = suppliers.reduce(
+    (acc, s) => {
+      acc[s.id] = s.name || s.company || ''
+      return acc
+    },
+    {} as Record<string, string>,
+  )
+  const headerTitle = formatPurchaseItemsSummary(card, supplierMap)
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -181,7 +251,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
       />
 
       {/* Drawer Panel */}
-      <div className="relative w-full max-w-xl bg-white h-full shadow-2xl flex flex-col z-10 border-l border-slate-200 animate-in slide-in-from-right duration-200">
+      <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col z-10 border-l border-slate-200 animate-in slide-in-from-right duration-200">
         {/* Drawer Header */}
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
           <div className="min-w-0 flex-1 mr-2">
@@ -256,7 +326,38 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
             />
           </div>
 
-          {/* Lista de Itens (Até 10 itens, todos editáveis incluindo quantidade) */}
+          {/* Cliente Vinculado */}
+          <div className="bg-slate-50/70 p-3.5 rounded-xl border border-slate-200">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-bold text-slate-700 block">
+                Cliente Vinculado <span className="text-red-500">*</span>
+              </label>
+              {selectedCustomer && (
+                <Link
+                  to={`/clientes/${selectedCustomer.id}`}
+                  target="_blank"
+                  className="text-[11px] text-emerald-600 hover:underline flex items-center gap-1 font-medium"
+                >
+                  Ver cliente <ExternalLink className="h-3 w-3" />
+                </Link>
+              )}
+            </div>
+            <select
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              required
+              className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            >
+              <option value="">Selecione um cliente...</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} {c.phone ? `(${c.phone})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Lista de Itens (Até 20 itens, todos editáveis incluindo quantidade, fornecedor, custo e venda) */}
           <div className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
@@ -268,77 +369,171 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
               <span className="text-[11px] text-slate-500">Mínimo 1, Máximo {MAX_ITEMS}</span>
             </div>
 
-            <div className="space-y-2.5">
-              {items.map((item, index) => (
-                <div
-                  key={index}
-                  className="p-3 bg-white rounded-lg border border-slate-200/90 shadow-2xs space-y-2"
-                >
-                  <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                    <span>Item {index + 1}</span>
-                    {items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(index)}
-                        className="text-slate-400 hover:text-red-600 transition-colors p-1"
-                        title="Remover este item"
-                        aria-label="Remover item"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
+            <div className="space-y-3">
+              {items.map((item, index) => {
+                const qtyNum = Math.max(1, Number(item.quantity) || 1)
+                const costVal = parseFloat(item.cost_price || '')
+                const sellVal = parseFloat(item.sell_price || '')
+                const itemPurchaseObj: PurchaseItem = {
+                  part_name: item.part_name,
+                  vehicle: item.vehicle,
+                  quantity: qtyNum,
+                  cost_price: !isNaN(costVal) ? costVal : undefined,
+                  sell_price: !isNaN(sellVal) ? sellVal : undefined,
+                }
+                const itemMargin = getItemMargin(itemPurchaseObj)
+
+                return (
+                  <div
+                    key={index}
+                    className="p-3 bg-white rounded-lg border border-slate-200/90 shadow-2xs space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-5 w-5 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center text-[11px]">
+                          {index + 1}
+                        </span>
+                        Item {index + 1}
+                      </span>
+                      {items.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItem(index)}
+                          className="text-slate-400 hover:text-red-600 transition-colors p-1"
+                          title="Remover este item"
+                          aria-label="Remover item"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Linha 1: Peça, Veículo e Quantidade */}
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                      <div className="sm:col-span-5">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Peça <span className="text-red-500">*</span>
+                        </label>
+                        <Input
+                          value={item.part_name}
+                          onChange={(e) => handleItemChange(index, 'part_name', e.target.value)}
+                          placeholder="Ex: Bucha da bandeja..."
+                          required
+                          className="h-8 text-xs bg-white"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-5">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Veículo <span className="text-red-500">*</span>
+                        </label>
+                        <Input
+                          value={item.vehicle}
+                          onChange={(e) => handleItemChange(index, 'vehicle', e.target.value)}
+                          placeholder="Ex: Kicks 2016..."
+                          required
+                          className="h-8 text-xs bg-white"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Qtd <span className="text-red-500">*</span>
+                        </label>
+                        <Input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={item.quantity}
+                          onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
+                          required
+                          className="h-8 text-xs font-bold text-center bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Linha 2: Fornecedor Próprio, Custo unitário, Venda unitária e Margem do Item */}
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1 border-t border-slate-100">
+                      {/* Fornecedor Próprio */}
+                      <div className="sm:col-span-4">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5 flex items-center gap-1">
+                          <Truck className="h-3 w-3 text-amber-600" /> Fornecedor do item
+                        </label>
+                        <select
+                          value={item.supplier_id || ''}
+                          onChange={(e) => handleItemChange(index, 'supplier_id', e.target.value)}
+                          className="w-full h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        >
+                          <option value="">Nenhum fornecedor</option>
+                          {suppliers.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} {s.company ? `(${s.company})` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Custo unitário */}
+                      <div className="sm:col-span-3">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Custo un. (R$)
+                        </label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.cost_price || ''}
+                          onChange={(e) => handleItemChange(index, 'cost_price', e.target.value)}
+                          placeholder="0,00"
+                          className="h-8 text-xs bg-white"
+                        />
+                      </div>
+
+                      {/* Venda unitária */}
+                      <div className="sm:col-span-3">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Venda un. (R$)
+                        </label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={item.sell_price || ''}
+                          onChange={(e) => handleItemChange(index, 'sell_price', e.target.value)}
+                          placeholder="0,00"
+                          className="h-8 text-xs bg-white"
+                        />
+                      </div>
+
+                      {/* Margem do Item */}
+                      <div className="sm:col-span-2 flex flex-col justify-end">
+                        <span className="text-[10px] font-semibold text-slate-500 block mb-1">
+                          Margem
+                        </span>
+                        <div
+                          className={`h-8 px-2 rounded-md flex items-center justify-center text-xs font-bold border ${
+                            itemMargin !== null
+                              ? itemMargin >= 0
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : 'bg-rose-50 text-rose-800 border-rose-200'
+                              : 'bg-slate-50 text-slate-400 border-slate-200'
+                          }`}
+                          title={
+                            itemMargin !== null
+                              ? `Margem do item: (${qtyNum}× venda) − (${qtyNum}× custo)`
+                              : 'Preencha custo e/ou venda para calcular a margem'
+                          }
+                        >
+                          {itemMargin !== null ? formatCurrency(itemMargin) : '—'}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                    {/* Peça (Obrigatório) */}
-                    <div className="sm:col-span-5">
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                        Peça <span className="text-red-500">*</span>
-                      </label>
-                      <Input
-                        value={item.part_name}
-                        onChange={(e) => handleItemChange(index, 'part_name', e.target.value)}
-                        placeholder="Ex: Bucha da bandeja..."
-                        required
-                        className="h-8 text-xs bg-white"
-                      />
-                    </div>
-
-                    {/* Veículo (Obrigatório) */}
-                    <div className="sm:col-span-5">
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                        Veículo <span className="text-red-500">*</span>
-                      </label>
-                      <Input
-                        value={item.vehicle}
-                        onChange={(e) => handleItemChange(index, 'vehicle', e.target.value)}
-                        placeholder="Ex: Kicks 2016..."
-                        required
-                        className="h-8 text-xs bg-white"
-                      />
-                    </div>
-
-                    {/* Quantidade (Obrigatório, min 1) */}
-                    <div className="sm:col-span-2">
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                        Qtd <span className="text-red-500">*</span>
-                      </label>
-                      <Input
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={item.quantity}
-                        onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
-                        required
-                        className="h-8 text-xs font-bold text-center bg-white"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
-            {/* Botão Adicionar Item */}
+            {/* Botão Adicionar Item (Até 20 itens) */}
             {items.length < MAX_ITEMS && (
               <Button
                 type="button"
@@ -350,112 +545,44 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                 <Plus className="h-3.5 w-3.5 mr-1" /> Adicionar item ({items.length}/{MAX_ITEMS})
               </Button>
             )}
-          </div>
 
-          {/* Logo abaixo dos itens: Fornecedor e Cliente */}
-          <div className="space-y-3 bg-slate-50/70 p-4 rounded-xl border border-slate-200">
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">
-                Fornecedor (Opcional — Etapa Cotação)
-              </label>
-              <select
-                value={supplierId}
-                onChange={(e) => setSupplierId(e.target.value)}
-                className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-              >
-                <option value="">Nenhum fornecedor vinculado</option>
-                {suppliers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} {s.company ? `(${s.company})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-bold text-slate-700 block">
-                  Cliente Vinculado <span className="text-red-500">*</span>
-                </label>
-                {selectedCustomer && (
-                  <Link
-                    to={`/clientes/${selectedCustomer.id}`}
-                    target="_blank"
-                    className="text-[11px] text-emerald-600 hover:underline flex items-center gap-1 font-medium"
-                  >
-                    Ver cliente <ExternalLink className="h-3 w-3" />
-                  </Link>
-                )}
-              </div>
-              <select
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                required
-                className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-              >
-                <option value="">Selecione um cliente...</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} {c.phone ? `(${c.phone})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Valores Financeiros e Margem */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
-            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide flex items-center gap-1.5">
-              <DollarSign className="h-4 w-4 text-emerald-600" /> Precificação e Margem (Total)
-            </h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-600 block mb-1">
-                  Preço de Custo Total (R$)
-                </label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={costPrice}
-                  onChange={(e) => setCostPrice(e.target.value)}
-                  placeholder="0,00"
-                />
+            {/* Rodapé da seção de itens: Total geral de todos os itens */}
+            <div className="mt-3 p-3.5 bg-white rounded-xl border border-slate-200 shadow-xs space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-800">
+                <span className="flex items-center gap-1.5">
+                  <DollarSign className="h-4 w-4 text-emerald-600" /> Totais Gerais da Compra
+                </span>
+                <span className="text-[11px] font-normal text-slate-500 lowercase">
+                  (soma de todos os itens)
+                </span>
               </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-600 block mb-1">
-                  Preço de Venda Total (R$)
-                </label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={sellPrice}
-                  onChange={(e) => setSellPrice(e.target.value)}
-                  placeholder="0,00"
-                />
+              <div className="grid grid-cols-3 gap-2 pt-1 text-xs">
+                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-[11px] text-slate-500 block">Total Custo:</span>
+                  <strong className="text-slate-800 font-bold text-sm">
+                    {formatCurrency(summaryTotals.totalCost)}
+                  </strong>
+                </div>
+                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-[11px] text-slate-500 block">Total Venda:</span>
+                  <strong className="text-slate-900 font-bold text-sm">
+                    {formatCurrency(summaryTotals.totalSell)}
+                  </strong>
+                </div>
+                <div
+                  className={`p-2.5 rounded-lg border ${
+                    totalMargin >= 0
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border-rose-200 text-rose-800'
+                  }`}
+                >
+                  <span className="text-[11px] block flex items-center gap-1">
+                    <TrendingUp className="h-3 w-3" /> Margem Total:
+                  </span>
+                  <strong className="font-bold text-sm">{formatCurrency(totalMargin)}</strong>
+                </div>
               </div>
-            </div>
-
-            {/* Margem Calculada Automaticamente */}
-            <div
-              className={`p-3 rounded-lg border flex items-center justify-between text-xs font-medium ${
-                margin !== null
-                  ? margin >= 0
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                    : 'bg-rose-50 border-rose-200 text-rose-900'
-                  : 'bg-slate-50 border-slate-200 text-slate-500'
-              }`}
-            >
-              <div className="flex items-center gap-1.5">
-                <TrendingUp className="h-4 w-4" />
-                <span>Margem de Lucro (Venda − Custo):</span>
-              </div>
-              <strong className="text-sm">
-                {margin !== null ? formatCurrency(margin) : 'Aguardando valores'}
-              </strong>
             </div>
           </div>
 

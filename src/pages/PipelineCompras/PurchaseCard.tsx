@@ -3,14 +3,13 @@ import {
   GripVertical,
   User,
   Car,
-  Truck,
-  Calendar,
   CheckCircle2,
   Clock,
   TrendingUp,
   Trash2,
   Hash,
   Package,
+  Calendar,
 } from 'lucide-react'
 import { PurchaseRequest } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
@@ -18,10 +17,12 @@ import {
   normalizePurchaseItems,
   formatPurchaseItemsSummary,
   getTotalItemQuantity,
+  getPurchaseTotals,
 } from '@/services/purchaseRequestsService'
 
 interface PurchaseCardProps {
   card: PurchaseRequest
+  supplierMap?: Record<string, string>
   onClick: () => void
   onDragStart: (e: React.DragEvent<HTMLDivElement>, cardId: string) => void
   onDelete?: (cardId: string, partName: string) => void
@@ -29,19 +30,17 @@ interface PurchaseCardProps {
 
 export const PurchaseCard: React.FC<PurchaseCardProps> = ({
   card,
+  supplierMap,
   onClick,
   onDragStart,
   onDelete,
 }) => {
   const customerName = card.expand?.customer?.name || 'Cliente não identificado'
-  const supplierName = card.expand?.supplier?.name || card.expand?.supplier?.company || ''
-  const hasCost = typeof card.cost_price === 'number' && card.cost_price > 0
-  const hasSell = typeof card.sell_price === 'number' && card.sell_price > 0
-  const margin = hasCost && hasSell ? (card.sell_price || 0) - (card.cost_price || 0) : null
 
   const items = normalizePurchaseItems(card)
   const totalItemsCount = getTotalItemQuantity(card)
-  const itemsSummary = formatPurchaseItemsSummary(card)
+  const itemsSummary = formatPurchaseItemsSummary(card, supplierMap)
+  const totals = getPurchaseTotals(card)
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('text/plain', card.id)
@@ -74,7 +73,7 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
         card.status === 'entregue' ? 'bg-slate-50/70 border-emerald-200' : ''
       }`}
     >
-      {/* Top Header: Badge Compra + Badge OS (se tiver) + Concluído + Grip */}
+      {/* Top Header: Badge Compra + Badge OS (se houver, em destaque) + Concluído + Grip */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 bg-amber-100 text-amber-800">
@@ -84,10 +83,10 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
           {/* Badge de OS em destaque */}
           {card.os_number && (
             <span
-              className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] font-bold shrink-0 bg-amber-500 text-white shadow-2xs"
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black shrink-0 bg-amber-500 text-white shadow-xs tracking-tight"
               title={`Ordem de Serviço: ${card.os_number}`}
             >
-              <Hash className="h-3 w-3" />
+              <Hash className="h-3 w-3 stroke-[2.5]" />
               OS {card.os_number}
             </span>
           )}
@@ -118,20 +117,21 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
         </div>
       </div>
 
-      {/* Lista Resumida dos Itens com Quantidades */}
+      {/* Lista Resumida dos Itens com Quantidades e Fornecedores */}
+      {/* Ex.: '2× bucha da bandeja (Kicks 2016) — Fornecedor A, 1× coxim do motor (Onix 2020) — Fornecedor B' */}
       <div className="space-y-1">
         <div className="flex items-start gap-1.5">
           <Package className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
             <h4
-              className="font-bold text-slate-900 text-xs sm:text-sm leading-snug group-hover:text-amber-700 transition-colors line-clamp-2"
+              className="font-bold text-slate-900 text-xs sm:text-sm leading-snug group-hover:text-amber-700 transition-colors line-clamp-3"
               title={itemsSummary}
             >
               {itemsSummary}
             </h4>
             {items.length > 1 && (
-              <span className="text-[10px] font-semibold text-slate-400">
-                {items.length} {items.length === 1 ? 'item' : 'itens'} ({totalItemsCount}{' '}
+              <span className="text-[10px] font-semibold text-slate-400 block mt-0.5">
+                {items.length} itens ({totalItemsCount}{' '}
                 {totalItemsCount === 1 ? 'unidade' : 'unidades'})
               </span>
             )}
@@ -153,13 +153,6 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
           <span className="truncate font-medium">{customerName}</span>
         </div>
 
-        {supplierName && (
-          <div className="flex items-center gap-1.5 text-[11px] text-amber-700 font-medium">
-            <Truck className="h-3 w-3 text-amber-500 shrink-0" />
-            <span className="truncate">Forn: {supplierName}</span>
-          </div>
-        )}
-
         {card.delivery_days ? (
           <div className="flex items-center gap-1 text-[11px] text-purple-700">
             <Clock className="h-3 w-3 text-purple-500 shrink-0" />
@@ -177,43 +170,44 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
         )}
       </div>
 
-      {/* Valores: Custo, Venda e Margem */}
-      <div className="pt-2 border-t border-slate-100 space-y-1 text-xs">
-        <div className="flex items-center justify-between text-[11px]">
-          {hasCost ? (
-            <span className="text-slate-500">
-              Custo:{' '}
-              <strong className="text-slate-800">{formatCurrency(card.cost_price || 0)}</strong>
-            </span>
-          ) : (
-            <span className="text-slate-400 italic">Sem custo</span>
-          )}
+      {/* Rodapé do card visível na coluna do kanban: TOTAL de todos os itens */}
+      {/* Exibe total de custo, total de venda e margem total sempre que houver preços preenchidos */}
+      {totals.hasAnyPricing && (
+        <div className="pt-2 border-t border-slate-100 space-y-1 text-xs">
+          <div className="flex items-center justify-between text-[11px]">
+            {totals.totalCost > 0 ? (
+              <span className="text-slate-500">
+                Custo total:{' '}
+                <strong className="text-slate-800">{formatCurrency(totals.totalCost)}</strong>
+              </span>
+            ) : (
+              <span className="text-slate-400 italic">Sem custo</span>
+            )}
 
-          {hasSell ? (
-            <span className="text-slate-500">
-              Venda:{' '}
-              <strong className="text-slate-900">{formatCurrency(card.sell_price || 0)}</strong>
-            </span>
-          ) : (
-            <span className="text-slate-400 italic">Sem venda</span>
-          )}
-        </div>
+            {totals.totalSell > 0 ? (
+              <span className="text-slate-500">
+                Venda total:{' '}
+                <strong className="text-slate-900">{formatCurrency(totals.totalSell)}</strong>
+              </span>
+            ) : (
+              <span className="text-slate-400 italic">Sem venda</span>
+            )}
+          </div>
 
-        {margin !== null && (
           <div
             className={`flex items-center justify-between px-2 py-1 rounded text-[11px] font-semibold ${
-              margin >= 0
+              totals.totalMargin >= 0
                 ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                 : 'bg-rose-50 text-rose-800 border border-rose-200'
             }`}
           >
             <span className="flex items-center gap-1">
-              <TrendingUp className="h-3 w-3" /> Margem:
+              <TrendingUp className="h-3 w-3" /> Margem total:
             </span>
-            <span>{formatCurrency(margin)}</span>
+            <span>{formatCurrency(totals.totalMargin)}</span>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Rodapé: Data da solicitação */}
       <div className="pt-1.5 border-t border-slate-50 flex items-center justify-between text-[10px] text-slate-400">

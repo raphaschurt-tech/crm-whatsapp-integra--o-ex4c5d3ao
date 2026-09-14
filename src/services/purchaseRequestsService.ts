@@ -11,19 +11,49 @@ export const normalizePurchaseItems = (
   request?: Partial<PurchaseRequest> | null,
 ): PurchaseItem[] => {
   if (!request) return []
+  const legacySupplier = request.supplier || ''
+  const legacyCost = typeof request.cost_price === 'number' ? request.cost_price : undefined
+  const legacySell = typeof request.sell_price === 'number' ? request.sell_price : undefined
+
   if (Array.isArray(request.items) && request.items.length > 0) {
-    return request.items.map((item) => ({
-      part_name: item.part_name || '',
-      vehicle: item.vehicle || '',
-      quantity: Math.max(1, Number(item.quantity) || 1),
-    }))
+    return request.items.map((item, index) => {
+      const qty = Math.max(1, Number(item.quantity) || 1)
+      const supplierId = item.supplier_id || (legacySupplier ? legacySupplier : undefined)
+      // Se for o 1º item e ele não tiver custo/venda explícito, mas a compra tiver os valores legados, herda
+      const cost =
+        typeof item.cost_price === 'number'
+          ? item.cost_price
+          : index === 0 && legacyCost !== undefined
+            ? legacyCost
+            : undefined
+      const sell =
+        typeof item.sell_price === 'number'
+          ? item.sell_price
+          : index === 0 && legacySell !== undefined
+            ? legacySell
+            : undefined
+
+      return {
+        part_name: item.part_name || '',
+        vehicle: item.vehicle || '',
+        quantity: qty,
+        supplier_id: supplierId,
+        supplier_name: item.supplier_name,
+        cost_price: cost,
+        sell_price: sell,
+      }
+    })
   }
+
   if (request.part_name || request.vehicle) {
     return [
       {
         part_name: request.part_name || '',
         vehicle: request.vehicle || '',
         quantity: 1,
+        supplier_id: legacySupplier || undefined,
+        cost_price: legacyCost,
+        sell_price: legacySell,
       },
     ]
   }
@@ -39,19 +69,86 @@ export const getTotalItemQuantity = (request?: Partial<PurchaseRequest> | null):
 }
 
 /**
- * Formata um resumo compacto dos itens para exibição nos cards.
- * Exemplo: '2× bucha da bandeja (Kicks 2016), 1× coxim do motor'
+ * Calcula margem de um item específico: (venda × quantidade) − (custo × quantidade)
+ * Retorna null se não houver venda ou custo válidos preenchidos
  */
-export const formatPurchaseItemsSummary = (request?: Partial<PurchaseRequest> | null): string => {
+export const getItemMargin = (item: PurchaseItem): number | null => {
+  const qty = Math.max(1, Number(item.quantity) || 1)
+  const hasSell = typeof item.sell_price === 'number' && !isNaN(item.sell_price)
+  const hasCost = typeof item.cost_price === 'number' && !isNaN(item.cost_price)
+
+  if (!hasSell && !hasCost) return null
+  const sellTotal = (hasSell ? item.sell_price || 0 : 0) * qty
+  const costTotal = (hasCost ? item.cost_price || 0 : 0) * qty
+  return sellTotal - costTotal
+}
+
+/**
+ * Calcula os totais de uma compra inteira somando todos os seus itens
+ */
+export const getPurchaseTotals = (
+  request?: Partial<PurchaseRequest> | null,
+): {
+  totalCost: number
+  totalSell: number
+  totalMargin: number
+  hasAnyPricing: boolean
+  hasBothPricing: boolean
+} => {
+  const items = normalizePurchaseItems(request)
+  let totalCost = 0
+  let totalSell = 0
+  let hasAnyCost = false
+  let hasAnySell = false
+
+  for (const it of items) {
+    const qty = Math.max(1, Number(it.quantity) || 1)
+    if (typeof it.cost_price === 'number' && !isNaN(it.cost_price)) {
+      totalCost += it.cost_price * qty
+      hasAnyCost = true
+    }
+    if (typeof it.sell_price === 'number' && !isNaN(it.sell_price)) {
+      totalSell += it.sell_price * qty
+      hasAnySell = true
+    }
+  }
+
+  const hasAnyPricing = hasAnyCost || hasAnySell
+  const hasBothPricing = hasAnyCost && hasAnySell
+  const totalMargin = totalSell - totalCost
+
+  return {
+    totalCost,
+    totalSell,
+    totalMargin,
+    hasAnyPricing,
+    hasBothPricing,
+  }
+}
+
+/**
+ * Formata um resumo compacto dos itens para exibição nos cards, incluindo quantidade e fornecedor se houver.
+ * Exemplo: '2× bucha da bandeja (Kicks 2016) — Fornecedor A, 1× coxim do motor (Onix 2020) — Fornecedor B'
+ */
+export const formatPurchaseItemsSummary = (
+  request?: Partial<PurchaseRequest> | null,
+  supplierMap?: Record<string, string>,
+): string => {
   const items = normalizePurchaseItems(request)
   if (items.length === 0) {
     return request?.part_name || 'Sem itens'
   }
+
   return items
     .map((item) => {
       const qtyStr = `${item.quantity || 1}×`
       const vehStr = item.vehicle ? ` (${item.vehicle})` : ''
-      return `${qtyStr} ${item.part_name}${vehStr}`
+      let supName = item.supplier_name
+      if (!supName && item.supplier_id && supplierMap) {
+        supName = supplierMap[item.supplier_id]
+      }
+      const supStr = supName ? ` — ${supName}` : ''
+      return `${qtyStr} ${item.part_name}${vehStr}${supStr}`
     })
     .join(', ')
 }

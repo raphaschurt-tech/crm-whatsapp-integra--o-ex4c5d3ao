@@ -22,6 +22,7 @@ import {
   normalizePurchaseItems,
   formatPurchaseItemsSummary,
   getTotalItemQuantity,
+  getPurchaseTotals,
 } from '@/services/purchaseRequestsService'
 import { getCustomers } from '@/services/customers'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -113,24 +114,38 @@ export default function PipelineCompras() {
     return customers.filter((c) => c.customer_type === 'fornecedor')
   }, [customers])
 
+  // Mapa de fornecedores id -> nome
+  const supplierMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const sup of suppliers) {
+      map[sup.id] = sup.name || sup.company || ''
+    }
+    return map
+  }, [suppliers])
+
   // Filtragem
   const filteredRequests = useMemo(() => {
     return requests.filter((req) => {
+      const items = normalizePurchaseItems(req)
+
       // Filtro por cliente
       if (customerFilter !== 'ALL' && req.customer !== customerFilter) {
         return false
       }
 
-      // Filtro por fornecedor
-      if (supplierFilter !== 'ALL' && req.supplier !== supplierFilter) {
-        return false
+      // Filtro por fornecedor: verifica fornecedor mestre e fornecedores em qualquer item
+      if (supplierFilter !== 'ALL') {
+        const hasSupplierInItems = items.some((it) => it.supplier_id === supplierFilter)
+        if (req.supplier !== supplierFilter && !hasSupplierInItems) {
+          return false
+        }
       }
 
-      // Busca por texto
+      // Busca por texto: OS, itens, fornecedor, cliente, veículo, observações
       if (search.trim()) {
         const s = search.toLowerCase()
         const customerName = (req.expand?.customer?.name || '').toLowerCase()
-        const supplierName = (
+        const legacySupplierName = (
           req.expand?.supplier?.name ||
           req.expand?.supplier?.company ||
           ''
@@ -140,11 +155,17 @@ export default function PipelineCompras() {
         const notes = (req.notes || '').toLowerCase()
         const os = (req.os_number || '').toLowerCase()
 
-        // Itens
-        const items = normalizePurchaseItems(req)
-        const itemsMatch = items.some(
-          (it) => it.part_name.toLowerCase().includes(s) || it.vehicle.toLowerCase().includes(s),
-        )
+        // Itens (peça, veículo e fornecedor do item)
+        const itemsMatch = items.some((it) => {
+          const itemPart = (it.part_name || '').toLowerCase()
+          const itemVeh = (it.vehicle || '').toLowerCase()
+          const itemSupName = (
+            it.supplier_name ||
+            (it.supplier_id ? supplierMap[it.supplier_id] : '') ||
+            ''
+          ).toLowerCase()
+          return itemPart.includes(s) || itemVeh.includes(s) || itemSupName.includes(s)
+        })
 
         const match =
           part.includes(s) ||
@@ -152,7 +173,7 @@ export default function PipelineCompras() {
           os.includes(s) ||
           itemsMatch ||
           customerName.includes(s) ||
-          supplierName.includes(s) ||
+          legacySupplierName.includes(s) ||
           notes.includes(s)
 
         if (!match) return false
@@ -160,7 +181,7 @@ export default function PipelineCompras() {
 
       return true
     })
-  }, [requests, customerFilter, supplierFilter, search])
+  }, [requests, customerFilter, supplierFilter, search, supplierMap])
 
   // Agrupamento por colunas kanban
   const columnsData = useMemo(() => {
@@ -194,12 +215,20 @@ export default function PipelineCompras() {
     return grouped
   }, [filteredRequests, sortOrder])
 
-  // Métricas
+  // Métricas: totais do topo do quadro passam a somar o total de venda, custo e margem de todos os itens de todas as compras
   const metrics = useMemo(() => {
     const totalCount = filteredRequests.length
-    const totalItems = filteredRequests.reduce((acc, r) => acc + getTotalItemQuantity(r), 0)
-    const totalCost = filteredRequests.reduce((acc, r) => acc + (r.cost_price || 0), 0)
-    const totalSell = filteredRequests.reduce((acc, r) => acc + (r.sell_price || 0), 0)
+    let totalItems = 0
+    let totalCost = 0
+    let totalSell = 0
+
+    for (const req of filteredRequests) {
+      totalItems += getTotalItemQuantity(req)
+      const t = getPurchaseTotals(req)
+      totalCost += t.totalCost
+      totalSell += t.totalSell
+    }
+
     const totalMargin = totalSell - totalCost
     const completedCount = filteredRequests.filter(
       (r) => r.is_completed || r.status === 'entregue',
@@ -305,7 +334,7 @@ export default function PipelineCompras() {
     try {
       const created = await createPurchaseRequest(data)
       setRequests((prev) => [created, ...prev])
-      const summary = formatPurchaseItemsSummary(created)
+      const summary = formatPurchaseItemsSummary(created, supplierMap)
       toast({
         title: 'Solicitação criada',
         description: `Solicitação para "${summary}" criada com sucesso na etapa "Solicitada".`,
@@ -565,7 +594,10 @@ export default function PipelineCompras() {
           <div className="flex gap-4 min-w-[1540px] items-start">
             {PURCHASE_COLUMNS.map((col) => {
               const columnCards = columnsData[col.id] || []
-              const columnCostTotal = columnCards.reduce((acc, c) => acc + (c.cost_price || 0), 0)
+              const columnCostTotal = columnCards.reduce(
+                (acc, c) => acc + getPurchaseTotals(c).totalCost,
+                0,
+              )
               const isOver = dragOverCol === col.id
 
               return (
@@ -613,6 +645,7 @@ export default function PipelineCompras() {
                         <PurchaseCard
                           key={card.id}
                           card={card}
+                          supplierMap={supplierMap}
                           onClick={() => setSelectedCard(card)}
                           onDragStart={handleDragStart}
                           onDelete={(id, name) => handleDeletePurchase(id, name)}
@@ -635,7 +668,9 @@ export default function PipelineCompras() {
           suppliers={suppliers}
           onClose={() => setSelectedCard(null)}
           onUpdate={handleUpdatePurchase}
-          onDelete={(id) => handleDeletePurchase(id, formatPurchaseItemsSummary(selectedCard))}
+          onDelete={(id) =>
+            handleDeletePurchase(id, formatPurchaseItemsSummary(selectedCard, supplierMap))
+          }
           onMoveStatus={(id, targetCol) => handleMoveStatus(id, targetCol)}
         />
       )}

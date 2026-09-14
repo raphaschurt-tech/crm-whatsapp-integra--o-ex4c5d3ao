@@ -188,6 +188,10 @@ export interface PurchaseItem {
   part_name: string
   vehicle: string
   quantity: number
+  supplier_id?: string
+  supplier_name?: string
+  cost_price?: number
+  sell_price?: number
 }
 
 export interface PurchaseRequest extends RecordModel {
@@ -209,5 +213,6 @@ export interface PurchaseRequest extends RecordModel {
     customer?: Customer
     supplier?: Customer
     created_by?: User
+    [key: string]: any
   }
 }
