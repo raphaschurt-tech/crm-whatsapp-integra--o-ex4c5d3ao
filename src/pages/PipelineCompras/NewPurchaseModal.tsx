@@ -12,7 +12,11 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { getItemMargin } from '@/services/purchaseRequestsService'
+import {
+  getItemMargin,
+  calculateMarginPercent,
+  calculateSellPriceFromMargin,
+} from '@/services/purchaseRequestsService'
 
 interface NewPurchaseModalProps {
   isOpen: boolean
@@ -30,6 +34,7 @@ interface FormItemState {
   quantity: number
   supplier_id?: string
   cost_price?: string
+  margin_percent?: string
   sell_price?: string
 }
 
@@ -39,6 +44,7 @@ const emptyItem: FormItemState = {
   quantity: 1,
   supplier_id: '',
   cost_price: '',
+  margin_percent: '',
   sell_price: '',
 }
 
@@ -57,15 +63,95 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
   const [notes, setNotes] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  const formatPercentDisplay = (val: number): string => {
+    const rounded = Math.round(val * 100) / 100
+    return rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2).replace(/\.?0+$/, '')
+  }
+
   const handleItemChange = (index: number, field: keyof FormItemState, value: any) => {
     setItems((prev) => {
       const next = [...prev]
+      const currentItem = { ...next[index] }
+
       if (field === 'quantity') {
         const val = parseInt(value, 10)
-        next[index] = { ...next[index], quantity: isNaN(val) || val < 1 ? 1 : val }
-      } else {
-        next[index] = { ...next[index], [field]: value }
+        currentItem.quantity = isNaN(val) || val < 1 ? 1 : val
+        next[index] = currentItem
+        return next
       }
+
+      if (field === 'cost_price') {
+        currentItem.cost_price = value
+        const costNum = parseFloat(value)
+
+        // Se custo for vazio ou zero/negativo: margem % vazia, venda não calcula automaticamente
+        if (isNaN(costNum) || costNum <= 0) {
+          currentItem.margin_percent = ''
+        } else {
+          // Se tiver margem % digitada, calcula/preenche automaticamente a venda: venda = custo * (1 + margem%/100)
+          const marginNum = parseFloat(currentItem.margin_percent || '')
+          if (!isNaN(marginNum)) {
+            const calculatedSell = calculateSellPriceFromMargin(costNum, marginNum)
+            if (calculatedSell !== null) {
+              currentItem.sell_price = calculatedSell.toFixed(2)
+            }
+          } else {
+            // Se já tiver preço de venda preenchido manualmente, recalcula a margem % a partir dele
+            const sellNum = parseFloat(currentItem.sell_price || '')
+            if (!isNaN(sellNum)) {
+              const recalculatedMargin = calculateMarginPercent(costNum, sellNum)
+              currentItem.margin_percent =
+                recalculatedMargin !== null ? formatPercentDisplay(recalculatedMargin) : ''
+            }
+          }
+        }
+
+        next[index] = currentItem
+        return next
+      }
+
+      if (field === 'margin_percent') {
+        currentItem.margin_percent = value
+        const costNum = parseFloat(currentItem.cost_price || '')
+        const marginNum = parseFloat(value)
+
+        if (isNaN(costNum) || costNum <= 0 || isNaN(marginNum)) {
+          // Quando custo for vazio ou zero, ou margem vazia/inválida, não altera a venda compulsoriamente se margem vazia
+          if (!value.trim()) {
+            currentItem.margin_percent = ''
+          }
+        } else {
+          // Calcular e preencher AUTOMATICAMENTE o PREÇO DE VENDA do item: venda = custo × (1 + margem%/100)
+          const calculatedSell = calculateSellPriceFromMargin(costNum, marginNum)
+          if (calculatedSell !== null) {
+            currentItem.sell_price = calculatedSell.toFixed(2)
+          }
+        }
+
+        next[index] = currentItem
+        return next
+      }
+
+      if (field === 'sell_price') {
+        currentItem.sell_price = value
+        const costNum = parseFloat(currentItem.cost_price || '')
+        const sellNum = parseFloat(value)
+
+        // Se o usuário digitar o PREÇO DE VENDA manualmente, recalcular a margem % a partir dele:
+        // margem% = (venda - custo) / custo * 100
+        if (isNaN(costNum) || costNum <= 0 || isNaN(sellNum)) {
+          currentItem.margin_percent = ''
+        } else {
+          const recalculatedMargin = calculateMarginPercent(costNum, sellNum)
+          currentItem.margin_percent =
+            recalculatedMargin !== null ? formatPercentDisplay(recalculatedMargin) : ''
+        }
+
+        next[index] = currentItem
+        return next
+      }
+
+      next[index] = { ...currentItem, [field]: value }
       return next
     })
   }
@@ -308,10 +394,10 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Linha 2: Fornecedor do Item, Preço de Custo, Preço de Venda e Margem do Item */}
+                    {/* Linha 2: Fornecedor do Item, Preço de Custo, Margem %, Preço de Venda e Margem do Item */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1 border-t border-slate-100">
                       {/* Fornecedor Próprio */}
-                      <div className="sm:col-span-4">
+                      <div className="sm:col-span-3">
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5 flex items-center gap-1">
                           <Truck className="h-3 w-3 text-amber-600" /> Fornecedor do item
                         </label>
@@ -330,7 +416,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                       </div>
 
                       {/* Custo unitário */}
-                      <div className="sm:col-span-3">
+                      <div className="sm:col-span-2">
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
                           Custo un. (R$)
                         </label>
@@ -342,6 +428,23 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                           onChange={(e) => handleItemChange(index, 'cost_price', e.target.value)}
                           placeholder="0,00"
                           className="h-8 text-xs"
+                        />
+                      </div>
+
+                      {/* Margem em % (ao lado do custo) */}
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                          Margem (%)
+                        </label>
+                        <Input
+                          type="number"
+                          step="any"
+                          value={item.margin_percent || ''}
+                          onChange={(e) =>
+                            handleItemChange(index, 'margin_percent', e.target.value)
+                          }
+                          placeholder="Ex: 30"
+                          className="h-8 text-xs text-center font-medium"
                         />
                       </div>
 
@@ -361,10 +464,10 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                         />
                       </div>
 
-                      {/* Margem do Item (calculada automaticamente: venda×qtd − custo×qtd) */}
+                      {/* Margem do Item em R$ (exibida em verde/vermelho) */}
                       <div className="sm:col-span-2 flex flex-col justify-end">
                         <span className="text-[10px] font-semibold text-slate-500 block mb-1">
-                          Margem
+                          Margem (R$)
                         </span>
                         <div
                           className={`h-8 px-2 rounded-md flex items-center justify-center text-xs font-bold border ${

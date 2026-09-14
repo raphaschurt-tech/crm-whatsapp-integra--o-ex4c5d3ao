@@ -84,6 +84,36 @@ export const getItemMargin = (item: PurchaseItem): number | null => {
 }
 
 /**
+ * Calcula a margem percentual de um item a partir do custo e da venda:
+ * margem% = ((venda - custo) / custo) * 100
+ * Retorna null se custo for vazio, zero ou menor ou se não houver venda.
+ */
+export const calculateMarginPercent = (
+  cost?: number | null,
+  sell?: number | null,
+): number | null => {
+  if (cost === undefined || cost === null || isNaN(cost) || cost <= 0) return null
+  if (sell === undefined || sell === null || isNaN(sell)) return null
+  const margin = ((sell - cost) / cost) * 100
+  return isFinite(margin) ? margin : null
+}
+
+/**
+ * Calcula o preço de venda a partir do custo e da margem percentual:
+ * venda = custo * (1 + margem%/100), arredondado para 2 casas decimais.
+ * Retorna null se custo for vazio, zero ou menor, ou se margem% não for número válido.
+ */
+export const calculateSellPriceFromMargin = (
+  cost?: number | null,
+  marginPercent?: number | null,
+): number | null => {
+  if (cost === undefined || cost === null || isNaN(cost) || cost <= 0) return null
+  if (marginPercent === undefined || marginPercent === null || isNaN(marginPercent)) return null
+  const rawSell = cost * (1 + marginPercent / 100)
+  return Math.round((rawSell + Number.EPSILON) * 100) / 100
+}
+
+/**
  * Calcula os totais de uma compra inteira somando todos os seus itens
  */
 export const getPurchaseTotals = (
@@ -148,7 +178,22 @@ export const formatPurchaseItemsSummary = (
         supName = supplierMap[item.supplier_id]
       }
       const supStr = supName ? ` — ${supName}` : ''
-      return `${qtyStr} ${item.part_name}${vehStr}${supStr}`
+
+      let marginStr = ''
+      if (
+        typeof item.cost_price === 'number' &&
+        item.cost_price > 0 &&
+        typeof item.sell_price === 'number' &&
+        !isNaN(item.sell_price)
+      ) {
+        const marginPct = calculateMarginPercent(item.cost_price, item.sell_price)
+        if (marginPct !== null) {
+          const formattedPct = marginPct % 1 === 0 ? marginPct.toFixed(0) : marginPct.toFixed(1)
+          marginStr = ` (margem ${formattedPct}%)`
+        }
+      }
+
+      return `${qtyStr} ${item.part_name}${vehStr}${supStr}${marginStr}`
     })
     .join(', ')
 }
