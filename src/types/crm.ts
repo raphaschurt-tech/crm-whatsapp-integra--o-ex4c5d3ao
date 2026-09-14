@@ -184,9 +184,17 @@ export type PurchaseRequestStatus =
   | 'recebida'
   | 'entregue'
 
-export interface PurchaseRequest extends RecordModel {
+export interface PurchaseItem {
   part_name: string
   vehicle: string
+  quantity: number
+}
+
+export interface PurchaseRequest extends RecordModel {
+  part_name?: string
+  vehicle?: string
+  items?: PurchaseItem[]
+  os_number?: string
   customer: string
   supplier?: string
   status: PurchaseRequestStatus

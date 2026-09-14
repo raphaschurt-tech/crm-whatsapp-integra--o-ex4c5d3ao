@@ -19,6 +19,9 @@ import {
   updatePurchaseRequest,
   movePurchaseRequestStatus,
   deletePurchaseRequest,
+  normalizePurchaseItems,
+  formatPurchaseItemsSummary,
+  getTotalItemQuantity,
 } from '@/services/purchaseRequestsService'
 import { getCustomers } from '@/services/customers'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -135,10 +138,19 @@ export default function PipelineCompras() {
         const part = (req.part_name || '').toLowerCase()
         const vehicle = (req.vehicle || '').toLowerCase()
         const notes = (req.notes || '').toLowerCase()
+        const os = (req.os_number || '').toLowerCase()
+
+        // Itens
+        const items = normalizePurchaseItems(req)
+        const itemsMatch = items.some(
+          (it) => it.part_name.toLowerCase().includes(s) || it.vehicle.toLowerCase().includes(s),
+        )
 
         const match =
           part.includes(s) ||
           vehicle.includes(s) ||
+          os.includes(s) ||
+          itemsMatch ||
           customerName.includes(s) ||
           supplierName.includes(s) ||
           notes.includes(s)
@@ -185,6 +197,7 @@ export default function PipelineCompras() {
   // Métricas
   const metrics = useMemo(() => {
     const totalCount = filteredRequests.length
+    const totalItems = filteredRequests.reduce((acc, r) => acc + getTotalItemQuantity(r), 0)
     const totalCost = filteredRequests.reduce((acc, r) => acc + (r.cost_price || 0), 0)
     const totalSell = filteredRequests.reduce((acc, r) => acc + (r.sell_price || 0), 0)
     const totalMargin = totalSell - totalCost
@@ -194,6 +207,7 @@ export default function PipelineCompras() {
 
     return {
       totalCount,
+      totalItems,
       totalCost,
       totalSell,
       totalMargin,
@@ -291,9 +305,10 @@ export default function PipelineCompras() {
     try {
       const created = await createPurchaseRequest(data)
       setRequests((prev) => [created, ...prev])
+      const summary = formatPurchaseItemsSummary(created)
       toast({
         title: 'Solicitação criada',
-        description: `Solicitação para "${created.part_name}" criada com sucesso na etapa "Solicitada".`,
+        description: `Solicitação para "${summary}" criada com sucesso na etapa "Solicitada".`,
       })
     } catch (err: any) {
       console.error('Erro ao criar solicitação de compra:', err)
@@ -387,8 +402,13 @@ export default function PipelineCompras() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-3.5 flex items-center justify-between shadow-xs">
           <div>
-            <span className="text-xs text-slate-500 font-medium">Total de Peças</span>
-            <p className="text-xl font-bold text-slate-900 mt-0.5">{metrics.totalCount}</p>
+            <span className="text-xs text-slate-500 font-medium">Total de Peças / Itens</span>
+            <p className="text-xl font-bold text-slate-900 mt-0.5">
+              {metrics.totalItems}{' '}
+              <span className="text-xs font-normal text-slate-500">
+                ({metrics.totalCount} {metrics.totalCount === 1 ? 'compra' : 'compras'})
+              </span>
+            </p>
           </div>
           <div className="h-9 w-9 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
             <Package className="h-5 w-5" />
@@ -442,7 +462,7 @@ export default function PipelineCompras() {
           <div className="relative w-full sm:w-72">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <Input
-              placeholder="Buscar peça, veículo, cliente, fornecedor..."
+              placeholder="Buscar peça, veículo, OS, cliente, fornecedor..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9 h-9 text-xs bg-slate-50 border-slate-200 focus:bg-white"
@@ -615,7 +635,7 @@ export default function PipelineCompras() {
           suppliers={suppliers}
           onClose={() => setSelectedCard(null)}
           onUpdate={handleUpdatePurchase}
-          onDelete={(id) => handleDeletePurchase(id, selectedCard.part_name)}
+          onDelete={(id) => handleDeletePurchase(id, formatPurchaseItemsSummary(selectedCard))}
           onMoveStatus={(id, targetCol) => handleMoveStatus(id, targetCol)}
         />
       )}

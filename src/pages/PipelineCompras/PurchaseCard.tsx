@@ -4,15 +4,21 @@ import {
   User,
   Car,
   Truck,
-  DollarSign,
   Calendar,
   CheckCircle2,
   Clock,
   TrendingUp,
   Trash2,
+  Hash,
+  Package,
 } from 'lucide-react'
 import { PurchaseRequest } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
+import {
+  normalizePurchaseItems,
+  formatPurchaseItemsSummary,
+  getTotalItemQuantity,
+} from '@/services/purchaseRequestsService'
 
 interface PurchaseCardProps {
   card: PurchaseRequest
@@ -33,6 +39,10 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
   const hasSell = typeof card.sell_price === 'number' && card.sell_price > 0
   const margin = hasCost && hasSell ? (card.sell_price || 0) - (card.cost_price || 0) : null
 
+  const items = normalizePurchaseItems(card)
+  const totalItemsCount = getTotalItemQuantity(card)
+  const itemsSummary = formatPurchaseItemsSummary(card)
+
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('text/plain', card.id)
     e.dataTransfer.effectAllowed = 'move'
@@ -52,6 +62,9 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
     }
   }
 
+  // Lista dos veículos distintos para exibição compacta
+  const vehiclesList = Array.from(new Set(items.map((i) => i.vehicle).filter(Boolean))).join(', ')
+
   return (
     <div
       draggable
@@ -61,20 +74,29 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
         card.status === 'entregue' ? 'bg-slate-50/70 border-emerald-200' : ''
       }`}
     >
-      {/* Top Header: Peça + Grip */}
+      {/* Top Header: Badge Compra + Badge OS (se tiver) + Concluído + Grip */}
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-0">
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 bg-amber-100 text-amber-800">
             Compra
           </span>
+
+          {/* Badge de OS em destaque */}
+          {card.os_number && (
+            <span
+              className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] font-bold shrink-0 bg-amber-500 text-white shadow-2xs"
+              title={`Ordem de Serviço: ${card.os_number}`}
+            >
+              <Hash className="h-3 w-3" />
+              OS {card.os_number}
+            </span>
+          )}
+
           {card.is_completed && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 bg-emerald-100 text-emerald-800">
               <CheckCircle2 className="h-3 w-3" /> Concluído
             </span>
           )}
-          <h4 className="font-bold text-slate-900 text-xs sm:text-sm truncate group-hover:text-amber-700 transition-colors">
-            {card.part_name}
-          </h4>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
@@ -83,7 +105,7 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
               type="button"
               onClick={(e) => {
                 e.stopPropagation()
-                onDelete(card.id, card.part_name)
+                onDelete(card.id, itemsSummary)
               }}
               className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
               title="Excluir solicitação de compra"
@@ -96,12 +118,35 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
         </div>
       </div>
 
-      {/* Veículo & Cliente */}
-      <div className="space-y-1 text-xs text-slate-600">
-        <div className="flex items-center gap-1.5 font-medium text-slate-800">
-          <Car className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-          <span className="truncate">{card.vehicle}</span>
+      {/* Lista Resumida dos Itens com Quantidades */}
+      <div className="space-y-1">
+        <div className="flex items-start gap-1.5">
+          <Package className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <h4
+              className="font-bold text-slate-900 text-xs sm:text-sm leading-snug group-hover:text-amber-700 transition-colors line-clamp-2"
+              title={itemsSummary}
+            >
+              {itemsSummary}
+            </h4>
+            {items.length > 1 && (
+              <span className="text-[10px] font-semibold text-slate-400">
+                {items.length} {items.length === 1 ? 'item' : 'itens'} ({totalItemsCount}{' '}
+                {totalItemsCount === 1 ? 'unidade' : 'unidades'})
+              </span>
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* Veículo & Cliente */}
+      <div className="space-y-1 text-xs text-slate-600 pt-1 border-t border-slate-100/80">
+        {vehiclesList && (
+          <div className="flex items-center gap-1.5 font-medium text-slate-800">
+            <Car className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+            <span className="truncate">{vehiclesList}</span>
+          </div>
+        )}
 
         <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
           <User className="h-3 w-3 text-slate-400 shrink-0" />

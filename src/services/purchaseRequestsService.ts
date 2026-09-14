@@ -1,6 +1,60 @@
 import pb from '@/lib/pocketbase/client'
 import { withRetry } from '@/lib/retry'
-import { PurchaseRequest, PurchaseRequestStatus } from '@/types/crm'
+import { PurchaseItem, PurchaseRequest, PurchaseRequestStatus } from '@/types/crm'
+
+/**
+ * Normaliza os itens de uma solicitação de compra para garantir retrocompatibilidade.
+ * Se items estiver preenchido e não-vazio, usa items.
+ * Caso contrário, cria 1 item a partir de part_name, vehicle e quantidade 1.
+ */
+export const normalizePurchaseItems = (
+  request?: Partial<PurchaseRequest> | null,
+): PurchaseItem[] => {
+  if (!request) return []
+  if (Array.isArray(request.items) && request.items.length > 0) {
+    return request.items.map((item) => ({
+      part_name: item.part_name || '',
+      vehicle: item.vehicle || '',
+      quantity: Math.max(1, Number(item.quantity) || 1),
+    }))
+  }
+  if (request.part_name || request.vehicle) {
+    return [
+      {
+        part_name: request.part_name || '',
+        vehicle: request.vehicle || '',
+        quantity: 1,
+      },
+    ]
+  }
+  return []
+}
+
+/**
+ * Retorna a contagem total de unidades (soma de quantidades de todos os itens)
+ */
+export const getTotalItemQuantity = (request?: Partial<PurchaseRequest> | null): number => {
+  const items = normalizePurchaseItems(request)
+  return items.reduce((acc, it) => acc + (it.quantity || 1), 0)
+}
+
+/**
+ * Formata um resumo compacto dos itens para exibição nos cards.
+ * Exemplo: '2× bucha da bandeja (Kicks 2016), 1× coxim do motor'
+ */
+export const formatPurchaseItemsSummary = (request?: Partial<PurchaseRequest> | null): string => {
+  const items = normalizePurchaseItems(request)
+  if (items.length === 0) {
+    return request?.part_name || 'Sem itens'
+  }
+  return items
+    .map((item) => {
+      const qtyStr = `${item.quantity || 1}×`
+      const vehStr = item.vehicle ? ` (${item.vehicle})` : ''
+      return `${qtyStr} ${item.part_name}${vehStr}`
+    })
+    .join(', ')
+}
 
 export interface PurchaseColumnDef {
   id: PurchaseRequestStatus
@@ -94,8 +148,18 @@ export const getPurchaseRequest = (id: string) =>
 export const createPurchaseRequest = async (
   data: Partial<PurchaseRequest>,
 ): Promise<PurchaseRequest> => {
+  // Se houver items, mantém retrocompatibilidade de part_name e vehicle no registro mestre com o 1º item ou resumo
+  const items = data.items && data.items.length > 0 ? data.items : undefined
+  const firstItem = items?.[0]
+  const partName = data.part_name || firstItem?.part_name || ''
+  const vehicle = data.vehicle || firstItem?.vehicle || ''
+
   const payload = {
     ...data,
+    part_name: partName,
+    vehicle: vehicle,
+    items: items,
+    os_number: data.os_number?.trim() || '',
     status: data.status || 'solicitada',
     created_by: pb.authStore.record?.id || data.created_by,
   }
@@ -108,7 +172,21 @@ export const updatePurchaseRequest = async (
   id: string,
   data: Partial<PurchaseRequest>,
 ): Promise<PurchaseRequest> => {
-  return await pb.collection<PurchaseRequest>('purchase_requests').update(id, data, {
+  const payload: Record<string, any> = { ...data }
+  if (data.items && data.items.length > 0) {
+    const firstItem = data.items[0]
+    if (!data.part_name) {
+      payload.part_name = firstItem.part_name
+    }
+    if (!data.vehicle) {
+      payload.vehicle = firstItem.vehicle
+    }
+  }
+  if (data.os_number !== undefined) {
+    payload.os_number = data.os_number.trim()
+  }
+
+  return await pb.collection<PurchaseRequest>('purchase_requests').update(id, payload, {
     expand: 'customer,supplier,created_by',
   })
 }
