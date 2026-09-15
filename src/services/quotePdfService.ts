@@ -1,9 +1,105 @@
 import { Quote, QuoteItem, Customer } from '@/types/crm'
+import logoPngUrl from '@/assets/logo-4855f.png'
 
 export interface QuotePdfData {
   quote: Quote
   items: QuoteItem[]
   customer?: Customer | null
+}
+
+interface ImagePayload {
+  jpegBytes: Uint8Array
+  width: number
+  height: number
+}
+
+// Cache global da logo já convertida em memória
+let cachedLogoPayload: ImagePayload | null = null
+let logoLoadPromise: Promise<ImagePayload | null> | null = null
+
+/**
+ * Converte data URL em Uint8Array binário
+ */
+function dataUrlToUint8Array(dataUrl: string): Uint8Array {
+  const commaIdx = dataUrl.indexOf(',')
+  const base64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl
+  const binaryString = atob(base64)
+  const len = binaryString.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  return bytes
+}
+
+/**
+ * Carrega a logo oficial RPA em background e converte em JPEG para embutir no PDF (com fundo branco).
+ * Preserva as dimensões originais sem distorção.
+ */
+export async function preloadQuotePdfLogo(): Promise<ImagePayload | null> {
+  if (cachedLogoPayload) return cachedLogoPayload
+  if (logoLoadPromise) return logoLoadPromise
+
+  logoLoadPromise = new Promise<ImagePayload | null>((resolve) => {
+    try {
+      if (typeof window === 'undefined' || typeof Image === 'undefined') {
+        resolve(null)
+        return
+      }
+
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas')
+          const w = img.naturalWidth || 600
+          const h = img.naturalHeight || 300
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext('2d')
+          if (!ctx) {
+            resolve(null)
+            return
+          }
+
+          // Preenche fundo branco nítido (caso a logo tenha transparência)
+          ctx.fillStyle = '#FFFFFF'
+          ctx.fillRect(0, 0, w, h)
+          ctx.drawImage(img, 0, 0, w, h)
+
+          // Exporta como JPEG de alta fidelidade (qualidade 0.95)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
+          const jpegBytes = dataUrlToUint8Array(dataUrl)
+
+          const payload: ImagePayload = {
+            jpegBytes,
+            width: w,
+            height: h,
+          }
+          cachedLogoPayload = payload
+          resolve(payload)
+        } catch (err) {
+          console.warn('Falha ao processar canvas da logo do PDF:', err)
+          resolve(null)
+        }
+      }
+      img.onerror = (e) => {
+        console.warn('Falha ao carregar asset da logo para PDF:', e)
+        resolve(null)
+      }
+      img.src = logoPngUrl
+    } catch (err) {
+      console.warn('Erro ao inicializar carregador da logo do PDF:', err)
+      resolve(null)
+    }
+  })
+
+  return logoLoadPromise
+}
+
+// Inicia pré-carregamento imediato no carregamento do módulo no browser
+if (typeof window !== 'undefined') {
+  preloadQuotePdfLogo().catch(() => {})
 }
 
 /**
@@ -85,8 +181,13 @@ function wrapText(text: string, maxCharsPerLine: number = 75): string[] {
  * Gera um arquivo PDF no padrão PDF 1.4 limpo, elegante e profissional, sem dependências externas.
  * Retorna Uint8Array com os bytes brutos do PDF.
  */
-export function generateQuotePdfBytes(data: QuotePdfData): Uint8Array {
+export function generateQuotePdfBytes(
+  data: QuotePdfData,
+  logoPayloadOverride?: ImagePayload | null,
+): Uint8Array {
   const { quote, items, customer } = data
+  const logo = logoPayloadOverride !== undefined ? logoPayloadOverride : cachedLogoPayload
+  const hasLogoImage = Boolean(logo && logo.jpegBytes && logo.jpegBytes.length > 0)
 
   const customerName = cleanPdfText(customer?.name || quote.expand?.customer?.name) || 'Cliente'
   const customerPhone = cleanPdfText(customer?.phone || quote.expand?.customer?.phone)
@@ -118,71 +219,72 @@ export function generateQuotePdfBytes(data: QuotePdfData): Uint8Array {
   s += `0 834 ${pageWidth} 8 re f\n`
 
   // ==========================================
-  // 2. CABEÇALHO EM DUAS COLUNAS (Y ~ 740 até 820)
+  // 2. CABEÇALHO REFORMULADO (Y ~ 755 até 825)
   // ==========================================
-  // ESQUERDA: Dados da empresa
+  // CANTO SUPERIOR ESQUERDO: Logo oficial da RPA Auto Parts
+  // Dimensões da logo no PDF: ~114 pt de largura (~40.2 mm) por 57 pt de altura (~20.1 mm)
+  // Preserva proporção aproximada do PNG (2:1).
+  const logoLeftX = marginX
+  const logoWidth = 114
+  const logoHeight = 57
+  const logoBottomY = 762 // de 762 até 819 pt
+
+  if (hasLogoImage) {
+    // Renderiza a imagem oficial como XObject /ImLogo
+    s += 'q\n'
+    s += `${logoWidth} 0 0 ${logoHeight} ${logoLeftX} ${logoBottomY} cm\n`
+    s += '/ImLogo Do\n'
+    s += 'Q\n'
+  } else {
+    // Fallback elegante caso a imagem da logo falhe ao carregar
+    s += '0.96 0.98 0.96 rg\n'
+    s += `${logoLeftX} ${logoBottomY} ${logoWidth} ${logoHeight} re f\n`
+    s += '0.80 0.89 0.82 RG\n'
+    s += '0.75 w\n'
+    s += `${logoLeftX} ${logoBottomY} ${logoWidth} ${logoHeight} re s\n`
+
+    s += '0.04 0.48 0.32 rg\n'
+    s += `${logoLeftX + 8} ${logoBottomY + 14} 24 24 re f\n`
+    s += '1 1 1 rg\n'
+    s += `${logoLeftX + 14} ${logoBottomY + 20} 12 12 re f\n`
+    s += '0.04 0.48 0.32 rg\n'
+    s += `${logoLeftX + 17} ${logoBottomY + 23} 6 6 re f\n`
+
+    s += 'BT\n'
+    s += '/F2 13 Tf\n'
+    s += '0.04 0.48 0.32 rg\n'
+    s += `${logoLeftX + 38} ${logoBottomY + 34} Td\n`
+    s += `(${escapePdfLiteral('RPA')}) Tj\n`
+    s += '/F2 7.5 Tf\n'
+    s += '0.15 0.20 0.25 rg\n'
+    s += `0 -11 Td\n`
+    s += `(${escapePdfLiteral('AUTO PARTS')}) Tj\n`
+    s += '/F1 6.5 Tf\n'
+    s += '0.45 0.50 0.55 rg\n'
+    s += `0 -9 Td\n`
+    s += `(${escapePdfLiteral('DESDE 1995')}) Tj\n`
+    s += 'ET\n'
+  }
+
+  // DADOS DA EMPRESA (Ao lado da logo, deslocados para a direita)
+  const companyInfoX = marginX + logoWidth + 20 // 36 + 114 + 20 = 170 pt
   s += 'BT\n'
-  // Nome da Empresa em negrito grande
-  s += '/F2 18 Tf\n'
+  s += '/F2 17 Tf\n'
   s += '0.04 0.48 0.32 rg\n'
-  s += `${marginX} 806 Td\n`
+  s += `${companyInfoX} 805 Td\n`
   s += `(${escapePdfLiteral('RPA AUTO PARTS')}) Tj\n`
 
-  // Subtítulo da empresa
   s += '/F2 9 Tf\n'
   s += '0.22 0.28 0.34 rg\n'
   s += `0 -13 Td\n`
   s += `(${escapePdfLiteral('PECAS E ACESSORIOS AUTOMOTIVOS')}) Tj\n`
 
-  // Informações de contato da empresa
   s += '/F1 8.5 Tf\n'
   s += '0.42 0.46 0.52 rg\n'
   s += `0 -12 Td\n`
   s += `(${escapePdfLiteral('WhatsApp: (11) 94786-1439  |  Vendas e Orcamentos Especializados')}) Tj\n`
   s += `0 -11 Td\n`
-  s += `(${escapePdfLiteral('Atendimento de Segunda a Sexta-feira')}) Tj\n`
-  s += 'ET\n'
-
-  // DIREITA: LOGO DA RPA AUTO PARTS (Lado Superior Direito, conforme pedido)
-  // Emblema vetorial de alta definição da marca RPA AUTO PARTS
-  const logoRightX = marginX + contentWidth // 559 pt
-  const logoBoxWidth = 148
-  const logoBoxHeight = 56
-  const logoBoxX = logoRightX - logoBoxWidth // 411 pt
-  const logoBoxY = 766 // de 766 até 822 pt
-
-  // Fundo sutil com borda do badge da logo
-  s += '0.96 0.98 0.96 rg\n'
-  s += `${logoBoxX} ${logoBoxY} ${logoBoxWidth} ${logoBoxHeight} re f\n`
-  s += '0.80 0.89 0.82 RG\n'
-  s += '0.75 w\n'
-  s += `${logoBoxX} ${logoBoxY} ${logoBoxWidth} ${logoBoxHeight} re s\n`
-
-  // Ícone decorativo: engrenagem / suspensão estilizada à esquerda do badge da marca
-  s += '0.04 0.48 0.32 rg\n'
-  s += `${logoBoxX + 12} ${logoBoxY + 14} 28 28 re f\n`
-  // Detalhe branco no ícone
-  s += '1 1 1 rg\n'
-  s += `${logoBoxX + 19} ${logoBoxY + 21} 14 14 re f\n`
-  s += '0.04 0.48 0.32 rg\n'
-  s += `${logoBoxX + 23} ${logoBoxY + 25} 6 6 re f\n`
-
-  // Tipografia da Logo: "RPA" em destaque e "AUTO PARTS" logo abaixo
-  s += 'BT\n'
-  s += '/F2 15 Tf\n'
-  s += '0.04 0.48 0.32 rg\n'
-  s += `${logoBoxX + 46} ${logoBoxY + 33} Td\n`
-  s += `(${escapePdfLiteral('RPA')}) Tj\n`
-
-  s += '/F2 8 Tf\n'
-  s += '0.15 0.20 0.25 rg\n'
-  s += `0 -12 Td\n`
-  s += `(${escapePdfLiteral('AUTO PARTS')}) Tj\n`
-
-  s += '/F1 6.5 Tf\n'
-  s += '0.45 0.50 0.55 rg\n'
-  s += `0 -9 Td\n`
-  s += `(${escapePdfLiteral('SUSPENSAO & FREIOS')}) Tj\n`
+  s += `(${escapePdfLiteral('Atendimento de Segunda a Sexta-feira  |  Desde 1995')}) Tj\n`
   s += 'ET\n'
 
   // Linha divisória sutil abaixo do cabeçalho
@@ -482,36 +584,115 @@ export function generateQuotePdfBytes(data: QuotePdfData): Uint8Array {
   // ==========================================
   // 8. ESTRUTURA DO ARQUIVO PDF (PDF 1.4 Standard)
   // ==========================================
-  const contentStream = s
-  const contentLength = new TextEncoder().encode(contentStream).length
+  const encoder = new TextEncoder()
+  const contentStreamBytes = encoder.encode(s)
 
-  const objects: string[] = []
-  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>'
-  objects[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>'
-  objects[3] =
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>'
-  objects[4] = `<< /Length ${contentLength} >>\nstream\n${contentStream}\nendstream`
-  objects[5] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
-  objects[6] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>'
+  const numObjects = hasLogoImage ? 7 : 6
+  const resourcesStr = hasLogoImage
+    ? '<< /Font << /F1 5 0 R /F2 6 0 R >> /XObject << /ImLogo 7 0 R >> >>'
+    : '<< /Font << /F1 5 0 R /F2 6 0 R >> >>'
 
-  let pdfText = '%PDF-1.4\n'
-  const offsets: number[] = []
+  // Montamos cada objeto individualmente em Uint8Array para permitir bytes binários no XObject
+  const objectChunks: { id: number; data: Uint8Array }[] = []
 
-  for (let i = 1; i <= 6; i++) {
-    offsets[i] = new TextEncoder().encode(pdfText).length
-    pdfText += `${i} 0 obj\n${objects[i]}\nendobj\n`
+  // Obj 1: Catalog
+  objectChunks.push({
+    id: 1,
+    data: encoder.encode('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n'),
+  })
+
+  // Obj 2: Pages
+  objectChunks.push({
+    id: 2,
+    data: encoder.encode('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n'),
+  })
+
+  // Obj 3: Page
+  objectChunks.push({
+    id: 3,
+    data: encoder.encode(
+      `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources ${resourcesStr} >>\nendobj\n`,
+    ),
+  })
+
+  // Obj 4: Content Stream
+  const header4 = encoder.encode(`4 0 obj\n<< /Length ${contentStreamBytes.length} >>\nstream\n`)
+  const footer4 = encoder.encode('\nendstream\nendobj\n')
+  const obj4 = new Uint8Array(header4.length + contentStreamBytes.length + footer4.length)
+  obj4.set(header4, 0)
+  obj4.set(contentStreamBytes, header4.length)
+  obj4.set(footer4, header4.length + contentStreamBytes.length)
+  objectChunks.push({ id: 4, data: obj4 })
+
+  // Obj 5: Font F1 (Helvetica)
+  objectChunks.push({
+    id: 5,
+    data: encoder.encode(
+      '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+    ),
+  })
+
+  // Obj 6: Font F2 (Helvetica-Bold)
+  objectChunks.push({
+    id: 6,
+    data: encoder.encode(
+      '6 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n',
+    ),
+  })
+
+  // Obj 7: Imagem XObject /ImLogo (JPEG puro via /Filter /DCTDecode)
+  if (hasLogoImage && logo) {
+    const imgWidth = logo.width
+    const imgHeight = logo.height
+    const imgLen = logo.jpegBytes.length
+
+    const header7 = encoder.encode(
+      `7 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imgWidth} /Height ${imgHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imgLen} >>\nstream\n`,
+    )
+    const footer7 = encoder.encode('\nendstream\nendobj\n')
+    const obj7 = new Uint8Array(header7.length + imgLen + footer7.length)
+    obj7.set(header7, 0)
+    obj7.set(logo.jpegBytes, header7.length)
+    obj7.set(footer7, header7.length + imgLen)
+    objectChunks.push({ id: 7, data: obj7 })
   }
 
-  const xrefStart = new TextEncoder().encode(pdfText).length
-  pdfText += 'xref\n0 7\n0000000000 65535 f \n'
-  for (let i = 1; i <= 6; i++) {
+  // Header do PDF
+  const headerBytes = encoder.encode('%PDF-1.4\n')
+
+  // Calcula offsets exatos para a tabela xref
+  const offsets: number[] = new Array(numObjects + 1)
+  offsets[0] = 0
+
+  let currentOffset = headerBytes.length
+  for (const obj of objectChunks) {
+    offsets[obj.id] = currentOffset
+    currentOffset += obj.data.length
+  }
+
+  const xrefStart = currentOffset
+  let xrefStr = `xref\n0 ${numObjects + 1}\n0000000000 65535 f \n`
+  for (let i = 1; i <= numObjects; i++) {
     const offStr = String(offsets[i]).padStart(10, '0')
-    pdfText += `${offStr} 00000 n \n`
+    xrefStr += `${offStr} 00000 n \n`
   }
 
-  pdfText += `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`
+  xrefStr += `trailer\n<< /Size ${numObjects + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`
+  const xrefBytes = encoder.encode(xrefStr)
 
-  return new TextEncoder().encode(pdfText)
+  // Combina todos os bytes finais
+  const totalLength = currentOffset + xrefBytes.length
+  const finalPdf = new Uint8Array(totalLength)
+  finalPdf.set(headerBytes, 0)
+
+  let pos = headerBytes.length
+  for (const obj of objectChunks) {
+    finalPdf.set(obj.data, pos)
+    pos += obj.data.length
+  }
+  finalPdf.set(xrefBytes, pos)
+
+  return finalPdf
 }
 
 /**
@@ -529,11 +710,48 @@ export function generateQuotePdfBase64(data: QuotePdfData): string {
 }
 
 /**
+ * Converte os bytes do PDF para Base64 aguardando o carregamento da logo se necessário
+ */
+export async function generateQuotePdfBase64Async(data: QuotePdfData): Promise<string> {
+  const logo = await preloadQuotePdfLogo()
+  const bytes = generateQuotePdfBytes(data, logo)
+  let binary = ''
+  const len = bytes.byteLength
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  const base64 = btoa(binary)
+  return `data:application/pdf;base64,${base64}`
+}
+
+/**
  * Aciona o download local do arquivo PDF do orçamento no navegador
  */
 export function downloadQuotePdf(data: QuotePdfData): void {
   const bytes = generateQuotePdfBytes(data)
   // Cria cópia segura em ArrayBuffer padrão para compatibilidade de BlobPart
+  const arrayBuffer = bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer
+  const blob = new Blob([arrayBuffer], { type: 'application/pdf' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const safeNumber = (data.quote.number || 'orcamento').replace(/[^a-zA-Z0-9-_]/g, '_')
+  a.download = `${safeNumber}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * Aciona o download do PDF aguardando carregamento prévio da logo oficial
+ */
+export async function downloadQuotePdfAsync(data: QuotePdfData): Promise<void> {
+  const logo = await preloadQuotePdfLogo()
+  const bytes = generateQuotePdfBytes(data, logo)
   const arrayBuffer = bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,

@@ -31,7 +31,7 @@ import {
   buildReceiptMessage,
 } from '@/lib/whatsapp'
 import { SendQuoteDialog } from '@/components/Quotes/SendQuoteDialog'
-import { downloadQuotePdf } from '@/services/quotePdfService'
+import { downloadQuotePdf, downloadQuotePdfAsync } from '@/services/quotePdfService'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -375,13 +375,21 @@ export default function QuoteDetail() {
 
           <Button
             variant="outline"
-            onClick={() =>
-              downloadQuotePdf({
-                quote,
-                items,
-                customer: quote.expand?.customer,
-              })
-            }
+            onClick={async () => {
+              try {
+                await downloadQuotePdfAsync({
+                  quote,
+                  items,
+                  customer: quote.expand?.customer,
+                })
+              } catch (_) {
+                downloadQuotePdf({
+                  quote,
+                  items,
+                  customer: quote.expand?.customer,
+                })
+              }
+            }}
             className="text-xs text-slate-700 border-slate-300 hover:bg-slate-50"
             title="Baixar orçamento em PDF"
           >

@@ -22,10 +22,6 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-import logoBase64 from '@/assets/logo-4855f.png?base64'
-
-const _CHECK: number = logoBase64
-
 export default function Layout() {
   const { user, isAdmin, signOut } = useAuth()
   const location = useLocation()

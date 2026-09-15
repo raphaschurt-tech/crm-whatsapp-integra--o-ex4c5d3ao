@@ -27,7 +27,12 @@ import {
   cleanPhoneNumber,
   buildDetailedQuoteMessage,
 } from '@/lib/whatsapp'
-import { generateQuotePdfBase64, downloadQuotePdf } from '@/services/quotePdfService'
+import {
+  generateQuotePdfBase64,
+  generateQuotePdfBase64Async,
+  downloadQuotePdf,
+  downloadQuotePdfAsync,
+} from '@/services/quotePdfService'
 import { sendWhatsAppMessage, updateQuoteStatus } from '@/services/quotes'
 import { toast } from '@/hooks/use-toast'
 
@@ -85,9 +90,9 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
     fallbackWaMe?: boolean
   } | null>(null)
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
     try {
-      downloadQuotePdf({
+      await downloadQuotePdfAsync({
         quote,
         items,
         customer: resolvedCustomer,
@@ -98,11 +103,20 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
       })
     } catch (err: any) {
       console.error('Erro ao gerar PDF para download:', err)
-      toast({
-        title: 'Erro ao gerar PDF',
-        description: err.message || 'Falha ao processar arquivo.',
-        variant: 'destructive',
-      })
+      // Fallback síncrono
+      try {
+        downloadQuotePdf({
+          quote,
+          items,
+          customer: resolvedCustomer,
+        })
+      } catch (syncErr: any) {
+        toast({
+          title: 'Erro ao gerar PDF',
+          description: syncErr.message || 'Falha ao processar arquivo.',
+          variant: 'destructive',
+        })
+      }
     }
   }
 
@@ -123,13 +137,22 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
       let docBase64: string | undefined
       if (includePdf) {
         try {
-          docBase64 = generateQuotePdfBase64({
+          docBase64 = await generateQuotePdfBase64Async({
             quote,
             items,
             customer: resolvedCustomer,
           })
         } catch (pdfErr) {
-          console.warn('Erro ao gerar PDF em base64:', pdfErr)
+          console.warn('Erro ao gerar PDF assíncrono com logo, tentando síncrono:', pdfErr)
+          try {
+            docBase64 = generateQuotePdfBase64({
+              quote,
+              items,
+              customer: resolvedCustomer,
+            })
+          } catch (syncErr) {
+            console.warn('Erro ao gerar PDF em base64:', syncErr)
+          }
         }
       }
 
