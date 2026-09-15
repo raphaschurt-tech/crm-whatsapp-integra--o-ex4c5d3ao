@@ -57,11 +57,7 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
   const defaultPhone = resolvedCustomer?.phone || ''
   const [targetPhone, setTargetPhone] = useState(defaultPhone)
 
-  // Montar mensagem prévia
-  const paymentLink = quote.payment_token
-    ? `${window.location.origin}/pagamento/${quote.id}?token=${quote.payment_token}`
-    : undefined
-
+  // Montar mensagem prévia (sem link de pagamento, conforme solicitação do cliente)
   const itemsListForMsg = items.map((it) => ({
     name: it.expand?.product?.name || it.product || 'Item',
     quantity: it.quantity,
@@ -76,7 +72,6 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
     quote.subtotal || quote.total,
     quote.discount || 0,
     quote.total,
-    paymentLink,
   )
 
   const [messageText, setMessageText] = useState(defaultMessage)

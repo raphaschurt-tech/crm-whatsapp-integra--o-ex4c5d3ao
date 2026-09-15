@@ -31,6 +31,7 @@ import {
   buildReceiptMessage,
 } from '@/lib/whatsapp'
 import { SendQuoteDialog } from '@/components/Quotes/SendQuoteDialog'
+import { SendPaymentLinkDialog } from '@/components/Quotes/SendPaymentLinkDialog'
 import { downloadQuotePdf, downloadQuotePdfAsync } from '@/services/quotePdfService'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -68,6 +69,7 @@ export default function QuoteDetail() {
 
   // Send Quote Dialog
   const [sendQuoteModal, setSendQuoteModal] = useState(false)
+  const [sendPaymentLinkModal, setSendPaymentLinkModal] = useState(false)
 
   // Purchase creation state
   const [creatingPurchaseFor, setCreatingPurchaseFor] = useState<string | null>(null)
@@ -404,13 +406,14 @@ export default function QuoteDetail() {
             <Edit className="h-4 w-4 mr-1" /> Editar
           </Button>
 
-          {(quote.status === 'enviado' || quote.status === 'aprovado') && (
+          {Boolean(quote.payment_token) && (
             <Button
               variant="outline"
-              onClick={handleSendWhatsAppPaymentLink}
-              className="text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+              onClick={() => setSendPaymentLinkModal(true)}
+              className="text-xs border-emerald-400 text-emerald-800 bg-emerald-50/50 hover:bg-emerald-100/70 font-semibold shadow-2xs"
+              title="Enviar link de pagamento seguro separadamente via WhatsApp"
             >
-              <Share2 className="h-4 w-4 mr-1" /> Link Pagamento
+              <Share2 className="h-4 w-4 mr-1 text-emerald-600" /> Enviar link de pagamento
             </Button>
           )}
 
@@ -641,6 +644,13 @@ export default function QuoteDetail() {
                 )}
                 {copied ? 'Copiado!' : 'Copiar Link'}
               </Button>
+              <Button
+                size="sm"
+                onClick={() => setSendPaymentLinkModal(true)}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs"
+              >
+                <Share2 className="h-3.5 w-3.5 mr-1.5" /> Enviar link de pagamento
+              </Button>
             </CardContent>
           </Card>
         </div>
@@ -691,6 +701,16 @@ export default function QuoteDetail() {
             setQuote((prev) => (prev ? { ...prev, status: 'enviado' } : null))
             loadData()
           }}
+        />
+      )}
+
+      {/* Modal de Enviar Link de Pagamento Separado ao Cliente */}
+      {quote && (
+        <SendPaymentLinkDialog
+          isOpen={sendPaymentLinkModal}
+          onClose={() => setSendPaymentLinkModal(false)}
+          quote={quote}
+          customer={quote.expand?.customer}
         />
       )}
 

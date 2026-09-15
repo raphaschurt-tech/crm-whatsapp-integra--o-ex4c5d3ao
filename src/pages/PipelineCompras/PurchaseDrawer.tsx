@@ -26,13 +26,14 @@ import {
 import { formatCurrency } from '@/lib/whatsapp'
 import { getQuote, getQuoteItems } from '@/services/quotes'
 import { SendQuoteDialog } from '@/components/Quotes/SendQuoteDialog'
+import { SendPaymentLinkDialog } from '@/components/Quotes/SendPaymentLinkDialog'
 import { Quote, QuoteItem } from '@/types/crm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Link } from 'react-router-dom'
 import { toast } from '@/hooks/use-toast'
-import { FileText, RefreshCw, CheckCircle2, AlertCircle, Send } from 'lucide-react'
+import { FileText, RefreshCw, CheckCircle2, AlertCircle, Send, Share2 } from 'lucide-react'
 
 interface PurchaseDrawerProps {
   card: PurchaseRequest | null
@@ -82,9 +83,11 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
   // Enviar orçamento ao cliente a partir do drawer da compra
   const [isSendQuoteOpen, setIsSendQuoteOpen] = useState(false)
+  const [isSendPaymentLinkOpen, setIsSendPaymentLinkOpen] = useState(false)
   const [loadedQuote, setLoadedQuote] = useState<Quote | null>(null)
   const [loadedQuoteItems, setLoadedQuoteItems] = useState<QuoteItem[]>([])
   const [isLoadingQuoteData, setIsLoadingQuoteData] = useState(false)
+  const [isLoadingPaymentLinkQuote, setIsLoadingPaymentLinkQuote] = useState(false)
 
   const formatPercentDisplay = (val: number): string => {
     const rounded = Math.round(val * 100) / 100
@@ -313,6 +316,25 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
       })
     } finally {
       setIsLoadingQuoteData(false)
+    }
+  }
+
+  const handleOpenSendPaymentLink = async () => {
+    if (!linkedQuoteId) return
+    setIsLoadingPaymentLinkQuote(true)
+    try {
+      const q = await getQuote(linkedQuoteId)
+      setLoadedQuote(q)
+      setIsSendPaymentLinkOpen(true)
+    } catch (err: any) {
+      console.error('Erro ao carregar orçamento para enviar link de pagamento:', err)
+      toast({
+        title: 'Erro ao carregar orçamento',
+        description: err.message || 'Não foi possível carregar o orçamento vinculado.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsLoadingPaymentLinkQuote(false)
     }
   }
 
@@ -549,12 +571,24 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                     <Button
                       type="button"
                       onClick={handleOpenSendQuote}
-                      disabled={isLoadingQuoteData}
+                      disabled={isLoadingQuoteData || isLoadingPaymentLinkQuote}
                       className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs"
                       title="Enviar orçamento formatado e PDF para o cliente via WhatsApp"
                     >
                       <Send className="h-3.5 w-3.5 mr-1" />
-                      {isLoadingQuoteData ? 'Carregando...' : 'ENVIAR ORÇAMENTO AO CLIENTE'}
+                      {isLoadingQuoteData ? 'Carregando...' : 'ENVIAR ORÇAMENTO'}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleOpenSendPaymentLink}
+                      disabled={isLoadingQuoteData || isLoadingPaymentLinkQuote}
+                      className="bg-white border-emerald-300 text-emerald-800 hover:bg-emerald-50 font-bold text-xs shadow-2xs"
+                      title="Enviar link de pagamento seguro separadamente para o cliente"
+                    >
+                      <Share2 className="h-3.5 w-3.5 mr-1 text-emerald-600" />
+                      {isLoadingPaymentLinkQuote ? 'Carregando...' : 'ENVIAR LINK DE PAGAMENTO'}
                     </Button>
 
                     <Link
@@ -1067,6 +1101,16 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
               description: 'Status atualizado para enviado.',
             })
           }}
+        />
+      )}
+
+      {/* Modal de Envio de Link de Pagamento Separado */}
+      {isSendPaymentLinkOpen && loadedQuote && (
+        <SendPaymentLinkDialog
+          isOpen={isSendPaymentLinkOpen}
+          onClose={() => setIsSendPaymentLinkOpen(false)}
+          quote={loadedQuote}
+          customer={selectedCustomer || loadedQuote.expand?.customer}
         />
       )}
     </div>
