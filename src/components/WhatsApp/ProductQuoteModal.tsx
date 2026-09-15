@@ -19,6 +19,8 @@ import {
 import { Product, Customer } from '@/types/crm'
 import { getProducts } from '@/services/products'
 import { createQuoteWithItems, sendWhatsAppMessage, sendQuoteEmail } from '@/services/quotes'
+import { createPurchaseFromQuoteItems } from '@/services/purchaseRequestsService'
+import { ShoppingBag } from 'lucide-react'
 import { lookupStock } from '@/services/stock'
 import { formatCurrency, buildDetailedQuoteMessage, openWhatsApp } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/button'
@@ -82,6 +84,7 @@ export function ProductQuoteModal({
   const [linkModalOpen, setLinkModalOpen] = useState(false)
   const [generatingLink, setGeneratingLink] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
+  const [creatingPurchase, setCreatingPurchase] = useState(false)
 
   // Carregar produtos quando o modal abre
   useEffect(() => {
@@ -239,6 +242,72 @@ export function ProductQuoteModal({
         description: 'Não foi possível obter dados ao vivo da API.',
         variant: 'destructive',
       })
+    }
+  }
+
+  // Criar card de compra no Pipeline de Compras para itens sem estoque selecionados
+  const handleCreatePurchaseForOutOfStock = async () => {
+    const missing = selectedItems.filter(
+      (it) => it.product.stock_quantity <= 0 || it.product.stock_quantity < it.quantity,
+    )
+    if (missing.length === 0) {
+      toast({
+        title: 'Estoque disponível',
+        description: 'Todos os itens selecionados possuem estoque suficiente.',
+      })
+      return
+    }
+
+    if (!customer.id) {
+      toast({
+        title: 'Cliente necessário',
+        description: 'Vincule o cliente antes de criar compra.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setCreatingPurchase(true)
+    try {
+      // 1. Salva o orçamento primeiro para vincular
+      const savedQuote = await persistQuoteRecord('rascunho')
+
+      // 2. Cria a solicitação no Pipeline de Compras vinculando quote e customer
+      const itemsPayload = missing.map((it) => ({
+        part_name: it.product.name,
+        vehicle: '',
+        quantity: it.quantity,
+        unit_price: it.unitPrice,
+        cost_price: it.product.cost,
+      }))
+
+      const res = await createPurchaseFromQuoteItems({
+        quoteId: savedQuote.id,
+        customerId: customer.id,
+        items: itemsPayload,
+        notes: `Itens sem estoque cotados para ${customer.name}`,
+      })
+
+      if (res.isExisting) {
+        toast({
+          title: 'Compra já existente',
+          description: `Já existe um card de compra vinculado a este orçamento.`,
+        })
+      } else {
+        toast({
+          title: 'Card no Pipeline de Compras criado!',
+          description: `${itemsPayload.length} item(ns) sem estoque enviados para cotação no Pipeline de Compras.`,
+        })
+      }
+    } catch (err: any) {
+      console.error('Erro ao gerar compra para itens sem estoque:', err)
+      toast({
+        title: 'Erro ao gerar compra',
+        description: err.message || 'Falha ao processar solicitação de compras.',
+        variant: 'destructive',
+      })
+    } finally {
+      setCreatingPurchase(false)
     }
   }
 
@@ -682,14 +751,33 @@ export function ProductQuoteModal({
                   </p>
                 </div>
                 {selectedItems.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleClearItems}
-                    className="h-7 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-2"
-                  >
-                    Limpar tudo
-                  </Button>
+                  <div className="flex items-center gap-1.5">
+                    {selectedItems.some(
+                      (it) =>
+                        it.product.stock_quantity <= 0 || it.product.stock_quantity < it.quantity,
+                    ) && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={creatingPurchase}
+                        onClick={handleCreatePurchaseForOutOfStock}
+                        className="h-7 text-[11px] border-amber-300 text-amber-900 hover:bg-amber-50 px-2"
+                        title="Criar card no Pipeline de Compras para itens sem estoque"
+                      >
+                        <ShoppingBag className="w-3 h-3 mr-1 text-amber-700" />
+                        {creatingPurchase ? 'Criando...' : 'Comprar itens sem estoque'}
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleClearItems}
+                      className="h-7 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-2"
+                    >
+                      Limpar tudo
+                    </Button>
+                  </div>
                 )}
               </div>
 

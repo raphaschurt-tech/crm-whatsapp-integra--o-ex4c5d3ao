@@ -192,16 +192,27 @@ export const deleteQuote = (id: string) => pb.collection('quotes').delete(id)
 export const sendWhatsAppMessage = async (
   phone: string,
   message: string,
+  documentOptions?: {
+    document?: string // data:application/pdf;base64,... ou URL
+    fileName?: string
+  },
 ): Promise<{
   ok: boolean
   zapiSuccess: boolean
   zapiHttpStatus?: number
   zapiError?: string | null
+  docSent?: boolean
+  docError?: string | null
   messageId?: string
 }> => {
   return await pb.send('/backend/v1/whatsapp/send-message', {
     method: 'POST',
-    body: { phone, message },
+    body: {
+      phone,
+      message,
+      ...(documentOptions?.document ? { document: documentOptions.document } : {}),
+      ...(documentOptions?.fileName ? { fileName: documentOptions.fileName } : {}),
+    },
   })
 }
 

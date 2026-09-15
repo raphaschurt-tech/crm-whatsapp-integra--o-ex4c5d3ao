@@ -24,12 +24,15 @@ import {
   generateOrUpdateQuoteFromPurchase,
 } from '@/services/purchaseRequestsService'
 import { formatCurrency } from '@/lib/whatsapp'
+import { getQuote, getQuoteItems } from '@/services/quotes'
+import { SendQuoteDialog } from '@/components/Quotes/SendQuoteDialog'
+import { Quote, QuoteItem } from '@/types/crm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Link } from 'react-router-dom'
 import { toast } from '@/hooks/use-toast'
-import { FileText, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react'
+import { FileText, RefreshCw, CheckCircle2, AlertCircle, Send } from 'lucide-react'
 
 interface PurchaseDrawerProps {
   card: PurchaseRequest | null
@@ -76,6 +79,12 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   const [notes, setNotes] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [isGeneratingQuote, setIsGeneratingQuote] = useState(false)
+
+  // Enviar orçamento ao cliente a partir do drawer da compra
+  const [isSendQuoteOpen, setIsSendQuoteOpen] = useState(false)
+  const [loadedQuote, setLoadedQuote] = useState<Quote | null>(null)
+  const [loadedQuoteItems, setLoadedQuoteItems] = useState<QuoteItem[]>([])
+  const [isLoadingQuoteData, setIsLoadingQuoteData] = useState(false)
 
   const formatPercentDisplay = (val: number): string => {
     const rounded = Math.round(val * 100) / 100
@@ -285,6 +294,27 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   const linkedQuoteId = card.quote || (card.expand?.quote?.id as string | undefined)
   const linkedQuoteNumber = card.expand?.quote?.number
   const hasLinkedQuote = Boolean(linkedQuoteId)
+
+  const handleOpenSendQuote = async () => {
+    if (!linkedQuoteId) return
+    setIsLoadingQuoteData(true)
+    try {
+      const q = await getQuote(linkedQuoteId)
+      const qItems = await getQuoteItems(linkedQuoteId)
+      setLoadedQuote(q)
+      setLoadedQuoteItems(qItems)
+      setIsSendQuoteOpen(true)
+    } catch (err: any) {
+      console.error('Erro ao carregar orçamento vinculado para envio:', err)
+      toast({
+        title: 'Erro ao abrir envio',
+        description: err.message || 'Não foi possível carregar os dados do orçamento.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsLoadingQuoteData(false)
+    }
+  }
 
   const handleGenerateQuoteClick = async () => {
     if (!card) return
@@ -513,16 +543,29 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
                 {hasLinkedQuote && linkedQuoteId && (
-                  <Link
-                    to={`/orcamentos/${linkedQuoteId}`}
-                    target="_blank"
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50 hover:text-emerald-900 shadow-2xs transition-colors"
-                  >
-                    <span>Abrir Orçamento</span>
-                    <ExternalLink className="h-3 w-3 ml-0.5" />
-                  </Link>
+                  <>
+                    <Button
+                      type="button"
+                      onClick={handleOpenSendQuote}
+                      disabled={isLoadingQuoteData}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs"
+                      title="Enviar orçamento formatado e PDF para o cliente via WhatsApp"
+                    >
+                      <Send className="h-3.5 w-3.5 mr-1" />
+                      {isLoadingQuoteData ? 'Carregando...' : 'ENVIAR ORÇAMENTO AO CLIENTE'}
+                    </Button>
+
+                    <Link
+                      to={`/orcamentos/${linkedQuoteId}`}
+                      target="_blank"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50 hover:text-emerald-900 shadow-2xs transition-colors"
+                    >
+                      <span>Abrir</span>
+                      <ExternalLink className="h-3 w-3 ml-0.5" />
+                    </Link>
+                  </>
                 )}
 
                 <Button
@@ -1009,6 +1052,23 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
           </div>
         </form>
       </div>
+
+      {/* Modal de Envio do Orçamento Vinculado ao Cliente */}
+      {isSendQuoteOpen && loadedQuote && (
+        <SendQuoteDialog
+          isOpen={isSendQuoteOpen}
+          onClose={() => setIsSendQuoteOpen(false)}
+          quote={loadedQuote}
+          items={loadedQuoteItems}
+          customer={selectedCustomer || loadedQuote.expand?.customer}
+          onSuccess={() => {
+            toast({
+              title: 'Orçamento enviado',
+              description: 'Status atualizado para enviado.',
+            })
+          }}
+        />
+      )}
     </div>
   )
 }

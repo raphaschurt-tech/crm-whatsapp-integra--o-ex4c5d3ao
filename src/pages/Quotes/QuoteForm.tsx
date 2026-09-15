@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Plus, Trash2, AlertCircle, Save, MessageCircle, RefreshCw } from 'lucide-react'
+import { Plus, Trash2, AlertCircle, Save, MessageCircle, RefreshCw, Send } from 'lucide-react'
 import { getCustomers, createCustomer } from '@/services/customers'
 import { getProducts } from '@/services/products'
 import {
@@ -10,8 +10,9 @@ import {
   updateQuoteWithItems,
 } from '@/services/quotes'
 import { lookupStock } from '@/services/stock'
-import { Customer, Product } from '@/types/crm'
-import { formatCurrency, openWhatsApp, buildQuoteMessage } from '@/lib/whatsapp'
+import { Customer, Product, Quote, QuoteItem } from '@/types/crm'
+import { formatCurrency } from '@/lib/whatsapp'
+import { SendQuoteDialog } from '@/components/Quotes/SendQuoteDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -58,6 +59,12 @@ export default function QuoteForm() {
   const [newCustomerModal, setNewCustomerModal] = useState(false)
   const [newCustName, setNewCustomerName] = useState('')
   const [newCustPhone, setNewCustomerPhone] = useState('')
+
+  // Modal de envio pós-salvamento
+  const [sendDialogQuote, setSendDialogQuote] = useState<{
+    quote: Quote
+    items: QuoteItem[]
+  } | null>(null)
 
   const isEditing = Boolean(id)
 
@@ -234,10 +241,28 @@ export default function QuoteForm() {
 
       if (andSendWhatsApp) {
         const cust = customers.find((c) => c.id === selectedCustomer)
-        const origin = window.location.origin
-        const link = `${origin}/pagamento/${savedQuote.id}?token=${savedQuote.payment_token}`
-        const msg = buildQuoteMessage(savedQuote.number, cust?.name || 'Cliente', total, link)
-        openWhatsApp(cust?.phone || '', msg)
+        const simulatedItems: QuoteItem[] = validItems.map((it, idx) => {
+          const prodObj = products.find((p) => p.id === it.product)
+          return {
+            id: `temp_${idx}`,
+            collectionId: 'quote_items',
+            collectionName: 'quote_items',
+            quote: savedQuote.id,
+            product: it.product,
+            quantity: it.quantity,
+            unit_price: it.unit_price,
+            total: it.total,
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+            expand: { product: prodObj },
+          } as unknown as QuoteItem
+        })
+
+        setSendDialogQuote({
+          quote: { ...savedQuote, expand: { customer: cust } },
+          items: simulatedItems,
+        })
+        return
       }
 
       navigate(`/orcamentos/${savedQuote.id}`)
@@ -371,7 +396,6 @@ export default function QuoteForm() {
                       </Button>
                     </div>
                   </div>
-
                   {selectedProd && (
                     <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
                       <span className="flex items-center gap-1.5">
@@ -379,23 +403,41 @@ export default function QuoteForm() {
                         <strong className="text-slate-800">
                           {selectedProd.stock_quantity} un.
                         </strong>
-                        {lowStock && (
+                        {selectedProd.stock_quantity <= 0 && (
+                          <span className="text-rose-600 font-bold bg-rose-50 px-1.5 py-0.5 rounded flex items-center gap-1">
+                            <AlertCircle className="h-3.5 w-3.5" /> Sem estoque
+                          </span>
+                        )}
+                        {selectedProd.stock_quantity > 0 &&
+                          selectedProd.stock_quantity < item.quantity && (
+                            <span className="text-amber-700 font-semibold bg-amber-50 px-1.5 py-0.5 rounded flex items-center gap-1">
+                              <AlertCircle className="h-3.5 w-3.5" /> Insuficiente para pedido
+                            </span>
+                          )}
+                        {lowStock && selectedProd.stock_quantity >= item.quantity && (
                           <span className="text-amber-600 font-semibold flex items-center gap-0.5">
                             <AlertCircle className="h-3.5 w-3.5" /> Estoque baixo
                           </span>
                         )}
                       </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleCheckStockInline(selectedProd.id)}
-                        className="h-6 text-[11px] text-emerald-600 hover:bg-emerald-50 px-2"
-                      >
-                        <RefreshCw className="h-3 w-3 mr-1" /> Consultar API
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        {selectedProd.stock_quantity < item.quantity && (
+                          <span className="text-[11px] text-amber-700 italic">
+                            Card no Pipeline de Compras poderá ser gerado após salvar
+                          </span>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleCheckStockInline(selectedProd.id)}
+                          className="h-6 text-[11px] text-emerald-600 hover:bg-emerald-50 px-2"
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" /> Consultar API
+                        </Button>
+                      </div>
                     </div>
-                  )}
+                  )}{' '}
                 </div>
               )
             })}
@@ -459,6 +501,26 @@ export default function QuoteForm() {
           </Button>
         </div>
       </div>
+
+      {/* Diálogo de Envio pós-salvamento */}
+      {sendDialogQuote && (
+        <SendQuoteDialog
+          isOpen={Boolean(sendDialogQuote)}
+          onClose={() => {
+            const qId = sendDialogQuote.quote.id
+            setSendDialogQuote(null)
+            navigate(`/orcamentos/${qId}`)
+          }}
+          quote={sendDialogQuote.quote}
+          items={sendDialogQuote.items}
+          customer={customers.find((c) => c.id === selectedCustomer)}
+          onSuccess={() => {
+            const qId = sendDialogQuote.quote.id
+            setSendDialogQuote(null)
+            navigate(`/orcamentos/${qId}`)
+          }}
+        />
+      )}
 
       <Dialog open={newCustomerModal} onOpenChange={setNewCustomerModal}>
         <DialogContent>

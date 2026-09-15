@@ -287,6 +287,21 @@ export const getPurchaseRequest = (id: string) =>
     expand: 'customer,supplier,created_by,quote',
   })
 
+/**
+ * Busca compra existente vinculada a um orçamento específico (para verificar se já foi criada)
+ */
+export const getPurchaseRequestsForQuote = async (quoteId: string): Promise<PurchaseRequest[]> => {
+  try {
+    return await pb.collection<PurchaseRequest>('purchase_requests').getFullList({
+      filter: `quote = "${quoteId}"`,
+      sort: '-created',
+    })
+  } catch (err) {
+    console.warn('Erro ao verificar compras do orçamento:', err)
+    return []
+  }
+}
+
 export const createPurchaseRequest = async (
   data: Partial<PurchaseRequest>,
 ): Promise<PurchaseRequest> => {
@@ -573,5 +588,102 @@ export const generateOrUpdateQuoteFromPurchase = async (
     quote: finalQuote,
     purchase: updatedPurchase,
     isUpdate,
+  }
+}
+
+export interface MissingStockItemInput {
+  part_name: string
+  vehicle?: string
+  quantity: number
+  unit_price?: number
+  cost_price?: number
+}
+
+/**
+ * Cria um card no Pipeline de Compras a partir de um orçamento (FLUXO INVERSO):
+ * - Vincula à purchase_request o cliente e o orçamento (campos quote e purchase_request)
+ * - Pré-preenche os itens com nome da peça, veículo e quantidade
+ * - Garante vínculo bidirecional
+ * - Se já houver compra vinculada, não duplica e retorna a existente
+ */
+export const createPurchaseFromQuoteItems = async (params: {
+  quoteId: string
+  customerId: string
+  items: MissingStockItemInput[]
+  notes?: string
+}): Promise<{ purchase: PurchaseRequest; isExisting: boolean }> => {
+  const { quoteId, customerId, items, notes } = params
+  if (!items || items.length === 0) {
+    throw new Error('Nenhum item informado para gerar a compra.')
+  }
+
+  // 1. Verificar se este orçamento já possui compra vinculada
+  const existingPurchases = await getPurchaseRequestsForQuote(quoteId)
+  if (existingPurchases.length > 0) {
+    return {
+      purchase: existingPurchases[0],
+      isExisting: true,
+    }
+  }
+
+  // Também verificar se o próprio registro do quote já possui purchase_request associada
+  try {
+    const qRec = await pb.collection('quotes').getOne(quoteId)
+    if (qRec && qRec.purchase_request) {
+      const existingPr = await getPurchaseRequest(qRec.purchase_request)
+      if (existingPr) {
+        return {
+          purchase: existingPr,
+          isExisting: true,
+        }
+      }
+    }
+  } catch {
+    /* intentionally ignored */
+  }
+
+  // 2. Normalizar itens para o padrão PurchaseItem
+  const purchaseItems: PurchaseItem[] = items.map((it) => ({
+    part_name: it.part_name.trim(),
+    vehicle: (it.vehicle || '').trim(),
+    quantity: Math.max(1, Number(it.quantity) || 1),
+    sell_price: it.unit_price && it.unit_price > 0 ? it.unit_price : undefined,
+    cost_price: it.cost_price && it.cost_price > 0 ? it.cost_price : undefined,
+  }))
+
+  const first = purchaseItems[0]
+  const createdBy = pb.authStore.record?.id
+
+  // 3. Criar a purchase_request vinculada ao cliente e ao orçamento
+  const newPurchase = await pb.collection<PurchaseRequest>('purchase_requests').create(
+    {
+      part_name: first.part_name,
+      vehicle: first.vehicle,
+      quantity: first.quantity,
+      items: purchaseItems,
+      customer: customerId,
+      quote: quoteId,
+      status: 'solicitada',
+      created_by: createdBy,
+      notes: notes || `Solicitação gerada automaticamente a partir do Orçamento`,
+      is_completed: false,
+    },
+    {
+      expand: 'customer,supplier,created_by,quote',
+    },
+  )
+
+  // 4. Gravar vínculo bidirecional no quote
+  try {
+    await pb.collection('quotes').update(quoteId, {
+      purchase_request: newPurchase.id,
+    })
+  } catch (err) {
+    console.warn('Erro ao atualizar vínculo no orçamento:', err)
+  }
+
+  return {
+    purchase: newPurchase,
+    isExisting: false,
   }
 }

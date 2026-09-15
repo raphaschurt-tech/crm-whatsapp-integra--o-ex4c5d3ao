@@ -117,7 +117,58 @@ routerAdd(
       zapiErrorDetail = configError || 'Credenciais Z-API não configuradas'
     }
 
-    // 2. Gravar no webhook_received com fromMe=true para que apareça de imediato no histórico do chat
+    // 2. Enviar documento PDF opcional se fornecido (em base64 ou link)
+    const documentBase64 = String(rawBody.document || '').trim()
+    const documentFileName = String(rawBody.fileName || 'orcamento.pdf').trim()
+    let zapiDocSuccess = false
+    let zapiDocErrorDetail = ''
+
+    if (documentBase64 && validConfigRec && !configError) {
+      const zapiInstance = String(validConfigRec.get('zapi_instance_id') || '')
+      const zapiToken = String(validConfigRec.get('zapi_token') || '')
+      const zapiClientToken = String(validConfigRec.get('zapi_client_token') || '')
+
+      const zapiHeaders = {
+        'Content-Type': 'application/json',
+        'Client-Token': zapiClientToken,
+      }
+
+      try {
+        const zapiDocUrl =
+          'https://api.z-api.io/instances/' +
+          encodeURIComponent(zapiInstance) +
+          '/token/' +
+          encodeURIComponent(zapiToken) +
+          '/send-document/pdf'
+
+        const docRes = $http.send({
+          url: zapiDocUrl,
+          method: 'POST',
+          headers: zapiHeaders,
+          body: JSON.stringify({
+            phone: cleanPhone,
+            document: documentBase64,
+            fileName: documentFileName,
+          }),
+          timeout: 20,
+        })
+
+        if (docRes.statusCode >= 200 && docRes.statusCode < 300) {
+          zapiDocSuccess = true
+        } else {
+          const docRespData = docRes.json || docRes.body || {}
+          zapiDocErrorDetail =
+            'Z-API doc status ' +
+            docRes.statusCode +
+            ': ' +
+            (docRespData.message || docRespData.error || String(docRes.body || ''))
+        }
+      } catch (docErr) {
+        zapiDocErrorDetail = docErr.message || String(docErr)
+      }
+    }
+
+    // 3. Gravar no webhook_received com fromMe=true para que apareça de imediato no histórico do chat
     const messageId = 'agent_' + Date.now() + '_' + $security.randomString(6)
     try {
       const colWebhook = $app.findCollectionByNameOrId('webhook_received')
@@ -144,7 +195,9 @@ routerAdd(
         phone: maskedPhone,
         zapiSuccess: zapiSuccess,
         zapiHttpStatus: zapiHttpStatus,
+        docSent: zapiDocSuccess,
         error: zapiErrorDetail || null,
+        docError: zapiDocErrorDetail || null,
       }),
     )
 
@@ -153,6 +206,8 @@ routerAdd(
       zapiSuccess: zapiSuccess,
       zapiHttpStatus: zapiHttpStatus,
       zapiError: zapiSuccess ? null : zapiErrorDetail,
+      docSent: zapiDocSuccess,
+      docError: zapiDocErrorDetail || null,
       messageId: messageId,
       phone: cleanPhone,
     })

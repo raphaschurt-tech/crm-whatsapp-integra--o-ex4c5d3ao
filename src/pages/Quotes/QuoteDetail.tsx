@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  MessageCircle,
   Copy,
   Check,
   CheckCircle,
@@ -12,17 +11,28 @@ import {
   FileCheck,
   ArrowLeft,
   Share2,
+  ShoppingBag,
+  Download,
+  Send,
+  AlertTriangle,
+  ArrowUpRight,
 } from 'lucide-react'
 import { getQuote, getQuoteItems, updateQuoteStatus, deleteQuote } from '@/services/quotes'
 import { getPaymentsForQuote, createPayment } from '@/services/payments'
-import { Quote, QuoteItem, Payment } from '@/types/crm'
+import {
+  getPurchaseRequestsForQuote,
+  createPurchaseFromQuoteItems,
+} from '@/services/purchaseRequestsService'
+import { Quote, QuoteItem, Payment, PurchaseRequest } from '@/types/crm'
 import {
   formatCurrency,
   openWhatsApp,
-  buildQuoteMessage,
   buildPaymentLinkMessage,
   buildReceiptMessage,
 } from '@/lib/whatsapp'
+import { SendQuoteDialog } from '@/components/Quotes/SendQuoteDialog'
+import { downloadQuotePdf } from '@/services/quotePdfService'
+import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -51,9 +61,16 @@ export default function QuoteDetail() {
   const [quote, setQuote] = useState<Quote | null>(null)
   const [items, setItems] = useState<QuoteItem[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
+  const [linkedPurchases, setLinkedPurchases] = useState<PurchaseRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+
+  // Send Quote Dialog
+  const [sendQuoteModal, setSendQuoteModal] = useState(false)
+
+  // Purchase creation state
+  const [creatingPurchaseFor, setCreatingPurchaseFor] = useState<string | null>(null)
 
   // Receipt Modal State
   const [receiptModal, setReceiptModal] = useState(false)
@@ -74,6 +91,9 @@ export default function QuoteDetail() {
       const pList = await getPaymentsForQuote(id)
       setPayments(pList)
       setAmount(q.total.toString())
+
+      const purchases = await getPurchaseRequestsForQuote(id)
+      setLinkedPurchases(purchases)
     } catch (e: any) {
       console.error(e)
       setLoadError(e?.message || 'Falha ao carregar orçamento.')
@@ -115,10 +135,135 @@ export default function QuoteDetail() {
   const handleStatusChange = async (newStatus: Quote['status']) => {
     try {
       await updateQuoteStatus(quote.id, newStatus)
-      setQuote((prev) => (prev ? { ...prev, status: newStatus } : null))
+      setQuote((prev) => (prev ? { ...prev, status: newStatus, expand: prev.expand } : null))
       toast({ title: `Status alterado para ${newStatus.toUpperCase()}` })
     } catch (_) {
       toast({ title: 'Erro ao atualizar status', variant: 'destructive' })
+    }
+  }
+
+  // Verifica se um item específico já possui compra vinculada
+  const isItemInLinkedPurchase = (item: QuoteItem) => {
+    if (linkedPurchases.length === 0) return false
+    const prodName = (item.expand?.product?.name || item.product || '').toLowerCase().trim()
+    return linkedPurchases.some((p) => {
+      if ((p.part_name || '').toLowerCase().trim() === prodName) return true
+      if (Array.isArray(p.items)) {
+        return p.items.some((pi) => (pi.part_name || '').toLowerCase().trim() === prodName)
+      }
+      return false
+    })
+  }
+
+  // Itens sem estoque disponível
+  const outOfStockItems = items.filter((it) => {
+    const stock = it.expand?.product?.stock_quantity
+    return stock === undefined || stock <= 0 || stock < it.quantity
+  })
+
+  // Criar compra para um item específico
+  const handleCreatePurchaseForItem = async (item: QuoteItem) => {
+    if (!quote) return
+    const prodName = item.expand?.product?.name || item.product || 'Peça'
+    const desc = item.expand?.product?.description || ''
+    // Tenta extrair veículo se houver na descrição "Peça avulsa para ..."
+    let vehicle = ''
+    if (desc.toLowerCase().includes('para ')) {
+      vehicle = desc.split(/para /i)[1]?.trim() || ''
+    }
+
+    setCreatingPurchaseFor(item.id)
+    try {
+      const res = await createPurchaseFromQuoteItems({
+        quoteId: quote.id,
+        customerId: quote.customer,
+        items: [
+          {
+            part_name: prodName,
+            vehicle: vehicle,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            cost_price: item.expand?.product?.cost,
+          },
+        ],
+        notes: `Solicitação gerada a partir do orçamento ${quote.number}`,
+      })
+
+      if (res.isExisting) {
+        toast({
+          title: 'Compra já existente',
+          description: `Este orçamento já possui a solicitação vinculada "${res.purchase.part_name}".`,
+        })
+      } else {
+        toast({
+          title: 'Card de compra criado!',
+          description: `Card para "${prodName}" adicionado ao Pipeline de Compras.`,
+        })
+      }
+      const updatedPurchases = await getPurchaseRequestsForQuote(quote.id)
+      setLinkedPurchases(updatedPurchases)
+    } catch (err: any) {
+      console.error('Erro ao criar card de compra para item:', err)
+      toast({
+        title: 'Erro ao criar compra',
+        description: err.message || 'Falha ao adicionar ao Pipeline de Compras.',
+        variant: 'destructive',
+      })
+    } finally {
+      setCreatingPurchaseFor(null)
+    }
+  }
+
+  // Criar compra para TODOS os itens sem estoque
+  const handleCreatePurchaseForAllMissing = async () => {
+    if (!quote || outOfStockItems.length === 0) return
+    setCreatingPurchaseFor('all')
+    try {
+      const itemsToCreate = outOfStockItems.map((it) => {
+        const prodName = it.expand?.product?.name || it.product || 'Peça'
+        const desc = it.expand?.product?.description || ''
+        let vehicle = ''
+        if (desc.toLowerCase().includes('para ')) {
+          vehicle = desc.split(/para /i)[1]?.trim() || ''
+        }
+        return {
+          part_name: prodName,
+          vehicle,
+          quantity: it.quantity,
+          unit_price: it.unit_price,
+          cost_price: it.expand?.product?.cost,
+        }
+      })
+
+      const res = await createPurchaseFromQuoteItems({
+        quoteId: quote.id,
+        customerId: quote.customer,
+        items: itemsToCreate,
+        notes: `Solicitação gerada para os itens sem estoque do orçamento ${quote.number}`,
+      })
+
+      if (res.isExisting) {
+        toast({
+          title: 'Compra já vinculada',
+          description: `Este orçamento já possui uma compra vinculada no pipeline.`,
+        })
+      } else {
+        toast({
+          title: 'Compra criada no Pipeline!',
+          description: `${itemsToCreate.length} item(ns) sem estoque adicionados ao Pipeline de Compras.`,
+        })
+      }
+      const updatedPurchases = await getPurchaseRequestsForQuote(quote.id)
+      setLinkedPurchases(updatedPurchases)
+    } catch (err: any) {
+      console.error('Erro ao criar compras:', err)
+      toast({
+        title: 'Erro ao criar compra',
+        description: err.message || 'Falha ao processar Pipeline de Compras.',
+        variant: 'destructive',
+      })
+    } finally {
+      setCreatingPurchaseFor(null)
     }
   }
 
@@ -131,17 +276,6 @@ export default function QuoteDetail() {
     } catch (_) {
       toast({ title: 'Erro ao excluir orçamento', variant: 'destructive' })
     }
-  }
-
-  const handleSendWhatsAppProposal = () => {
-    const phone = quote.expand?.customer?.phone || ''
-    const msg = buildQuoteMessage(
-      quote.number,
-      quote.expand?.customer?.name || 'Cliente',
-      quote.total,
-      paymentLink,
-    )
-    openWhatsApp(phone, msg)
   }
 
   const handleSendWhatsAppPaymentLink = () => {
@@ -200,61 +334,84 @@ export default function QuoteDetail() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold text-slate-900">{quote.number}</h1>
               {getStatusBadge(quote.status)}
+
+              {/* Seletor Manual de Status */}
+              <div className="flex items-center gap-1.5 ml-2">
+                <span className="text-xs text-slate-500 font-medium">Alterar status:</span>
+                <Select
+                  value={quote.status}
+                  onValueChange={(val: Quote['status']) => handleStatusChange(val)}
+                >
+                  <SelectTrigger className="h-7 text-xs font-semibold bg-white border-slate-300 w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rascunho">Rascunho</SelectItem>
+                    <SelectItem value="enviado">Enviado</SelectItem>
+                    <SelectItem value="aprovado">Aprovado</SelectItem>
+                    <SelectItem value="rejeitado">Rejeitado</SelectItem>
+                    <SelectItem value="pago">Pago</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-slate-500 mt-0.5">
               Criado em {new Date(quote.created).toLocaleDateString('pt-BR')}
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {quote.status === 'rascunho' && (
-            <>
-              <Button variant="outline" onClick={() => navigate(`/orcamentos/${quote.id}/editar`)}>
-                <Edit className="h-4 w-4 mr-1" /> Editar
-              </Button>
-              <Button
-                onClick={handleSendWhatsAppProposal}
-                className="bg-emerald-500 hover:bg-emerald-600 text-white"
-              >
-                <MessageCircle className="h-4 w-4 mr-1" /> Enviar
-              </Button>
-            </>
-          )}
+        <div className="flex flex-wrap gap-2 items-center">
+          {/* Botão Principal de Envio com Modal Completo (Texto + PDF) */}
+          <Button
+            onClick={() => setSendQuoteModal(true)}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs"
+          >
+            <Send className="h-4 w-4 mr-1.5" /> ENVIAR ORÇAMENTO AO CLIENTE
+          </Button>
 
-          {quote.status === 'enviado' && (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => handleStatusChange('aprovado')}
-                className="text-green-700 border-green-300"
-              >
-                <CheckCircle className="h-4 w-4 mr-1" /> Marcar Aprovado
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => handleStatusChange('rejeitado')}
-                className="text-red-700 border-red-300"
-              >
-                <XCircle className="h-4 w-4 mr-1" /> Rejeitar
-              </Button>
-            </>
-          )}
+          <Button
+            variant="outline"
+            onClick={() =>
+              downloadQuotePdf({
+                quote,
+                items,
+                customer: quote.expand?.customer,
+              })
+            }
+            className="text-xs text-slate-700 border-slate-300 hover:bg-slate-50"
+            title="Baixar orçamento em PDF"
+          >
+            <Download className="h-4 w-4 mr-1 text-emerald-600" /> Baixar PDF
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={() => navigate(`/orcamentos/${quote.id}/editar`)}
+            className="text-xs text-slate-700"
+          >
+            <Edit className="h-4 w-4 mr-1" /> Editar
+          </Button>
 
           {(quote.status === 'enviado' || quote.status === 'aprovado') && (
             <Button
+              variant="outline"
               onClick={handleSendWhatsAppPaymentLink}
-              className="bg-emerald-500 hover:bg-emerald-600 text-white"
+              className="text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50"
             >
-              <Share2 className="h-4 w-4 mr-1" /> Enviar Link Pagamento
+              <Share2 className="h-4 w-4 mr-1" /> Link Pagamento
             </Button>
           )}
 
           {quote.status !== 'pago' && (
-            <Button variant="outline" onClick={() => setReceiptModal(true)}>
+            <Button
+              variant="outline"
+              onClick={() => setReceiptModal(true)}
+              className="text-xs text-slate-700"
+            >
               <Upload className="h-4 w-4 mr-1" /> Registrar Pagamento
             </Button>
           )}
@@ -262,7 +419,7 @@ export default function QuoteDetail() {
           {quote.status === 'pago' && (
             <Button
               onClick={handleSendWhatsAppReceipt}
-              className="bg-emerald-500 hover:bg-emerald-600 text-white"
+              className="bg-emerald-500 hover:bg-emerald-600 text-white text-xs"
             >
               <FileCheck className="h-4 w-4 mr-1" /> Enviar Comprovante
             </Button>
@@ -272,12 +429,73 @@ export default function QuoteDetail() {
             variant="ghost"
             size="icon"
             onClick={handleDelete}
-            className="text-red-500 hover:text-red-700"
+            className="text-red-500 hover:text-red-700 ml-auto"
+            title="Excluir orçamento"
           >
-            <Trash2 className="h-5 w-5" />
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
       </div>
+
+      {/* Banner se houver Compras Vinculadas no Pipeline de Compras */}
+      {linkedPurchases.length > 0 && (
+        <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2">
+              <ShoppingBag className="h-4 w-4 text-amber-700" />
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-950">
+                Card no Pipeline de Compras Vinculado
+              </span>
+              <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] font-bold">
+                {linkedPurchases.length} card(s)
+              </Badge>
+            </div>
+            <p className="text-xs text-amber-900">
+              Itens deste orçamento foram enviados para cotação no Pipeline de Compras.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {linkedPurchases.map((lp) => (
+              <Link
+                key={lp.id}
+                to={`/pipeline-compras`}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-amber-300 text-amber-900 hover:bg-amber-100/50 shadow-2xs transition-colors"
+              >
+                <span>Ver Compra: {lp.part_name || 'Solicitação'}</span>
+                <ArrowUpRight className="h-3.5 w-3.5 text-amber-700" />
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Banner de Itens Sem Estoque com Ação de Compra Geral */}
+      {outOfStockItems.length > 0 && (
+        <div className="bg-rose-50/70 border border-rose-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-0.5">
+            <div className="flex items-center gap-2 text-rose-900 font-bold text-xs uppercase tracking-wide">
+              <AlertTriangle className="h-4 w-4 text-rose-600" />
+              <span>Itens Sem Estoque Disponível ({outOfStockItems.length})</span>
+            </div>
+            <p className="text-xs text-slate-600">
+              Existem itens neste orçamento com estoque zerado ou insuficiente. Você pode criar um
+              card de compra no Pipeline de Compras para cotar com fornecedores.
+            </p>
+          </div>
+
+          <Button
+            type="button"
+            onClick={handleCreatePurchaseForAllMissing}
+            disabled={creatingPurchaseFor === 'all'}
+            className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shrink-0 shadow-xs"
+          >
+            <ShoppingBag className="h-3.5 w-3.5 mr-1.5" />
+            {creatingPurchaseFor === 'all'
+              ? 'Criando compra...'
+              : 'Criar compras para itens sem estoque'}
+          </Button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="md:col-span-2 border-slate-200">
@@ -286,19 +504,83 @@ export default function QuoteDetail() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="divide-y divide-slate-100">
-              {items.map((item) => (
-                <div key={item.id} className="py-3 flex justify-between items-center">
-                  <div>
-                    <p className="font-semibold text-slate-800">
-                      {item.expand?.product?.name || 'Produto'}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      Qtd: {item.quantity} x {formatCurrency(item.unit_price)}
-                    </p>
+              {items.map((item) => {
+                const prodStock = item.expand?.product?.stock_quantity
+                const isOutOfStock = prodStock === undefined || prodStock <= 0
+                const isInsufficient = !isOutOfStock && (prodStock || 0) < item.quantity
+                const hasLinkedPurchase = isItemInLinkedPurchase(item)
+
+                return (
+                  <div
+                    key={item.id}
+                    className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-slate-800 text-sm">
+                          {item.expand?.product?.name || item.product || 'Produto'}
+                        </p>
+                        {item.expand?.product?.sku && (
+                          <span className="text-[10px] font-mono bg-slate-100 px-1.5 py-0.2 rounded text-slate-600">
+                            {item.expand.product.sku}
+                          </span>
+                        )}
+                        {/* Indicadores de estoque */}
+                        {isOutOfStock ? (
+                          <Badge className="bg-rose-100 text-rose-800 border-rose-200 text-[10px]">
+                            Sem estoque (0 un.)
+                          </Badge>
+                        ) : isInsufficient ? (
+                          <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-[10px]">
+                            Estoque insuficiente ({prodStock} un.)
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">
+                            Em estoque ({prodStock} un.)
+                          </Badge>
+                        )}
+
+                        {/* Badge se já tem compra criada */}
+                        {hasLinkedPurchase && (
+                          <Link
+                            to="/pipeline-compras"
+                            className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors"
+                          >
+                            <ShoppingBag className="h-3 w-3 text-amber-700" />
+                            Compra criada
+                          </Link>
+                        )}
+                      </div>
+
+                      <p className="text-xs text-slate-500">
+                        Qtd: <strong>{item.quantity}</strong> × {formatCurrency(item.unit_price)}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3 justify-between sm:justify-end">
+                      <span className="font-bold text-slate-900 text-sm">
+                        {formatCurrency(item.total)}
+                      </span>
+
+                      {/* Ação do Fluxo Inverso: Criar card de compra para este item se não estiver em estoque e ainda não tiver compra */}
+                      {(isOutOfStock || isInsufficient) && !hasLinkedPurchase && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={creatingPurchaseFor === item.id}
+                          onClick={() => handleCreatePurchaseForItem(item)}
+                          className="h-7 text-xs border-amber-300 text-amber-900 hover:bg-amber-50"
+                          title="Criar card no Pipeline de Compras para este item"
+                        >
+                          <ShoppingBag className="h-3 w-3 mr-1 text-amber-700" />
+                          {creatingPurchaseFor === item.id ? 'Criando...' : 'Comprar item'}
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                  <span className="font-bold text-slate-900">{formatCurrency(item.total)}</span>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             <div className="border-t pt-3 space-y-1.5 text-sm">
@@ -387,6 +669,21 @@ export default function QuoteDetail() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Modal de Enviar Orçamento ao Cliente (Texto Formatado + PDF) */}
+      {quote && (
+        <SendQuoteDialog
+          isOpen={sendQuoteModal}
+          onClose={() => setSendQuoteModal(false)}
+          quote={quote}
+          items={items}
+          customer={quote.expand?.customer}
+          onSuccess={() => {
+            setQuote((prev) => (prev ? { ...prev, status: 'enviado' } : null))
+            loadData()
+          }}
+        />
       )}
 
       <Dialog open={receiptModal} onOpenChange={setReceiptModal}>
