@@ -108,8 +108,10 @@ export type QuoteStatus = 'rascunho' | 'enviado' | 'aprovado' | 'rejeitado' | 'p
 export interface Quote extends RecordModel {
   number: string
   customer: string
+  purchase_request?: string
   expand?: {
     customer?: Customer
+    purchase_request?: PurchaseRequest
   }
   status: QuoteStatus
   subtotal: number
@@ -122,7 +124,7 @@ export interface Quote extends RecordModel {
 
 export interface QuoteItem extends RecordModel {
   quote: string
-  product: string
+  product?: string
   expand?: {
     product?: Product
   }
@@ -201,6 +203,7 @@ export interface PurchaseRequest extends RecordModel {
   os_number?: string
   customer: string
   supplier?: string
+  quote?: string
   status: PurchaseRequestStatus
   cost_price?: number
   sell_price?: number
@@ -213,6 +216,7 @@ export interface PurchaseRequest extends RecordModel {
     customer?: Customer
     supplier?: Customer
     created_by?: User
+    quote?: Quote
     [key: string]: any
   }
 }

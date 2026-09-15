@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-14T22:27:52.782Z",
+  "generatedAt": "2026-09-15T01:21:36.324Z",
   "collections": [
     {
       "name": "users",
@@ -384,13 +384,21 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "purchase_request",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "purchase_requests"
         }
       ],
       "indexes": [
         "CREATE UNIQUE INDEX idx_quotes_number ON quotes (number)",
         "CREATE INDEX idx_quotes_customer ON quotes (customer)",
         "CREATE INDEX idx_quotes_status ON quotes (status)",
-        "CREATE INDEX idx_quotes_created ON quotes (created DESC)"
+        "CREATE INDEX idx_quotes_created ON quotes (created DESC)",
+        "CREATE INDEX `idx_quotes_purchase_request` ON `quotes` (purchase_request)"
       ]
     },
     {
@@ -414,7 +422,7 @@
         {
           "name": "product",
           "type": "relation",
-          "required": true,
+          "required": false,
           "system": false,
           "collectionRef": "products"
         },
@@ -1229,13 +1237,21 @@
           "type": "text",
           "required": false,
           "system": false
+        },
+        {
+          "name": "quote",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "quotes"
         }
       ],
       "indexes": [
         "CREATE INDEX idx_pr_customer ON purchase_requests (customer)",
         "CREATE INDEX idx_pr_supplier ON purchase_requests (supplier)",
         "CREATE INDEX idx_pr_status ON purchase_requests (status)",
-        "CREATE INDEX idx_pr_created ON purchase_requests (created DESC)"
+        "CREATE INDEX idx_pr_created ON purchase_requests (created DESC)",
+        "CREATE INDEX `idx_pr_quote` ON `purchase_requests` (quote)"
       ]
     }
   ]

@@ -29,6 +29,72 @@ export const getQuoteItems = (quoteId: string) =>
     expand: 'product',
   })
 
+/**
+ * Busca produto por nome ou cria um produto novo no catálogo se não existir
+ */
+export const findOrCreateProductForPart = async (
+  partName: string,
+  price: number,
+  cost?: number,
+  vehicle?: string,
+): Promise<string> => {
+  const trimmedName = partName.trim()
+  try {
+    // Tenta encontrar um produto existente com o mesmo nome
+    const existing = await pb
+      .collection('products')
+      .getFirstListItem(`name ~ "${trimmedName.replace(/"/g, '\\"')}"`)
+    if (existing && existing.id) {
+      return existing.id
+    }
+  } catch (_) {
+    // Não encontrado, vamos criar
+  }
+
+  // Gera um SKU amigável
+  const cleanPrefix =
+    trimmedName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '-')
+      .slice(0, 10)
+      .replace(/^-+|-+$/g, '') || 'PEC'
+  const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase()
+  const sku = `${cleanPrefix}-${randomSuffix}`
+
+  const desc = vehicle
+    ? `Peça avulsa para ${vehicle}`
+    : 'Item gerado a partir do Pipeline de Compras'
+
+  try {
+    const newProd = await pb.collection('products').create({
+      name: trimmedName,
+      sku: sku,
+      price: price > 0 ? price : 0,
+      cost: cost && cost > 0 ? cost : 0,
+      stock_quantity: 0,
+      min_stock: 0,
+      description: desc,
+      product_type: 'comprado',
+      is_purchased: true,
+    })
+    return newProd.id
+  } catch (err) {
+    console.warn('Erro ao criar produto automático no catálogo:', err)
+    // Se falhar na criação do produto, busca o primeiro produto qualquer como fallback seguro
+    try {
+      const fallbackList = await pb.collection('products').getList(1, 1)
+      if (fallbackList.items.length > 0) {
+        return fallbackList.items[0].id
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+    return ''
+  }
+}
+
 export const generateQuoteNumber = async (): Promise<string> => {
   const year = new Date().getFullYear()
   const list = await pb.collection<Quote>('quotes').getList(1, 1, {

@@ -10,6 +10,8 @@ import {
   Hash,
   Package,
   Calendar,
+  FileText,
+  ExternalLink,
 } from 'lucide-react'
 import { PurchaseRequest } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
@@ -18,7 +20,9 @@ import {
   formatPurchaseItemsSummary,
   getTotalItemQuantity,
   getPurchaseTotals,
+  checkPurchaseQuoteEligibility,
 } from '@/services/purchaseRequestsService'
+import { Link } from 'react-router-dom'
 
 interface PurchaseCardProps {
   card: PurchaseRequest
@@ -26,6 +30,7 @@ interface PurchaseCardProps {
   onClick: () => void
   onDragStart: (e: React.DragEvent<HTMLDivElement>, cardId: string) => void
   onDelete?: (cardId: string, partName: string) => void
+  onGenerateQuote?: (cardId: string) => void
 }
 
 export const PurchaseCard: React.FC<PurchaseCardProps> = ({
@@ -34,6 +39,7 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
   onClick,
   onDragStart,
   onDelete,
+  onGenerateQuote,
 }) => {
   const customerName = card.expand?.customer?.name || 'Cliente não identificado'
 
@@ -41,6 +47,14 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
   const totalItemsCount = getTotalItemQuantity(card)
   const itemsSummary = formatPurchaseItemsSummary(card, supplierMap)
   const totals = getPurchaseTotals(card)
+
+  // Orçamento vinculado
+  const linkedQuoteId = card.quote || (card.expand?.quote?.id as string | undefined)
+  const linkedQuoteNumber = card.expand?.quote?.number
+  const hasLinkedQuote = Boolean(linkedQuoteId)
+
+  // Elegibilidade
+  const eligibility = checkPurchaseQuoteEligibility(card)
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('text/plain', card.id)
@@ -94,6 +108,17 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
           {card.is_completed && (
             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 bg-emerald-100 text-emerald-800">
               <CheckCircle2 className="h-3 w-3" /> Concluído
+            </span>
+          )}
+
+          {/* Indicação visível de Orçamento Gerado */}
+          {hasLinkedQuote && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs"
+              title={`Orçamento vinculado: ${linkedQuoteNumber || 'abrir'}`}
+            >
+              <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+              Orçamento gerado
             </span>
           )}
         </div>
@@ -209,8 +234,79 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
         </div>
       )}
 
+      {/* Seção Orçamento: Link de abrir e/ou Botão Discreto de Gerar Orçamento */}
+      <div
+        className="pt-1.5 border-t border-slate-100 flex items-center justify-between gap-1 text-[11px]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {hasLinkedQuote && linkedQuoteId ? (
+          <div className="flex items-center justify-between w-full">
+            <Link
+              to={`/orcamentos/${linkedQuoteId}`}
+              className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-800 font-bold hover:underline"
+              title="Abrir orçamento vinculado"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span>{linkedQuoteNumber ? `Ver ${linkedQuoteNumber}` : 'Ver Orçamento'}</span>
+              <ExternalLink className="h-2.5 w-2.5" />
+            </Link>
+
+            {onGenerateQuote && (
+              <button
+                type="button"
+                disabled={!eligibility.canGenerate}
+                onClick={() => onGenerateQuote(card.id)}
+                className={`text-[10px] font-semibold px-2 py-0.5 rounded transition-colors ${
+                  eligibility.canGenerate
+                    ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+                    : 'text-slate-400 bg-slate-50 border border-slate-200 cursor-not-allowed'
+                }`}
+                title={
+                  !eligibility.canGenerate
+                    ? `Falta: ${eligibility.reasons.join(', ')}`
+                    : 'Atualizar orçamento vinculado'
+                }
+              >
+                Atualizar
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center justify-between w-full">
+            <button
+              type="button"
+              disabled={!eligibility.canGenerate || !onGenerateQuote}
+              onClick={() => onGenerateQuote && onGenerateQuote(card.id)}
+              className={`w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold transition-all ${
+                eligibility.canGenerate
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+              }`}
+              title={
+                !eligibility.canGenerate
+                  ? `Falta: ${eligibility.reasons.join(', ')}`
+                  : 'Gerar orçamento para o cliente'
+              }
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span>GERAR ORÇAMENTO</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Dica discreta no card se faltar algo e não tiver orçamento gerado */}
+      {!hasLinkedQuote && !eligibility.canGenerate && (
+        <p
+          className="text-[10px] text-amber-700 italic truncate"
+          title={eligibility.reasons.join(', ')}
+        >
+          * {eligibility.reasons.join(', ')}
+        </p>
+      )}
+
       {/* Rodapé: Data da solicitação */}
-      <div className="pt-1.5 border-t border-slate-50 flex items-center justify-between text-[10px] text-slate-400">
+      <div className="pt-1 border-t border-slate-50 flex items-center justify-between text-[10px] text-slate-400">
         <span className="flex items-center gap-1">
           <Calendar className="h-3 w-3 text-slate-300" />
           Solicitado: {formatDate(card.created)}

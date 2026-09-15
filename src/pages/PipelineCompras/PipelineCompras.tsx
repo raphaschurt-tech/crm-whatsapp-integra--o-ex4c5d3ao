@@ -23,6 +23,7 @@ import {
   formatPurchaseItemsSummary,
   getTotalItemQuantity,
   getPurchaseTotals,
+  generateOrUpdateQuoteFromPurchase,
 } from '@/services/purchaseRequestsService'
 import { getCustomers } from '@/services/customers'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -369,6 +370,29 @@ export default function PipelineCompras() {
     }
   }
 
+  // Gerar orçamento a partir de compra
+  const handleGenerateQuote = async (id: string) => {
+    try {
+      const res = await generateOrUpdateQuoteFromPurchase(id)
+      toast({
+        title: res.isUpdate ? 'Orçamento atualizado!' : 'Orçamento gerado com sucesso!',
+        description: `Orçamento ${res.quote.number} vinculado ao cliente com sucesso.`,
+      })
+      // Atualiza compras na lista
+      setRequests((prev) => prev.map((r) => (r.id === id ? res.purchase : r)))
+      if (selectedCard?.id === id) {
+        setSelectedCard(res.purchase)
+      }
+    } catch (err: any) {
+      console.error('Erro ao gerar orçamento a partir da compra:', err)
+      toast({
+        title: 'Erro ao gerar orçamento',
+        description: err?.message || 'Falha ao processar orçamento.',
+        variant: 'destructive',
+      })
+    }
+  }
+
   // Exclusão
   const handleDeletePurchase = async (id: string, partName?: string) => {
     try {
@@ -649,6 +673,7 @@ export default function PipelineCompras() {
                           onClick={() => setSelectedCard(card)}
                           onDragStart={handleDragStart}
                           onDelete={(id, name) => handleDeletePurchase(id, name)}
+                          onGenerateQuote={(id) => handleGenerateQuote(id)}
                         />
                       ))
                     )}
@@ -672,6 +697,7 @@ export default function PipelineCompras() {
             handleDeletePurchase(id, formatPurchaseItemsSummary(selectedCard, supplierMap))
           }
           onMoveStatus={(id, targetCol) => handleMoveStatus(id, targetCol)}
+          onGenerateQuote={(id) => handleGenerateQuote(id)}
         />
       )}
 

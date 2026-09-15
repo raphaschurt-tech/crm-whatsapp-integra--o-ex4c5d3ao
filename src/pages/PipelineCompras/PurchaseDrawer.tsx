@@ -20,12 +20,16 @@ import {
   getItemMargin,
   calculateMarginPercent,
   calculateSellPriceFromMargin,
+  checkPurchaseQuoteEligibility,
+  generateOrUpdateQuoteFromPurchase,
 } from '@/services/purchaseRequestsService'
 import { formatCurrency } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Link } from 'react-router-dom'
+import { toast } from '@/hooks/use-toast'
+import { FileText, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react'
 
 interface PurchaseDrawerProps {
   card: PurchaseRequest | null
@@ -35,6 +39,7 @@ interface PurchaseDrawerProps {
   onUpdate: (id: string, data: Partial<PurchaseRequest>) => Promise<void>
   onDelete?: (id: string) => Promise<void>
   onMoveStatus: (id: string, targetStatus: PurchaseRequestStatus) => Promise<void>
+  onGenerateQuote?: (id: string) => Promise<void>
 }
 
 const MAX_ITEMS = 20
@@ -57,6 +62,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   onUpdate,
   onDelete,
   onMoveStatus,
+  onGenerateQuote,
 }) => {
   const [items, setItems] = useState<FormItemState[]>([
     { part_name: '', vehicle: '', quantity: 1, supplier_id: '', cost_price: '', sell_price: '' },
@@ -69,6 +75,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   const [isCompleted, setIsCompleted] = useState<boolean>(false)
   const [notes, setNotes] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [isGeneratingQuote, setIsGeneratingQuote] = useState(false)
 
   const formatPercentDisplay = (val: number): string => {
     const rounded = Math.round(val * 100) / 100
@@ -256,6 +263,100 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
     (item) => !item.part_name.trim() || !item.vehicle.trim() || (item.quantity || 1) < 1,
   )
 
+  // Avaliação de elegibilidade para GERAR ORÇAMENTO em tempo real
+  const currentFormPurchase: Partial<PurchaseRequest> = {
+    customer: customerId,
+    items: items.map((it) => {
+      const sellNum = parseFloat(it.sell_price || '')
+      const costNum = parseFloat(it.cost_price || '')
+      return {
+        part_name: it.part_name,
+        vehicle: it.vehicle,
+        quantity: Math.max(1, Number(it.quantity) || 1),
+        supplier_id: it.supplier_id || undefined,
+        cost_price: !isNaN(costNum) ? costNum : undefined,
+        sell_price: !isNaN(sellNum) ? sellNum : undefined,
+      }
+    }),
+  }
+  const quoteEligibility = checkPurchaseQuoteEligibility(currentFormPurchase)
+
+  // Orçamento vinculado
+  const linkedQuoteId = card.quote || (card.expand?.quote?.id as string | undefined)
+  const linkedQuoteNumber = card.expand?.quote?.number
+  const hasLinkedQuote = Boolean(linkedQuoteId)
+
+  const handleGenerateQuoteClick = async () => {
+    if (!card) return
+    if (!quoteEligibility.canGenerate) {
+      toast({
+        title: 'Não é possível gerar orçamento',
+        description: quoteEligibility.reasons.join(', '),
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setIsGeneratingQuote(true)
+    try {
+      // 1. Salva primeiro as alterações atuais do formulário
+      const cleanedItems: PurchaseItem[] = items.map((it) => {
+        const costNum = it.cost_price ? parseFloat(it.cost_price) : undefined
+        const sellNum = it.sell_price ? parseFloat(it.sell_price) : undefined
+        const sup = suppliers.find((s) => s.id === it.supplier_id)
+        const supplierName = sup ? sup.name || sup.company || undefined : undefined
+
+        return {
+          part_name: it.part_name.trim(),
+          vehicle: it.vehicle.trim(),
+          quantity: Math.max(1, Number(it.quantity) || 1),
+          supplier_id: it.supplier_id || undefined,
+          supplier_name: supplierName,
+          cost_price: costNum !== undefined && !isNaN(costNum) ? costNum : undefined,
+          sell_price: sellNum !== undefined && !isNaN(sellNum) ? sellNum : undefined,
+        }
+      })
+
+      const firstSupplier = cleanedItems.find((it) => it.supplier_id)?.supplier_id
+
+      const payload: Partial<PurchaseRequest> = {
+        part_name: cleanedItems[0]?.part_name || '',
+        vehicle: cleanedItems[0]?.vehicle || '',
+        items: cleanedItems,
+        os_number: osNumber.trim() || '',
+        customer: customerId,
+        supplier: firstSupplier || undefined,
+        delivery_days: deliveryDays ? parseInt(deliveryDays, 10) : undefined,
+        received_at: receivedAt ? new Date(receivedAt).toISOString() : undefined,
+        is_completed: isCompleted,
+        notes: notes.trim(),
+      }
+
+      await onUpdate(card.id, payload)
+
+      // 2. Chama a geração/atualização do orçamento
+      if (onGenerateQuote) {
+        await onGenerateQuote(card.id)
+      } else {
+        const result = await generateOrUpdateQuoteFromPurchase(card.id)
+        toast({
+          title: result.isUpdate ? 'Orçamento atualizado!' : 'Orçamento gerado!',
+          description: `Orçamento ${result.quote.number} vinculado com sucesso à compra.`,
+        })
+        await onUpdate(card.id, { quote: result.quote.id })
+      }
+    } catch (err: any) {
+      console.error('Erro ao gerar orçamento:', err)
+      toast({
+        title: 'Erro ao gerar orçamento',
+        description: err.message || 'Falha ao processar orçamento.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsGeneratingQuote(false)
+    }
+  }
+
   // Totais gerais calculados somando todos os itens
   const summaryTotals = items.reduce(
     (acc, it) => {
@@ -365,6 +466,12 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                   <Hash className="h-3 w-3" /> OS {card.os_number}
                 </span>
               )}
+              {hasLinkedQuote && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                  Orçamento gerado
+                </span>
+              )}
             </div>
             <h2
               className="text-base sm:text-lg font-bold text-slate-900 mt-1 truncate"
@@ -384,6 +491,91 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-5">
+          {/* Banner de Orçamento Vinculado ou Ação Gerar Orçamento */}
+          <div className="p-4 rounded-xl border bg-gradient-to-r from-emerald-50/80 to-teal-50/50 border-emerald-200 shadow-2xs space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-emerald-700" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-950">
+                    {hasLinkedQuote ? 'Orçamento Vinculado' : 'Gerar Orçamento ao Cliente'}
+                  </span>
+                  {hasLinkedQuote && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white">
+                      <CheckCircle2 className="h-3 w-3" /> Gerado
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-600">
+                  {hasLinkedQuote
+                    ? `Esta compra já possui orçamento (${linkedQuoteNumber || 'abrir'}). Atualize se os itens ou preços mudarem.`
+                    : 'Gera um orçamento oficial com todos os itens e preços de venda para o cliente.'}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {hasLinkedQuote && linkedQuoteId && (
+                  <Link
+                    to={`/orcamentos/${linkedQuoteId}`}
+                    target="_blank"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50 hover:text-emerald-900 shadow-2xs transition-colors"
+                  >
+                    <span>Abrir Orçamento</span>
+                    <ExternalLink className="h-3 w-3 ml-0.5" />
+                  </Link>
+                )}
+
+                <Button
+                  type="button"
+                  disabled={!quoteEligibility.canGenerate || isGeneratingQuote}
+                  onClick={handleGenerateQuoteClick}
+                  className={`font-bold text-xs shadow-xs transition-all ${
+                    quoteEligibility.canGenerate
+                      ? hasLinkedQuote
+                        ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white ring-2 ring-emerald-400/50'
+                      : 'bg-slate-200 text-slate-400 cursor-not-allowed hover:bg-slate-200'
+                  }`}
+                  title={
+                    !quoteEligibility.canGenerate
+                      ? `Não é possível gerar orçamento: ${quoteEligibility.reasons.join(', ')}`
+                      : hasLinkedQuote
+                        ? 'Atualizar orçamento vinculado com os itens atuais'
+                        : 'Gerar novo orçamento para este cliente'
+                  }
+                >
+                  {isGeneratingQuote ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      Processando...
+                    </>
+                  ) : hasLinkedQuote ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                      GERAR NOVAMENTE (ATUALIZAR)
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-3.5 w-3.5 mr-1.5" />
+                      GERAR ORÇAMENTO
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {/* Dica explicativa quando o botão estiver desabilitado */}
+            {!quoteEligibility.canGenerate && (
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-amber-800 bg-amber-50/90 border border-amber-200 p-2 rounded-lg">
+                <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                <span>
+                  <strong>Atenção para gerar orçamento:</strong>{' '}
+                  {quoteEligibility.reasons.join(' e ')}.
+                </span>
+              </div>
+            )}
+          </div>
+
           {/* Status Tracker / Quick Switcher */}
           <div>
             <label className="text-xs font-bold text-slate-700 uppercase tracking-wide block mb-2">

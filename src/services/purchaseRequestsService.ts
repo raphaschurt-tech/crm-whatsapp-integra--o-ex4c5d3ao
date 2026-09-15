@@ -272,7 +272,7 @@ export const getPurchaseRequests = async (): Promise<PurchaseRequest[]> => {
       () =>
         pb.collection<PurchaseRequest>('purchase_requests').getFullList({
           sort: '-created',
-          expand: 'customer,supplier,created_by',
+          expand: 'customer,supplier,created_by,quote',
         }),
       { retries: 3, delayMs: 800 },
     )
@@ -284,7 +284,7 @@ export const getPurchaseRequests = async (): Promise<PurchaseRequest[]> => {
 
 export const getPurchaseRequest = (id: string) =>
   pb.collection<PurchaseRequest>('purchase_requests').getOne(id, {
-    expand: 'customer,supplier,created_by',
+    expand: 'customer,supplier,created_by,quote',
   })
 
 export const createPurchaseRequest = async (
@@ -306,7 +306,7 @@ export const createPurchaseRequest = async (
     created_by: pb.authStore.record?.id || data.created_by,
   }
   return await pb.collection<PurchaseRequest>('purchase_requests').create(payload, {
-    expand: 'customer,supplier,created_by',
+    expand: 'customer,supplier,created_by,quote',
   })
 }
 
@@ -329,7 +329,7 @@ export const updatePurchaseRequest = async (
   }
 
   return await pb.collection<PurchaseRequest>('purchase_requests').update(id, payload, {
-    expand: 'customer,supplier,created_by',
+    expand: 'customer,supplier,created_by,quote',
   })
 }
 
@@ -378,5 +378,200 @@ export const getActivePurchasesByCustomer = async (
   } catch (error) {
     console.warn('Erro ao carregar compras em andamento do cliente:', error)
     return []
+  }
+}
+
+export interface QuoteEligibilityResult {
+  canGenerate: boolean
+  reasons: string[]
+  itemsMissingSell: number[]
+}
+
+/**
+ * Valida se uma solicitação de compra está elegível para gerar orçamento:
+ * - Deve possuir cliente vinculado
+ * - Deve ter ao menos 1 item
+ * - TODOS os itens devem ter preço de venda preenchido (> 0)
+ */
+export const checkPurchaseQuoteEligibility = (
+  purchase?: Partial<PurchaseRequest> | null,
+): QuoteEligibilityResult => {
+  if (!purchase) {
+    return {
+      canGenerate: false,
+      reasons: ['Compra não selecionada'],
+      itemsMissingSell: [],
+    }
+  }
+
+  const reasons: string[] = []
+  const itemsMissingSell: number[] = []
+
+  if (!purchase.customer) {
+    reasons.push('compra sem cliente')
+  }
+
+  const items = normalizePurchaseItems(purchase)
+  if (items.length === 0) {
+    reasons.push('compra sem itens')
+  } else {
+    items.forEach((item, index) => {
+      const hasSellPrice =
+        typeof item.sell_price === 'number' && !isNaN(item.sell_price) && item.sell_price > 0
+      if (!hasSellPrice) {
+        itemsMissingSell.push(index + 1)
+      }
+    })
+
+    if (itemsMissingSell.length > 0) {
+      if (itemsMissingSell.length === 1) {
+        reasons.push(`item ${itemsMissingSell[0]} sem preço de venda`)
+      } else {
+        reasons.push(`itens ${itemsMissingSell.join(', ')} sem preço de venda`)
+      }
+    }
+  }
+
+  return {
+    canGenerate: reasons.length === 0,
+    reasons,
+    itemsMissingSell,
+  }
+}
+
+/**
+ * Gera ou atualiza o orçamento a partir de uma solicitação de compra:
+ * - Cria um ORÇAMENTO para o cliente vinculado com todos os itens da compra e totais
+ * - Grava vínculo bidirecional (purchase_request.quote e quote.purchase_request)
+ * - Se já houver um orçamento vinculado, atualiza-o sem duplicar
+ * - A compra NÃO muda de etapa/coluna
+ */
+export const generateOrUpdateQuoteFromPurchase = async (
+  purchaseId: string,
+): Promise<{ quote: any; purchase: PurchaseRequest; isUpdate: boolean }> => {
+  // 1. Carrega a compra completa
+  const currentPurchase = await getPurchaseRequest(purchaseId)
+  if (!currentPurchase) {
+    throw new Error('Solicitação de compra não encontrada.')
+  }
+
+  // 2. Valida elegibilidade
+  const eligibility = checkPurchaseQuoteEligibility(currentPurchase)
+  if (!eligibility.canGenerate) {
+    throw new Error(`Não foi possível gerar orçamento: ${eligibility.reasons.join(', ')}.`)
+  }
+
+  const items = normalizePurchaseItems(currentPurchase)
+
+  // 3. Resolve / cria os produtos no catálogo para cada item da compra
+  const quoteItemsPayload: Array<{
+    product: string
+    quantity: number
+    unit_price: number
+    total: number
+  }> = []
+
+  let calculatedSubtotal = 0
+
+  for (const item of items) {
+    const qty = Math.max(1, Number(item.quantity) || 1)
+    const unitPrice = Number(item.sell_price) || 0
+    const totalItem = Math.round((qty * unitPrice + Number.EPSILON) * 100) / 100
+    calculatedSubtotal += totalItem
+
+    const productId = await import('@/services/quotes').then((m) =>
+      m.findOrCreateProductForPart(item.part_name, unitPrice, item.cost_price, item.vehicle),
+    )
+
+    quoteItemsPayload.push({
+      product: productId,
+      quantity: qty,
+      unit_price: unitPrice,
+      total: totalItem,
+    })
+  }
+
+  calculatedSubtotal = Math.round((calculatedSubtotal + Number.EPSILON) * 100) / 100
+  const finalTotal = calculatedSubtotal
+
+  const osNote = currentPurchase.os_number ? `OS: ${currentPurchase.os_number}. ` : ''
+  const quoteNotes =
+    `Orçamento gerado a partir do Pipeline de Compras. ${osNote}${currentPurchase.notes || ''}`.trim()
+
+  // 4. Verifica se já existe orçamento vinculado na compra ou se há orçamento apontando para ela
+  let existingQuoteId = currentPurchase.quote || null
+
+  if (!existingQuoteId) {
+    try {
+      const existingQuotes = await pb.collection('quotes').getList(1, 1, {
+        filter: `purchase_request = "${purchaseId}"`,
+      })
+      if (existingQuotes.items.length > 0) {
+        existingQuoteId = existingQuotes.items[0].id
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+  }
+
+  let finalQuote: any
+  let isUpdate = false
+
+  const quotesModule = await import('@/services/quotes')
+
+  if (existingQuoteId) {
+    // Atualiza o orçamento existente (não duplica)
+    try {
+      finalQuote = await quotesModule.updateQuoteWithItems(
+        existingQuoteId,
+        {
+          customer: currentPurchase.customer,
+          purchase_request: purchaseId,
+          subtotal: calculatedSubtotal,
+          discount: 0,
+          total: finalTotal,
+          notes: quoteNotes,
+        },
+        quoteItemsPayload,
+      )
+      isUpdate = true
+    } catch (err) {
+      console.warn('Erro ao atualizar orçamento vinculado existente, tentando recriar:', err)
+      existingQuoteId = null
+    }
+  }
+
+  if (!existingQuoteId) {
+    // Cria um novo orçamento
+    finalQuote = await quotesModule.createQuoteWithItems(
+      {
+        customer: currentPurchase.customer,
+        purchase_request: purchaseId,
+        status: 'rascunho',
+        subtotal: calculatedSubtotal,
+        discount: 0,
+        total: finalTotal,
+        notes: quoteNotes,
+      },
+      quoteItemsPayload,
+    )
+    isUpdate = false
+  }
+
+  // 5. Garante vínculo bidirecional: salva referência do orçamento na compra se ainda não estiver salvo
+  const updatedPurchase = await pb.collection<PurchaseRequest>('purchase_requests').update(
+    purchaseId,
+    {
+      quote: finalQuote.id,
+    },
+    {
+      expand: 'customer,supplier,created_by,quote',
+    },
+  )
+
+  return {
+    quote: finalQuote,
+    purchase: updatedPurchase,
+    isUpdate,
   }
 }
