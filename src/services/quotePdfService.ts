@@ -13,7 +13,7 @@ interface ImagePayload {
   height: number
 }
 
-// Cache global da logo já convertida em memória
+// Cache global da logo oficial da RPA Auto Parts em memória
 let cachedLogoPayload: ImagePayload | null = null
 let logoLoadPromise: Promise<ImagePayload | null> | null = null
 
