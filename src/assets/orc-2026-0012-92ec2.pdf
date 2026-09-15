@@ -1,0 +1,134 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 1586 >>
+stream
+0.06 0.58 0.35 rg
+40 760 515 50 re f
+BT
+/F2 20 Tf
+1 1 1 rg
+55 778 Td
+(RPA AUTO PARTS) Tj
+ET
+BT
+/F1 10 Tf
+1 1 1 rg
+360 782 Td
+(ORCAMENTO: ORC-2026-0012) Tj
+0 -14 Td
+(Data: 14/09/2026) Tj
+ET
+0.96 0.97 0.98 rg
+40 680 515 65 re f
+0.85 0.88 0.91 RG
+0.8 w
+40 680 515 65 re s
+BT
+/F2 11 Tf
+0.1 0.1 0.1 rg
+55 725 Td
+(CLIENTE: Pietro schurt) Tj
+/F1 9 Tf
+0.3 0.3 0.3 rg
+0 -15 Td
+(Telefone: 11 91245-2830   Email: Nao informado) Tj
+ET
+0.90 0.93 0.95 rg
+40 645 515 22 re f
+BT
+/F2 9 Tf
+0.2 0.2 0.2 rg
+50 652 Td (ITEM / DESCRICAO) Tj
+270 0 Td (QTD) Tj
+60 0 Td (VALOR UN.) Tj
+80 0 Td (TOTAL) Tj
+ET
+0.98 0.98 0.99 rg
+40 621 515 22 re f
+0.90 0.90 0.92 RG
+0.5 w
+40 621 m 555 621 l S
+BT
+/F1 9 Tf
+0.15 0.15 0.15 rg
+50 627 Td (1. bucha bandeja 206) Tj
+275 0 Td (2) Tj
+50 0 Td (R$ 52,00) Tj
+80 0 Td (R$ 104,00) Tj
+ET
+0.90 0.90 0.92 RG
+0.5 w
+40 599 m 555 599 l S
+BT
+/F1 9 Tf
+0.15 0.15 0.15 rg
+50 605 Td (2. coxim vera cruz) Tj
+275 0 Td (1) Tj
+50 0 Td (R$ 390,00) Tj
+80 0 Td (R$ 390,00) Tj
+ET
+0.95 0.97 0.96 rg
+320 551 235 75 re f
+0.7 0.85 0.75 RG
+1 w
+320 551 235 75 re s
+BT
+/F1 10 Tf
+0.3 0.3 0.3 rg
+335 606 Td (Subtotal:) Tj
+120 0 Td (R$ 494,00) Tj
+-120 -20 Td
+/F2 13 Tf
+0.06 0.58 0.35 rg
+(VALOR TOTAL:) Tj
+100 0 Td (R$ 494,00) Tj
+ET
+BT
+/F2 9 Tf
+0.3 0.3 0.3 rg
+45 606 Td (OBSERVACOES E CONDICOES:) Tj
+/F1 8 Tf
+0.4 0.4 0.4 rg
+0 -14 Td (Orcamento gerado a partir do Pipeline de Compras. OS: 1) Tj
+0 -11 Td (405. teste/teste/teste) Tj
+ET
+0.85 0.85 0.85 RG
+0.5 w
+40 60 m 555 60 l S
+BT
+/F1 8 Tf
+0.5 0.5 0.5 rg
+140 45 Td (RPA Auto Parts - Pecas e Acessorios Automotivos - Documento Oficial de Orcamento) Tj
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000001889 00000 n 
+0000001959 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+2034
+%%EOF
