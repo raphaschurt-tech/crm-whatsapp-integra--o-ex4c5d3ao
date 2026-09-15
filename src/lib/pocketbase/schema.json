@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-15T14:17:11.501Z",
+  "generatedAt": "2026-09-15T21:03:52.062Z",
   "collections": [
     {
       "name": "users",
@@ -721,6 +721,24 @@
         },
         {
           "name": "audio_url",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "attachment_url",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "attachment_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "attachment_type",
           "type": "text",
           "required": false,
           "system": false

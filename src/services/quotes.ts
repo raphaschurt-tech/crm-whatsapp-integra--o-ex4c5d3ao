@@ -193,8 +193,10 @@ export const sendWhatsAppMessage = async (
   phone: string,
   message: string,
   documentOptions?: {
-    document?: string // data:application/pdf;base64,... ou URL
+    document?: string // data:...;base64,... ou URL
     fileName?: string
+    isImage?: boolean
+    caption?: string
   },
 ): Promise<{
   ok: boolean
@@ -212,6 +214,8 @@ export const sendWhatsAppMessage = async (
       message,
       ...(documentOptions?.document ? { document: documentOptions.document } : {}),
       ...(documentOptions?.fileName ? { fileName: documentOptions.fileName } : {}),
+      ...(documentOptions?.isImage !== undefined ? { isImage: documentOptions.isImage } : {}),
+      ...(documentOptions?.caption ? { caption: documentOptions.caption } : {}),
     },
   })
 }

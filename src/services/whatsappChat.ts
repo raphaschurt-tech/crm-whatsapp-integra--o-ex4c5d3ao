@@ -16,6 +16,9 @@ export interface WhatsAppMessage {
   messageId?: string
   isAudio?: boolean
   audioUrl?: string
+  attachmentUrl?: string
+  attachmentName?: string
+  attachmentType?: 'image' | 'document'
 }
 
 export interface WhatsAppCustomer {
@@ -52,6 +55,9 @@ export interface WebhookReceivedRecord extends RecordModel {
   moment?: number
   is_audio?: boolean
   audio_url?: string
+  attachment_url?: string
+  attachment_name?: string
+  attachment_type?: string
 }
 
 export interface MessageProcessingRecord extends RecordModel {
@@ -380,8 +386,12 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       // Se após todas as tentativas o número ainda for um LID ou vazio, ignoramos para não criar conversa-fantasma
       if (!normalized) continue
 
-      const text = extractMessageText(rec.text)
-      if (!text) continue
+      let text = extractMessageText(rec.text)
+      const hasAttachment = Boolean(rec.attachment_url)
+      if (!text && !hasAttachment) continue
+      if (!text && hasAttachment) {
+        text = rec.attachment_name ? `Arquivo: ${rec.attachment_name}` : ''
+      }
 
       const isFromMe = Boolean(rec.fromMe)
       const msgDate = rec.moment ? new Date(rec.moment * 1000) : new Date(rec.created)
@@ -462,6 +472,12 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         messageId: rec.messageId,
         isAudio: Boolean(rec.is_audio),
         audioUrl: rec.audio_url || undefined,
+        attachmentUrl: rec.attachment_url || undefined,
+        attachmentName: rec.attachment_name || undefined,
+        attachmentType:
+          rec.attachment_type === 'image' || rec.attachment_type === 'document'
+            ? rec.attachment_type
+            : undefined,
       })
 
       if (rec.messageId) {

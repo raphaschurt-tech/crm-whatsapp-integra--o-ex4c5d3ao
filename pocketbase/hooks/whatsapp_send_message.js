@@ -1,6 +1,14 @@
 // Endpoint autenticado para envio direto de mensagens via WhatsApp (Z-API) pelo atendente
 // Rota: POST /backend/v1/whatsapp/send-message
-// Body: { phone: string, message: string }
+// Body: {
+//   phone: string,
+//   message?: string,
+//   document?: string,       // base64 ou URL (data:application/...;base64,... ou link)
+//   fileName?: string,
+//   isImage?: boolean,       // quando true, usa /send-image
+//   image?: string,          // base64 ou URL de imagem (se passado separadamente ou via document)
+//   caption?: string         // legenda
+// }
 routerAdd(
   'POST',
   '/backend/v1/whatsapp/send-message',
@@ -9,12 +17,26 @@ routerAdd(
     const rawBody = reqInfo.body || {}
 
     const rawPhone = String(rawBody.phone || '')
-    const message = String(rawBody.message || '').trim()
+    const message = String(rawBody.message || rawBody.caption || '').trim()
+    const documentBase64 = String(rawBody.document || rawBody.image || '').trim()
+    const documentFileName = String(rawBody.fileName || '').trim()
+    const isImage = Boolean(
+      rawBody.isImage ||
+      documentBase64.startsWith('data:image/') ||
+      /\.(jpg|jpeg|png|webp|gif)$/i.test(documentFileName),
+    )
 
-    if (!rawPhone || !message) {
+    if (!rawPhone) {
       return e.json(400, {
         ok: false,
-        error: 'Telefone e mensagem são obrigatórios',
+        error: 'Telefone é obrigatório',
+      })
+    }
+
+    if (!message && !documentBase64) {
+      return e.json(400, {
+        ok: false,
+        error: 'Mensagem ou arquivo anexo é obrigatório',
       })
     }
 
@@ -69,6 +91,8 @@ routerAdd(
     let zapiSuccess = false
     let zapiErrorDetail = ''
     let zapiHttpStatus = 0
+    let zapiDocSuccess = false
+    let zapiDocErrorDetail = ''
 
     if (validConfigRec && !configError) {
       const zapiInstance = String(validConfigRec.get('zapi_instance_id') || '')
@@ -80,95 +104,162 @@ routerAdd(
         'Client-Token': zapiClientToken,
       }
 
-      try {
-        const zapiSendUrl =
-          'https://api.z-api.io/instances/' +
-          encodeURIComponent(zapiInstance) +
-          '/token/' +
-          encodeURIComponent(zapiToken) +
-          '/send-text'
+      // Se temos um anexo (documento ou imagem)
+      if (documentBase64) {
+        if (isImage) {
+          // ENVIO DE IMAGEM via /send-image
+          try {
+            const zapiImgUrl =
+              'https://api.z-api.io/instances/' +
+              encodeURIComponent(zapiInstance) +
+              '/token/' +
+              encodeURIComponent(zapiToken) +
+              '/send-image'
 
-        const zapiRes = $http.send({
-          url: zapiSendUrl,
-          method: 'POST',
-          headers: zapiHeaders,
-          body: JSON.stringify({
-            phone: cleanPhone,
-            message: message,
-          }),
-          timeout: 15,
-        })
+            const imgPayload = {
+              phone: cleanPhone,
+              image: documentBase64,
+            }
+            if (message) {
+              imgPayload.caption = message
+            }
 
-        zapiHttpStatus = zapiRes.statusCode
-        if (zapiRes.statusCode >= 200 && zapiRes.statusCode < 300) {
-          zapiSuccess = true
+            const imgRes = $http.send({
+              url: zapiImgUrl,
+              method: 'POST',
+              headers: zapiHeaders,
+              body: JSON.stringify(imgPayload),
+              timeout: 30,
+            })
+
+            zapiHttpStatus = imgRes.statusCode
+            if (imgRes.statusCode >= 200 && imgRes.statusCode < 300) {
+              zapiSuccess = true
+              zapiDocSuccess = true
+            } else {
+              const respData = imgRes.json || imgRes.body || {}
+              zapiErrorDetail =
+                'Z-API image status ' +
+                imgRes.statusCode +
+                ': ' +
+                (respData.message || respData.error || String(imgRes.body || ''))
+              zapiDocErrorDetail = zapiErrorDetail
+            }
+          } catch (imgErr) {
+            zapiErrorDetail = imgErr.message || String(imgErr)
+            zapiDocErrorDetail = zapiErrorDetail
+          }
         } else {
-          const respData = zapiRes.json || zapiRes.body || {}
-          zapiErrorDetail =
-            'Z-API status ' +
-            zapiRes.statusCode +
-            ': ' +
-            (respData.message || respData.error || String(zapiRes.body || ''))
+          // ENVIO DE DOCUMENTO (PDF ou outro) via /send-document/{extension}
+          let ext = 'pdf'
+          if (documentFileName && documentFileName.includes('.')) {
+            const parts = documentFileName.split('.')
+            const lastPart = parts[parts.length - 1].toLowerCase().replace(/[^a-z0-9]/g, '')
+            if (lastPart) {
+              ext = lastPart
+            }
+          } else if (documentBase64.startsWith('data:')) {
+            const mimeMatch = documentBase64.match(/^data:([^;]+);/)
+            if (mimeMatch && mimeMatch[1]) {
+              const mime = mimeMatch[1].toLowerCase()
+              if (mime.includes('pdf')) ext = 'pdf'
+              else if (mime.includes('word') || mime.includes('docx')) ext = 'docx'
+              else if (mime.includes('excel') || mime.includes('sheet') || mime.includes('xlsx'))
+                ext = 'xlsx'
+              else if (mime.includes('csv')) ext = 'csv'
+              else if (mime.includes('text') || mime.includes('plain')) ext = 'txt'
+            }
+          }
+
+          try {
+            const zapiDocUrl =
+              'https://api.z-api.io/instances/' +
+              encodeURIComponent(zapiInstance) +
+              '/token/' +
+              encodeURIComponent(zapiToken) +
+              '/send-document/' +
+              encodeURIComponent(ext)
+
+            const docPayload = {
+              phone: cleanPhone,
+              document: documentBase64,
+              fileName: documentFileName || 'documento.' + ext,
+            }
+            if (message) {
+              docPayload.caption = message
+            }
+
+            const docRes = $http.send({
+              url: zapiDocUrl,
+              method: 'POST',
+              headers: zapiHeaders,
+              body: JSON.stringify(docPayload),
+              timeout: 35,
+            })
+
+            zapiHttpStatus = docRes.statusCode
+            if (docRes.statusCode >= 200 && docRes.statusCode < 300) {
+              zapiSuccess = true
+              zapiDocSuccess = true
+            } else {
+              const docRespData = docRes.json || docRes.body || {}
+              zapiDocErrorDetail =
+                'Z-API doc status ' +
+                docRes.statusCode +
+                ': ' +
+                (docRespData.message || docRespData.error || String(docRes.body || ''))
+              zapiErrorDetail = zapiDocErrorDetail
+            }
+          } catch (docErr) {
+            zapiDocErrorDetail = docErr.message || String(docErr)
+            zapiErrorDetail = zapiDocErrorDetail
+          }
+
+          // Se for orçamento clássico (tinha mensagem longa E documento PDF e não aceitou caption ou precisamos garantir envio do texto se falhou):
+          // Se o documento falhou mas havia texto, ou se o usuário mandou texto puro separado sem caption
+          // No caso de send-document da Z-API, se foi enviado com caption, o WhatsApp entrega o documento com o texto.
         }
-      } catch (httpErr) {
-        zapiErrorDetail = httpErr.message || String(httpErr)
+      } else {
+        // ENVIO DE MENSAGEM PURA DE TEXTO via /send-text
+        try {
+          const zapiSendUrl =
+            'https://api.z-api.io/instances/' +
+            encodeURIComponent(zapiInstance) +
+            '/token/' +
+            encodeURIComponent(zapiToken) +
+            '/send-text'
+
+          const zapiRes = $http.send({
+            url: zapiSendUrl,
+            method: 'POST',
+            headers: zapiHeaders,
+            body: JSON.stringify({
+              phone: cleanPhone,
+              message: message,
+            }),
+            timeout: 15,
+          })
+
+          zapiHttpStatus = zapiRes.statusCode
+          if (zapiRes.statusCode >= 200 && zapiRes.statusCode < 300) {
+            zapiSuccess = true
+          } else {
+            const respData = zapiRes.json || zapiRes.body || {}
+            zapiErrorDetail =
+              'Z-API status ' +
+              zapiRes.statusCode +
+              ': ' +
+              (respData.message || respData.error || String(zapiRes.body || ''))
+          }
+        } catch (httpErr) {
+          zapiErrorDetail = httpErr.message || String(httpErr)
+        }
       }
     } else {
       zapiErrorDetail = configError || 'Credenciais Z-API não configuradas'
     }
 
-    // 2. Enviar documento PDF opcional se fornecido (em base64 ou link)
-    const documentBase64 = String(rawBody.document || '').trim()
-    const documentFileName = String(rawBody.fileName || 'orcamento.pdf').trim()
-    let zapiDocSuccess = false
-    let zapiDocErrorDetail = ''
-
-    if (documentBase64 && validConfigRec && !configError) {
-      const zapiInstance = String(validConfigRec.get('zapi_instance_id') || '')
-      const zapiToken = String(validConfigRec.get('zapi_token') || '')
-      const zapiClientToken = String(validConfigRec.get('zapi_client_token') || '')
-
-      const zapiHeaders = {
-        'Content-Type': 'application/json',
-        'Client-Token': zapiClientToken,
-      }
-
-      try {
-        const zapiDocUrl =
-          'https://api.z-api.io/instances/' +
-          encodeURIComponent(zapiInstance) +
-          '/token/' +
-          encodeURIComponent(zapiToken) +
-          '/send-document/pdf'
-
-        const docRes = $http.send({
-          url: zapiDocUrl,
-          method: 'POST',
-          headers: zapiHeaders,
-          body: JSON.stringify({
-            phone: cleanPhone,
-            document: documentBase64,
-            fileName: documentFileName,
-          }),
-          timeout: 20,
-        })
-
-        if (docRes.statusCode >= 200 && docRes.statusCode < 300) {
-          zapiDocSuccess = true
-        } else {
-          const docRespData = docRes.json || docRes.body || {}
-          zapiDocErrorDetail =
-            'Z-API doc status ' +
-            docRes.statusCode +
-            ': ' +
-            (docRespData.message || docRespData.error || String(docRes.body || ''))
-        }
-      } catch (docErr) {
-        zapiDocErrorDetail = docErr.message || String(docErr)
-      }
-    }
-
-    // 3. Gravar no webhook_received com fromMe=true para que apareça de imediato no histórico do chat
+    // Gravar no webhook_received com fromMe=true para que apareça de imediato no histórico do chat
     const messageId = 'agent_' + Date.now() + '_' + $security.randomString(6)
     try {
       const colWebhook = $app.findCollectionByNameOrId('webhook_received')
@@ -176,13 +267,22 @@ routerAdd(
       rec.set('type', 'AgentSentMessage')
       rec.set('phone', { phone: cleanPhone })
       rec.set('fromMe', true)
-      rec.set('text', { message: message })
+      rec.set('text', {
+        message: message || (documentFileName ? 'Arquivo: ' + documentFileName : ''),
+      })
       rec.set('chat', { phone: cleanPhone })
       rec.set('sender', { role: 'agent' })
       rec.set('status', zapiSuccess ? 'SENT' : 'RECORDED_LOCAL')
       rec.set('messageId', messageId)
       rec.set('instanceId', validConfigRec ? validConfigRec.getString('zapi_instance_id') : '')
       rec.set('moment', Math.floor(Date.now() / 1000))
+
+      if (documentBase64) {
+        rec.set('attachment_url', documentBase64)
+        rec.set('attachment_name', documentFileName || (isImage ? 'imagem.png' : 'documento.pdf'))
+        rec.set('attachment_type', isImage ? 'image' : 'document')
+      }
+
       $app.save(rec)
     } catch (dbErr) {
       console.log('[AGENT-SEND-PERSIST-ERR]', dbErr.message || String(dbErr))
@@ -196,6 +296,8 @@ routerAdd(
         zapiSuccess: zapiSuccess,
         zapiHttpStatus: zapiHttpStatus,
         docSent: zapiDocSuccess,
+        isImage: isImage,
+        fileName: documentFileName || null,
         error: zapiErrorDetail || null,
         docError: zapiDocErrorDetail || null,
       }),

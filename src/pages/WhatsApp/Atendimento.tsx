@@ -16,7 +16,21 @@ import {
   PackageSearch,
   History,
   Mic,
+  Paperclip,
+  File,
+  X,
+  Eye,
+  Download,
+  AlertTriangle,
 } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import pb from '@/lib/pocketbase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -54,12 +68,24 @@ export default function WhatsAppAtendimento() {
   const [isProductModalOpen, setIsProductModalOpen] = useState(false)
   const [showHistoryPanel, setShowHistoryPanel] = useState(true)
 
+  // Estados de envio de arquivos na conversa
+  const [isWhatsAppConnected, setIsWhatsAppConnected] = useState<boolean | null>(null)
+  const [checkingConnection, setCheckingConnection] = useState(false)
+  const [isAttachmentModalOpen, setIsAttachmentModalOpen] = useState(false)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [fileBase64, setFileBase64] = useState<string>('')
+  const [fileCaption, setFileCaption] = useState('')
+  const [isSendingAttachment, setIsSendingAttachment] = useState(false)
+  const [previewMediaUrl, setPreviewMediaUrl] = useState<string | null>(null)
+  const [previewMediaTitle, setPreviewMediaTitle] = useState('')
+
   const chatContainerRef = useRef<HTMLDivElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const isNearBottomRef = useRef(true)
   const prevCustomerIdRef = useRef<string | null>(null)
   const prevMessagesCountRef = useRef<number>(0)
   const shouldScrollOnSendRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const fetchData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsRefreshing(true)
@@ -83,10 +109,33 @@ export default function WhatsAppAtendimento() {
     }
   }, [])
 
-  // Carga inicial
+  // Checagem de status de conexão do WhatsApp (Z-API)
+  const checkConnectionStatus = useCallback(async (): Promise<boolean> => {
+    setCheckingConnection(true)
+    try {
+      const res = await pb.send<{ ok?: boolean; connected?: boolean }>(
+        '/backend/v1/whatsapp/test-zapi',
+        {
+          method: 'GET',
+        },
+      )
+      const connected = Boolean(res?.ok && res?.connected)
+      setIsWhatsAppConnected(connected)
+      return connected
+    } catch (err) {
+      console.warn('Erro ao verificar conexão Z-API:', err)
+      setIsWhatsAppConnected(false)
+      return false
+    } finally {
+      setCheckingConnection(false)
+    }
+  }, [])
+
+  // Carga inicial e verificação de status do WhatsApp
   useEffect(() => {
     fetchData()
-  }, [fetchData])
+    checkConnectionStatus()
+  }, [fetchData, checkConnectionStatus])
 
   // Realtime subscription para webhook_received e message_processing
   useRealtime('webhook_received', () => {
@@ -228,6 +277,172 @@ export default function WhatsAppAtendimento() {
     }
     return true
   })
+
+  // Manipulação de seleção de arquivo
+  const handleClipClick = async () => {
+    if (!activeCustomer) return
+
+    // Checar conexão do WhatsApp antes de abrir seletor ou permitir envio
+    const connected = await checkConnectionStatus()
+    if (!connected) {
+      toast({
+        title: 'WhatsApp Desconectado',
+        description:
+          'O envio de anexos só funciona com o WhatsApp conectado à Z-API. Conecte o WhatsApp nas configurações.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+      fileInputRef.current.click()
+    }
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const MAX_SIZE_MB = 15
+    const MAX_BYTES = MAX_SIZE_MB * 1024 * 1024
+    if (file.size > MAX_BYTES) {
+      toast({
+        title: 'Arquivo muito grande',
+        description: `O limite máximo por anexo é de ${MAX_SIZE_MB}MB. O arquivo selecionado tem ${(file.size / (1024 * 1024)).toFixed(1)}MB.`,
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Converter para base64 data URL
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      setSelectedFile(file)
+      setFileBase64(result)
+      setFileCaption('')
+      setIsAttachmentModalOpen(true)
+    }
+    reader.onerror = () => {
+      toast({
+        title: 'Erro ao ler arquivo',
+        description: 'Não foi possível carregar os dados do arquivo.',
+        variant: 'destructive',
+      })
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleSendAttachment = async () => {
+    if (!selectedFile || !fileBase64 || !activeCustomer) return
+
+    // Revalidar conexão antes do envio
+    const connected = await checkConnectionStatus()
+    if (!connected) {
+      toast({
+        title: 'WhatsApp Desconectado',
+        description:
+          'O envio de anexos só funciona com o WhatsApp conectado à Z-API e não é permitido neste modo.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setIsSendingAttachment(true)
+    const captionTrimmed = fileCaption.trim()
+    const fileName = selectedFile.name
+    const isImg =
+      selectedFile.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(fileName)
+    const attachType: 'image' | 'document' = isImg ? 'image' : 'document'
+
+    const now = new Date()
+    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(
+      2,
+      '0',
+    )}`
+
+    // Mensagem otimista imediata para aparecer na conversa na hora
+    const optimisticMsg: WhatsAppMessage = {
+      id: `agent-file-${Date.now()}`,
+      text: captionTrimmed,
+      time: timeStr,
+      sender: 'agent',
+      timestamp: now.getTime(),
+      attachmentUrl: fileBase64,
+      attachmentName: fileName,
+      attachmentType: attachType,
+    }
+
+    shouldScrollOnSendRef.current = true
+
+    setCustomers((prev) =>
+      prev.map((c) => {
+        if (c.id === activeCustomer.id) {
+          return {
+            ...c,
+            lastActivity: timeStr,
+            messages: [...c.messages, optimisticMsg],
+          }
+        }
+        return c
+      }),
+    )
+
+    try {
+      const targetPhone = activeCustomer.rawPhone || activeCustomer.phone
+      const sendRes = await sendWhatsAppMessage(targetPhone, captionTrimmed, {
+        document: fileBase64,
+        fileName: fileName,
+        isImage: isImg,
+        caption: captionTrimmed,
+      })
+
+      if (sendRes.ok && sendRes.zapiSuccess) {
+        toast({
+          title: 'Anexo Enviado!',
+          description: isImg
+            ? `Imagem enviada com sucesso para ${activeCustomer.name}.`
+            : `Documento "${fileName}" enviado com sucesso para ${activeCustomer.name}.`,
+        })
+      } else {
+        toast({
+          title: 'Aviso de envio',
+          description: sendRes.zapiError || 'Não foi possível confirmar a entrega do anexo.',
+          variant: 'destructive',
+        })
+      }
+
+      // Fechar modal e limpar estado
+      setIsAttachmentModalOpen(false)
+      setSelectedFile(null)
+      setFileBase64('')
+      setFileCaption('')
+    } catch (err: any) {
+      console.error('Erro ao enviar anexo via Z-API:', err)
+      toast({
+        title: 'Falha no envio do anexo',
+        description: err?.message || 'Erro ao comunicar com a Z-API.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsSendingAttachment(false)
+    }
+  }
+
+  const handleDownloadAttachment = (dataUrl: string, name: string) => {
+    try {
+      const link = document.createElement('a')
+      link.href = dataUrl
+      link.download = name || 'arquivo'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } catch (err) {
+      console.error('Erro ao baixar anexo:', err)
+      window.open(dataUrl, '_blank')
+    }
+  }
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -734,10 +949,91 @@ export default function WhatsAppAtendimento() {
                         </div>
                       )}
 
-                      {/* Texto da mensagem */}
-                      <p className="whitespace-pre-wrap leading-relaxed text-sm break-words">
-                        {msg.text}
-                      </p>
+                      {/* Bloco de Anexo (Imagem ou Documento) se houver */}
+                      {msg.attachmentUrl && (
+                        <div className="mb-2">
+                          {msg.attachmentType === 'image' ||
+                          msg.attachmentUrl.startsWith('data:image/') ||
+                          /\.(jpg|jpeg|png|webp|gif)$/i.test(msg.attachmentName || '') ? (
+                            <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-50 relative group">
+                              <img
+                                src={msg.attachmentUrl}
+                                alt={msg.attachmentName || 'Imagem anexada'}
+                                className="max-h-64 w-auto object-cover rounded-lg cursor-pointer hover:opacity-95 transition-opacity"
+                                onClick={() => {
+                                  setPreviewMediaUrl(msg.attachmentUrl!)
+                                  setPreviewMediaTitle(msg.attachmentName || 'Visualizar Imagem')
+                                }}
+                              />
+                              <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-md p-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPreviewMediaUrl(msg.attachmentUrl!)
+                                    setPreviewMediaTitle(msg.attachmentName || 'Visualizar Imagem')
+                                  }}
+                                  className="text-white hover:text-emerald-300 p-1"
+                                  title="Expandir"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleDownloadAttachment(
+                                      msg.attachmentUrl!,
+                                      msg.attachmentName || 'imagem.png',
+                                    )
+                                  }
+                                  className="text-white hover:text-emerald-300 p-1"
+                                  title="Baixar imagem"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-slate-100/90 transition-colors">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                                  <File className="w-5 h-5" />
+                                </div>
+                                <div className="truncate">
+                                  <p className="text-xs font-semibold text-slate-800 truncate">
+                                    {msg.attachmentName || 'Documento Anexo'}
+                                  </p>
+                                  <span className="text-[10px] text-slate-500 font-medium">
+                                    Documento WhatsApp
+                                  </span>
+                                </div>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  handleDownloadAttachment(
+                                    msg.attachmentUrl!,
+                                    msg.attachmentName || 'documento.pdf',
+                                  )
+                                }
+                                className="h-8 px-2 text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 shrink-0 font-medium"
+                                title="Baixar documento"
+                              >
+                                <Download className="w-3.5 h-3.5 mr-1" />
+                                Baixar
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Texto da mensagem / Legenda */}
+                      {msg.text ? (
+                        <p className="whitespace-pre-wrap leading-relaxed text-sm break-words">
+                          {msg.text}
+                        </p>
+                      ) : null}
 
                       {/* Horário e confirmação de leitura */}
                       <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-slate-500">
@@ -768,16 +1064,62 @@ export default function WhatsAppAtendimento() {
               </div>
             )}
 
-            {/* Barra inferior: Campo de texto para resposta manual, Botão Buscar Produtos e botão Enviar */}
+            {/* Input oculto de arquivo com limites de 15MB e tipos de arquivo permitidos */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.txt"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+
+            {/* Aviso fixo caso o WhatsApp não esteja conectado */}
+            {isWhatsAppConnected === false && (
+              <div className="bg-amber-50 border-t border-amber-200 px-3 py-1.5 flex items-center justify-between text-xs text-amber-900">
+                <div className="flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>
+                    WhatsApp não conectado (modo wa.me ativo). Envio de anexos desabilitado neste
+                    modo.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => checkConnectionStatus()}
+                  disabled={checkingConnection}
+                  className="text-[11px] underline font-medium text-amber-800 hover:text-amber-950"
+                >
+                  {checkingConnection ? 'Verificando...' : 'Reverificar'}
+                </button>
+              </div>
+            )}
+
+            {/* Barra inferior: Anexo (Clipe), Buscar Produtos, Campo de texto e Enviar */}
             <form
               onSubmit={handleSendMessage}
               className="p-3 bg-white border-t border-slate-200 flex items-center gap-2"
             >
+              {/* Botão de Anexo (ícone de clipe) */}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleClipClick}
+                disabled={checkingConnection}
+                className="h-9 w-9 p-0 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 border-slate-200 shrink-0"
+                title={
+                  isWhatsAppConnected === false
+                    ? 'Anexo indisponível: WhatsApp desconectado'
+                    : 'Anexar arquivo (PDF, imagens, documentos até 15MB)'
+                }
+              >
+                <Paperclip className="w-4 h-4" />
+              </Button>
+
               {/* Botão Buscar Produtos ao lado do campo de mensagem */}
               <Button
                 type="button"
                 onClick={handleOpenProductQuote}
-                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold px-2 text-xs shrink-0 transition-colors shadow-2xs"
+                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold px-2 text-xs shrink-0 transition-colors shadow-2xs h-9"
                 title="Buscar produtos no estoque e montar orçamento"
               >
                 <PackageSearch className="w-3.5 h-3.5 mr-1 text-emerald-600" />
@@ -788,12 +1130,12 @@ export default function WhatsAppAtendimento() {
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder={`Responder a ${activeCustomer.name}...`}
-                className="flex-1 bg-slate-50 border-slate-200 focus:bg-white text-sm"
+                className="flex-1 bg-slate-50 border-slate-200 focus:bg-white text-sm h-9"
               />
               <Button
                 type="submit"
                 disabled={!inputText.trim()}
-                className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold px-4 shrink-0 transition-colors shadow-sm"
+                className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold px-4 shrink-0 transition-colors shadow-sm h-9"
               >
                 <Send className="w-4 h-4 mr-1.5" />
                 Enviar
@@ -839,6 +1181,144 @@ export default function WhatsAppAtendimento() {
           }}
         />
       )}
+
+      {/* Modal de Envio de Arquivo com Legenda Opcional */}
+      <Dialog
+        open={isAttachmentModalOpen}
+        onOpenChange={(open) => {
+          if (!open && !isSendingAttachment) {
+            setIsAttachmentModalOpen(false)
+            setSelectedFile(null)
+            setFileBase64('')
+            setFileCaption('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-md p-0 overflow-hidden bg-white">
+          <DialogHeader className="p-4 border-b border-slate-200 bg-slate-50/70">
+            <DialogTitle className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Paperclip className="h-4 w-4 text-emerald-600" />
+              Enviar Anexo via WhatsApp
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="p-5 space-y-4 text-xs">
+            {selectedFile && (
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                  {selectedFile.type.startsWith('image/') ? (
+                    <Eye className="w-5 h-5" />
+                  ) : (
+                    <File className="w-5 h-5" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-slate-900 truncate">{selectedFile.name}</p>
+                  <p className="text-[11px] text-slate-500">
+                    {(selectedFile.size / 1024 / 1024).toFixed(2)} MB •{' '}
+                    {selectedFile.type.startsWith('image/') ? 'Imagem' : 'Documento'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Prévia da imagem se for imagem */}
+            {selectedFile && selectedFile.type.startsWith('image/') && fileBase64 && (
+              <div className="rounded-lg overflow-hidden border border-slate-200 max-h-52 flex items-center justify-center bg-slate-100">
+                <img src={fileBase64} alt="Prévia" className="max-h-52 max-w-full object-contain" />
+              </div>
+            )}
+
+            {/* Campo de legenda opcional */}
+            <div className="space-y-1.5">
+              <label htmlFor="file-caption-input" className="font-semibold text-slate-700 block">
+                Legenda (opcional):
+              </label>
+              <Input
+                id="file-caption-input"
+                value={fileCaption}
+                onChange={(e) => setFileCaption(e.target.value)}
+                placeholder="Escreva uma mensagem junto com o arquivo..."
+                className="text-xs bg-slate-50"
+                disabled={isSendingAttachment}
+              />
+            </div>
+
+            <p className="text-[11px] text-slate-500">
+              O arquivo será enviado diretamente para o WhatsApp do cliente através da conexão ativa
+              da RPA Auto Parts.
+            </p>
+          </div>
+
+          <DialogFooter className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={isSendingAttachment}
+              onClick={() => {
+                setIsAttachmentModalOpen(false)
+                setSelectedFile(null)
+                setFileBase64('')
+                setFileCaption('')
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSendAttachment}
+              disabled={isSendingAttachment || !selectedFile}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs"
+            >
+              {isSendingAttachment ? 'Enviando anexo...' : 'Enviar Arquivo'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Prévia Ampliada de Imagens */}
+      <Dialog
+        open={!!previewMediaUrl}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPreviewMediaUrl(null)
+            setPreviewMediaTitle('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-3xl p-4 bg-black/90 border-slate-800 text-white">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-700">
+            <span className="text-sm font-semibold truncate text-slate-200">
+              {previewMediaTitle || 'Visualização da Imagem'}
+            </span>
+            <div className="flex items-center gap-2">
+              {previewMediaUrl && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    handleDownloadAttachment(previewMediaUrl, previewMediaTitle || 'imagem.png')
+                  }
+                  className="h-7 text-xs bg-slate-800 text-slate-200 border-slate-600 hover:bg-slate-700 hover:text-white"
+                >
+                  <Download className="w-3.5 h-3.5 mr-1" /> Baixar
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center justify-center p-2 max-h-[75vh] overflow-auto">
+            {previewMediaUrl && (
+              <img
+                src={previewMediaUrl}
+                alt={previewMediaTitle || 'Imagem'}
+                className="max-h-[70vh] max-w-full object-contain rounded"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
