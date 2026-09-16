@@ -1,0 +1,19 @@
+{
+  "name": "bridge-souis",
+  "version": "1.0.0",
+  "description": "Ponte HTTP mínima para integração SOU.IS (SQL Server View VW_PRODUTO_PRECO_ESTOQUE para JSON)",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mssql": "^11.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

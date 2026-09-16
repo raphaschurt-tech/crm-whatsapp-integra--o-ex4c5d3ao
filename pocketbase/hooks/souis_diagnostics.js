@@ -77,6 +77,75 @@ routerAdd('GET', '/backend/v1/souis/diagnostics', (e) => {
       rawError,
   )
 
+  // 3. Teste da Bridge HTTP SOU.IS (se configurada via SOIS_BRIDGE_URL ou settings)
+  let bridgeUrl = $os.getenv('SOIS_BRIDGE_URL') || ''
+  const bridgeToken = $os.getenv('SOIS_BRIDGE_TOKEN') || ''
+  if (!bridgeUrl) {
+    try {
+      const setting = $app.findFirstRecordByFilter('settings', "stock_api_url != ''")
+      if (setting) {
+        const rawUrl = setting.getString('stock_api_url')
+        if (rawUrl && (rawUrl.indexOf('sou.is') !== -1 || rawUrl.indexOf('bridge') !== -1)) {
+          bridgeUrl = rawUrl
+        }
+      }
+    } catch (_) {}
+  }
+
+  let bridgeTest = {
+    configured: false,
+    url: null,
+    status: 'bridge_not_configured',
+    message:
+      'Defina a variável SOIS_BRIDGE_URL (e opcionalmente SOIS_BRIDGE_TOKEN) para ativar o teste da ponte.',
+  }
+
+  if (bridgeUrl) {
+    let cleanUrl = bridgeUrl
+    if (cleanUrl.endsWith('/')) {
+      cleanUrl = cleanUrl.slice(0, -1)
+    }
+    const healthUrl = cleanUrl.includes('/health') ? cleanUrl : cleanUrl + '/health'
+
+    const bStartTime = new Date().getTime()
+    try {
+      const bHeaders = { 'Content-Type': 'application/json' }
+      if (bridgeToken) {
+        bHeaders['X-Bridge-Token'] = bridgeToken
+      }
+
+      const bRes = $http.send({
+        url: healthUrl,
+        method: 'GET',
+        headers: bHeaders,
+        timeout: 10,
+      })
+
+      const bLatency = new Date().getTime() - bStartTime
+      bridgeTest = {
+        configured: true,
+        url: cleanUrl,
+        health_endpoint: healthUrl,
+        http_status: bRes.statusCode,
+        status: bRes.statusCode === 200 ? 'online' : 'error',
+        latency_ms: bLatency,
+        response: bRes.json || bRes.body,
+        token_configured: Boolean(bridgeToken),
+      }
+    } catch (bErr) {
+      const bLatency = new Date().getTime() - bStartTime
+      bridgeTest = {
+        configured: true,
+        url: cleanUrl,
+        health_endpoint: healthUrl,
+        status: 'unreachable',
+        latency_ms: bLatency,
+        error: String(bErr),
+        token_configured: Boolean(bridgeToken),
+      }
+    }
+  }
+
   return e.json(200, {
     egress_ip: egressIp,
     egress_error: egressError,
@@ -89,6 +158,7 @@ routerAdd('GET', '/backend/v1/souis/diagnostics', (e) => {
       error_detail: rawError,
       firewall_status: sqlResult === 'open' ? 'liberado' : 'bloqueado',
     },
+    bridge_test: bridgeTest,
     tds_runtime_capability: {
       sandbox: 'PocketBase Goja (JS/ES5 runtime)',
       has_native_tds_driver: false,

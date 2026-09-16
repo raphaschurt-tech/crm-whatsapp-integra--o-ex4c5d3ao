@@ -25,12 +25,13 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
   } else {
     // Opção B: Tentar consultar a bridge configurada
     let bridgeUrl = $os.getenv('SOIS_BRIDGE_URL') || ''
+    let bridgeToken = $os.getenv('SOIS_BRIDGE_TOKEN') || ''
     if (!bridgeUrl) {
       try {
         const setting = $app.findFirstRecordByFilter('settings', "stock_api_url != ''")
         if (setting) {
           const rawUrl = setting.getString('stock_api_url')
-          if (rawUrl && rawUrl.indexOf('sou.is') !== -1) {
+          if (rawUrl && (rawUrl.indexOf('sou.is') !== -1 || rawUrl.indexOf('bridge') !== -1)) {
             bridgeUrl = rawUrl
           }
         }
@@ -38,16 +39,29 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
     }
 
     if (bridgeUrl) {
+      // Normalizar URL da bridge: se terminar com barra, remover
+      if (bridgeUrl.endsWith('/')) {
+        bridgeUrl = bridgeUrl.slice(0, -1)
+      }
+      // Se a URL informada não tiver rota, apontar para /produtos/all
+      let targetUrl = bridgeUrl
+      if (!targetUrl.includes('/produtos')) {
+        targetUrl = targetUrl + '/produtos/all'
+      }
+
+      const headers = {
+        'Content-Type': 'application/json',
+      }
+      if (bridgeToken) {
+        headers['X-Bridge-Token'] = bridgeToken
+      }
+
       try {
         const bridgeRes = $http.send({
-          url: bridgeUrl,
+          url: targetUrl,
           method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-SOU-IS-Database': $os.getenv('SOIS_DB_DATABASE') || 'IS_RPA',
-            'X-SOU-IS-View': $os.getenv('SOIS_DB_VIEW') || 'VW_PRODUTO_PRECO_ESTOQUE',
-          },
-          timeout: 25,
+          headers: headers,
+          timeout: 45,
         })
         if (bridgeRes.statusCode === 200 && bridgeRes.json) {
           rows = Array.isArray(bridgeRes.json)
@@ -58,12 +72,14 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
             success: false,
             error: 'Bridge HTTP retornou status ' + bridgeRes.statusCode,
             details: bridgeRes.body,
+            target_url: targetUrl,
           })
         }
       } catch (errBridge) {
         return e.json(502, {
           success: false,
           error: 'Falha ao conectar com bridge HTTP SOU.IS: ' + String(errBridge),
+          target_url: targetUrl,
         })
       }
     } else {
