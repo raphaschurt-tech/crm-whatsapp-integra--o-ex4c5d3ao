@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-16T16:27:31.687Z",
+  "generatedAt": "2026-09-16T19:46:03.991Z",
   "collections": [
     {
       "name": "users",
@@ -294,6 +294,18 @@
         {
           "name": "is_component",
           "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "price_110",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "price_130",
+          "type": "number",
           "required": false,
           "system": false
         }

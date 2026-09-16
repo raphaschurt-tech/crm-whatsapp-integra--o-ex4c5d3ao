@@ -59,12 +59,23 @@ routerAdd('GET', '/backend/v1/souis/diagnostics', (e) => {
     } else if (errStr.indexOf('refused') !== -1) {
       sqlResult = 'refused'
     } else if (errStr.indexOf('reset') !== -1 || errStr.indexOf('eof') !== -1) {
-      // Server responded at TCP level and reset/closed non-HTTP handshake
-      sqlResult = 'ok'
+      // Server responded at TCP level and reset/closed non-HTTP handshake (port is open and reachable)
+      sqlResult = 'open'
     } else {
       sqlResult = 'failed'
     }
   }
+
+  console.log(
+    '[SOU.IS Diagnostics] Egress IP: ' +
+      egressIp +
+      ' | Result: ' +
+      sqlResult +
+      ' | Latency: ' +
+      latencyMs +
+      'ms | Error: ' +
+      rawError,
+  )
 
   return e.json(200, {
     egress_ip: egressIp,
@@ -72,9 +83,19 @@ routerAdd('GET', '/backend/v1/souis/diagnostics', (e) => {
     sql_server_test: {
       host: host,
       port: port,
+      status: sqlResult === 'open' ? 'porta_aberta' : sqlResult,
       result: sqlResult,
       latency_ms: latencyMs,
       error_detail: rawError,
+      firewall_status: sqlResult === 'open' ? 'liberado' : 'bloqueado',
+    },
+    tds_runtime_capability: {
+      sandbox: 'PocketBase Goja (JS/ES5 runtime)',
+      has_native_tds_driver: false,
+      available_external_io: ['$http.send'],
+      supports_direct_tds_socket: false,
+      recommended_architecture:
+        'Bridge / Middleware HTTP (ex: Node.js/Cloudflare Worker/microservico com mssql/tedious exposto em rota protegida que chama a View e entrega JSON para $http.send)',
     },
   })
 })

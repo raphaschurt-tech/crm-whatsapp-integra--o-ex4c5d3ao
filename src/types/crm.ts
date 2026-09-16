@@ -50,6 +50,8 @@ export interface Product extends RecordModel {
   is_purchased?: boolean
   is_produced?: boolean
   is_component?: boolean
+  price_110?: number
+  price_130?: number
 }
 
 export interface ItemFamily extends RecordModel {
