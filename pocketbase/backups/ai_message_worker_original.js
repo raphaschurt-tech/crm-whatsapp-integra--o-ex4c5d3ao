@@ -1,7 +1,6 @@
-// Hook assíncrono acionado após inserção bem-sucedida em message_processing
-// Processa mensagens com IA (gpt-4o-mini) e envia resposta via Z-API com idempotência estrita
+// BACKUP DE SEGURANÇA pocketbase/hooks/ai_message_worker.js
+// Criado em 2026-09-18 antes do mecanismo de handoff
 onRecordAfterCreateSuccess((e) => {
-  // Limite configurável de interações anteriores a carregar do histórico (ex.: 20 registros = 10 do cliente + 10 da IA)
   const MAX_HISTORY_INTERACTIONS = 20
 
   const record = e.record
@@ -17,7 +16,6 @@ onRecordAfterCreateSuccess((e) => {
   const phone = record.getString('phone')
   const incomingText = record.getString('incomingText')
 
-  // Blindagem estrita: rejeitar phones que sejam @lid ou inválidos (não responder a grupos ou LIDs)
   const isLidOrInvalid = (p) => {
     if (!p) return true
     const s = String(p).trim()
@@ -45,13 +43,11 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  // Mascarar telefone para logs sanitizados
   let maskedPhone = '****'
   if (phone && phone.length > 6) {
     maskedPhone = phone.slice(0, 4) + '****' + phone.slice(-2)
   }
 
-  // 1. Transição atômica de estado para 'processing'
   let procRecord = null
   try {
     procRecord = $app.findRecordById('message_processing', recordId)
@@ -73,7 +69,6 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  // 2. Ler e validar estritamente configurações ativas
   let validConfigRec = null
   let configError = ''
 
@@ -139,7 +134,6 @@ onRecordAfterCreateSuccess((e) => {
   const zapiToken = String(validConfigRec.get('zapi_token') || '')
   const zapiClientToken = String(validConfigRec.get('zapi_client_token') || '')
 
-  // 3. Verificações de segurança no momento da execução
   if (!iaEnabled) {
     console.log(
       '[AI-DISABLED]',
@@ -157,8 +151,6 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  // O filtro de número só é aplicado no modo de teste controlado (IA desligada).
-  // Com a IA habilitada, qualquer número recebido pelo webhook pode ser processado.
   if (!iaEnabled && (!authorizedPhone || phone !== authorizedPhone)) {
     console.log(
       '[UNAUTHORIZED-TEST-NUMBER]',
@@ -176,7 +168,6 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  // 4. Formatação de data/hora atual no fuso America/Sao_Paulo (horário de Brasília)
   let dateTimeSP = ''
   try {
     const now = new Date()
@@ -192,7 +183,6 @@ onRecordAfterCreateSuccess((e) => {
     })
     dateTimeSP = formatter.format(now)
   } catch (_) {
-    // Fallback defensivo em caso de indisponibilidade de formatação específica de locale
     try {
       dateTimeSP = new Date().toISOString()
     } catch (_) {}
@@ -202,7 +192,6 @@ onRecordAfterCreateSuccess((e) => {
     ? '\n\nData/hora atual: ' + dateTimeSP + ' (horário de Brasília).'
     : ''
 
-  // 5. Configurar systemPrompt a partir de settings ou fallback mínimo cordial
   const configuredPrompt = String(validConfigRec.getString('ai_system_prompt') || '').trim()
   const fallbackPrompt =
     'Você é o assistente virtual da RPA AUTO PARTS, especializada em peças automotivas. ' +
@@ -210,8 +199,6 @@ onRecordAfterCreateSuccess((e) => {
     'NÃO invente preços, estoque, prazos ou especificações técnicas. ' +
     'Se não souber uma informação, informe que a equipe humana irá confirmar.'
 
-  // Regra 'Sem estoque, sem preço': a IA de atendimento (WhatsApp) NUNCA deve informar preço de itens sem estoque (stock_quantity = 0 ou nulo).
-  // Se o item estiver sem estoque, deve ser tratado como 'sob consulta' e o cliente deve ser informado que nossa equipe irá consultar a disponibilidade.
   const stockPriceGuardRule =
     '\n\n[REGRA CRÍTICA DE PREÇOS E ESTOQUE]\n' +
     'Quando um item ou peça NÃO possuir estoque disponível (estoque 0, nulo ou indisponível), ' +
@@ -223,9 +210,6 @@ onRecordAfterCreateSuccess((e) => {
     stockPriceGuardRule +
     timeContextLine
 
-  // 6. Buscar histórico da conversa na collection message_processing para o mesmo telefone
-  // Filtrar apenas interações anteriores já concluídas com resposta da IA enviada (replySent = true && aiReplyText != '')
-  // e ignorar o registro atual
   let historyRecords = []
   try {
     const cleanPhone = String(phone || '').replace(/'/g, "\\'")
@@ -256,10 +240,8 @@ onRecordAfterCreateSuccess((e) => {
     historyRecords = []
   }
 
-  // Reverter para ordem cronológica (created ASC)
   const chronologicalHistory = (historyRecords || []).slice().reverse()
 
-  // Montar array messages: system -> histórico (user / assistant) -> mensagem atual do cliente
   const chatMessages = [{ role: 'system', content: effectiveSystemPrompt }]
   let historyTurnsCount = 0
 
@@ -278,13 +260,8 @@ onRecordAfterCreateSuccess((e) => {
     }
   }
 
-  // Mensagem atual do usuário como último turno
   chatMessages.push({ role: 'user', content: incomingText })
 
-  // ==========================================
-  // DETECÇÃO AUTOMÁTICA DE NOME DO CLIENTE PELA IA / REFINAMENTO DE CADASTRO
-  // ==========================================
-  // Verifica se o cliente já está cadastrado ou precisa ser criado / ter o nome atualizado.
   try {
     const cleanPhoneDigits = String(phone || '').replace(/\D/g, '')
     let withoutDdi = cleanPhoneDigits
@@ -307,12 +284,11 @@ onRecordAfterCreateSuccess((e) => {
       }
     } catch (_) {}
 
-    // Se o cliente não existir (por exemplo se a mensagem foi enfileirada diretamente), cria agora
     if (!customerRecord) {
       try {
         const custCol = $app.findCollectionByNameOrId('customers')
         customerRecord = new Record(custCol)
-        customerRecord.set('name', phone) // nome provisório
+        customerRecord.set('name', phone)
         customerRecord.set('phone', phone)
         customerRecord.set('notes', 'Lead originado pelo WhatsApp')
         customerRecord.set('type', 'PF')
@@ -322,7 +298,6 @@ onRecordAfterCreateSuccess((e) => {
         console.log('[AI-WORKER-CUSTOMER-CREATE-ERR]', createErr.message || String(createErr))
       }
     } else {
-      // Se já existe e não tem pipeline_status e não está excluído, define novo_lead
       const isCustDeleted = Boolean(customerRecord.get('deleted'))
       if (!isCustDeleted) {
         const curStatus = String(customerRecord.getString('pipeline_status') || '').trim()
@@ -335,14 +310,11 @@ onRecordAfterCreateSuccess((e) => {
       }
     }
 
-    // Se o nome atual do cliente for provisório (apenas dígitos numéricos ou igual ao telefone)
-    // tenta extrair da mensagem se o cliente se apresentou (ex: "Meu nome é Lucas", "Aqui é o Marcos", "Sou a Renata")
     if (customerRecord) {
       const currentCustName = String(customerRecord.getString('name') || '').trim()
       const isDigitsOnly = /^[0-9+\s()-]+$/.test(currentCustName)
 
       if (isDigitsOnly || currentCustName === phone) {
-        // 1. Tentar extração rápida via regex em português
         let detectedName = ''
         const textSample = incomingText.trim()
 
@@ -355,7 +327,6 @@ onRecordAfterCreateSuccess((e) => {
           const match = textSample.match(namePatterns[np])
           if (match && match[1]) {
             const rawCandidate = match[1].trim()
-            // Evitar falsos positivos com palavras comuns
             const stopWords = [
               'bom',
               'dia',
@@ -378,7 +349,6 @@ onRecordAfterCreateSuccess((e) => {
               rawCandidate.length >= 2 &&
               rawCandidate.length <= 40
             ) {
-              // Capitalizar nome
               detectedName = rawCandidate
                 .split(/\s+/)
                 .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
@@ -388,8 +358,6 @@ onRecordAfterCreateSuccess((e) => {
           }
         }
 
-        // Se regex não pegou, mas o texto contém indícios fortes de apresentação,
-        // podemos pedir à IA uma extração rápida estruturada caso openaiKey ou skipAi esteja disponível
         if (
           !detectedName &&
           (textSample.toLowerCase().includes('nome') ||
@@ -450,12 +418,9 @@ onRecordAfterCreateSuccess((e) => {
             ) {
               detectedName = aiNameResp.replace(/["'.]/g, '').trim()
             }
-          } catch (_) {
-            // Falha silenciosa na IA auxiliar, mantém o provisório
-          }
+          } catch (_) {}
         }
 
-        // Se detectou nome válido, atualiza o registro do cliente
         if (detectedName) {
           customerRecord.set('name', detectedName)
           $app.save(customerRecord)
@@ -475,7 +440,6 @@ onRecordAfterCreateSuccess((e) => {
     console.log('[CUSTOMER-NAME-DETECTION-ERROR]', custDetectErr.message || String(custDetectErr))
   }
 
-  // 7. Início do processamento de IA
   const usedModel = 'gpt-4o-mini'
   console.log(
     '[AI-PROCESSING-START]',
@@ -494,11 +458,6 @@ onRecordAfterCreateSuccess((e) => {
   let aiError = ''
   let usedProvider = ''
 
-  // Tentativa de chamada OpenAI gpt-4o-mini com timeout de 15 segundos.
-  // Se a chave OpenAI existir mas a chamada falhar (ex.: HTTP 429 sem créditos),
-  // recai automaticamente para o gateway nativo Skip AI ($ai.chat) em vez de
-  // abandonar o processamento. Isso mantém o atendimento disponível mesmo quando a
-  // conta OpenAI do cliente fica sem créditos.
   if (openaiKey) {
     try {
       const openAiRes = $http.send({
@@ -545,8 +504,6 @@ onRecordAfterCreateSuccess((e) => {
       aiError = openAiEx.message || String(openAiEx)
     }
 
-    // Fallback: se a chamada OpenAI falhou (429 sem créditos, timeout, rede, etc.),
-    // tenta o gateway nativo do Skip antes de desistir.
     if (!aiReply && aiError) {
       console.log(
         '[AI-FALLBACK-TO-SKIP-GATEWAY]',
@@ -579,7 +536,6 @@ onRecordAfterCreateSuccess((e) => {
       }
     }
   } else {
-    // Caso openai_api_key não esteja preenchida, utiliza o gateway nativo Skip AI (alias 'fast' mapeado para gpt-4o-mini)
     try {
       const chatRes = $ai.chat({
         model: 'fast',
@@ -602,7 +558,6 @@ onRecordAfterCreateSuccess((e) => {
     }
   }
 
-  // 5. Validação do resultado da IA
   if (!aiReply || aiError) {
     console.log(
       '[AI-PROCESSING-ERROR]',
@@ -622,11 +577,9 @@ onRecordAfterCreateSuccess((e) => {
       $app.save(procRecord)
     } catch (_) {}
 
-    // Não envia resposta automática se a IA falhar
     return e.next()
   }
 
-  // Log de sucesso da IA
   console.log(
     '[AI-PROCESSING-SUCCESS]',
     JSON.stringify({
@@ -637,31 +590,6 @@ onRecordAfterCreateSuccess((e) => {
     }),
   )
 
-  // ==========================================
-  // DETECÇÃO E PROCESSAMENTO DO MARCADOR DE TRANSFERÊNCIA PARA HUMANO
-  // ==========================================
-  // O marcador [TRANSFERIR-HUMANO] pode vir em qualquer posição do texto retornado pela IA,
-  // com tolerância a espaços, quebras de linha e múltiplas ocorrências.
-  // Deve ser completamente removido antes do envio para que o cliente NUNCA o veja.
-  // Se houver qualquer ocorrência, após o envio com sucesso ativamos o modo humano (human_mode = true, paused_by = "transferencia_ia").
-  const transferMarkerRegex = /\[\s*TRANSFERIR\s*-\s*HUMANO\s*\]/gi
-  const hasTransferMarker = transferMarkerRegex.test(aiReply)
-
-  let cleanAiReply = aiReply
-  if (hasTransferMarker) {
-    cleanAiReply = aiReply.replace(transferMarkerRegex, '').trim()
-    console.log(
-      '[HUMAN-TRANSFER-DETECTED]',
-      JSON.stringify({
-        timestamp: new Date().toISOString(),
-        messageId: messageId,
-        senderPhone: maskedPhone,
-        hasTransferMarker: true,
-      }),
-    )
-  }
-
-  // 6. Envio da resposta pela Z-API
   const zapiHeaders = {
     'Content-Type': 'application/json',
     'Client-Token': zapiClientToken,
@@ -685,7 +613,7 @@ onRecordAfterCreateSuccess((e) => {
       headers: zapiHeaders,
       body: JSON.stringify({
         phone: phone,
-        message: cleanAiReply,
+        message: aiReply,
       }),
       timeout: 15,
     })
@@ -705,7 +633,6 @@ onRecordAfterCreateSuccess((e) => {
     zapiErrorDetail = zapiErr.message || String(zapiErr)
   }
 
-  // 7. Atualização final de estado e logs sanitizados de envio
   if (zapiSuccess) {
     console.log(
       '[ZAPI-REPLY-SENT]',
@@ -720,61 +647,13 @@ onRecordAfterCreateSuccess((e) => {
     try {
       procRecord.set('status', 'completed')
       procRecord.set('replySent', true)
-      procRecord.set('aiReplyText', cleanAiReply)
+      procRecord.set('aiReplyText', aiReply)
       procRecord.set('aiModel', usedModel)
       procRecord.set('zapiStatus', zapiHttpStatus)
       procRecord.set('errorMessage', '')
       $app.save(procRecord)
     } catch (saveCompletedErr) {
       console.log('[COMPLETED-SAVE-ERR]', saveCompletedErr.message || String(saveCompletedErr))
-    }
-
-    // Se houve transferência para humano, ativar human_mode na collection chat_control
-    if (hasTransferMarker && phone) {
-      try {
-        let chatControlRec = null
-        try {
-          const foundControls = $app.findRecordsByFilter(
-            'chat_control',
-            'phone = {:phone}',
-            '-created',
-            1,
-            0,
-            { phone: phone },
-          )
-          if (foundControls && foundControls.length > 0) {
-            chatControlRec = foundControls[0]
-          }
-        } catch (_) {}
-
-        if (chatControlRec) {
-          chatControlRec.set('human_mode', true)
-          chatControlRec.set('paused_by', 'transferencia_ia')
-          $app.save(chatControlRec)
-        } else {
-          const controlCol = $app.findCollectionByNameOrId('chat_control')
-          const newCtrl = new Record(controlCol)
-          newCtrl.set('phone', phone)
-          newCtrl.set('human_mode', true)
-          newCtrl.set('paused_by', 'transferencia_ia')
-          $app.save(newCtrl)
-        }
-
-        console.log(
-          '[HUMAN-MODE-ON]',
-          JSON.stringify({
-            timestamp: new Date().toISOString(),
-            phone: maskedPhone,
-            paused_by: 'transferencia_ia',
-            messageId: messageId,
-          }),
-        )
-      } catch (transferSaveErr) {
-        console.log(
-          '[CHAT-CONTROL-TRANSFER-SAVE-ERR]',
-          transferSaveErr.message || String(transferSaveErr),
-        )
-      }
     }
   } else {
     console.log(
@@ -791,7 +670,7 @@ onRecordAfterCreateSuccess((e) => {
     try {
       procRecord.set('status', 'failed')
       procRecord.set('replySent', false)
-      procRecord.set('aiReplyText', cleanAiReply)
+      procRecord.set('aiReplyText', aiReply)
       procRecord.set('aiModel', usedModel)
       procRecord.set('zapiStatus', zapiHttpStatus)
       procRecord.set('errorMessage', zapiErrorDetail || 'Falha no envio Z-API')

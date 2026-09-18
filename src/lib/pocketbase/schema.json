@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-18T00:00:30.955Z",
+  "generatedAt": "2026-09-18T00:34:17.064Z",
   "collections": [
     {
       "name": "users",
@@ -1456,6 +1456,52 @@
         "CREATE INDEX idx_order_items_order ON order_items (order_id)",
         "CREATE INDEX idx_order_items_product ON order_items (product_id)"
       ]
+    },
+    {
+      "name": "chat_control",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != \"\"",
+        "view": "@request.auth.id != \"\"",
+        "create": "@request.auth.id != \"\"",
+        "update": "@request.auth.id != \"\"",
+        "delete": "@request.auth.id != \"\""
+      },
+      "fields": [
+        {
+          "name": "phone",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "human_mode",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "paused_by",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE UNIQUE INDEX idx_chat_control_phone ON chat_control (phone)"]
     }
   ]
 }

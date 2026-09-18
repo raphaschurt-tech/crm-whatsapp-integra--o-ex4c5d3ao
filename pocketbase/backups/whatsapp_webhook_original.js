@@ -1,4 +1,5 @@
-// Rota POST explícita no caminho principal do webhook do WhatsApp (Z-API)
+// BACKUP DE SEGURANÇA pocketbase/hooks/whatsapp_webhook.js
+// Criado em 2026-09-18 antes do mecanismo de handoff
 routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   let rawBody = e.requestInfo().body
   let body = {}
@@ -13,9 +14,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     body = rawBody
   }
 
-  // ADIÇÃO E: Verificação NO INÍCIO do processamento contra grupos (@g.us)
-  // Se o remetente (from) contiver "@g.us", retornar resposta "ignored_group" com status 200, sem processar pela IA.
-  // IMPORTANTE: NÃO bloquear "@lid" — JIDs com @lid seguem o fluxo normal existente de resolução via whatsapp_lid_maps.
   const earlyCheckCandidates = [
     body.from,
     body.sender,
@@ -37,7 +35,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // 1. Extrair campos do payload Z-API de forma segura e resiliente a diferentes formatos
   const eventType =
     body.type ||
     body.event ||
@@ -55,18 +52,15 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // Função auxiliar interna para verificar se uma string/JID é @lid ou número interno inválido
   const isLidString = (val) => {
     if (!val) return false
     const s = String(val).trim()
     if (s.toLowerCase().includes('@lid')) return true
     const digits = s.replace(/\D/g, '')
-    // WhatsApp LIDs têm normalmente 14 ou 15 dígitos sem código DDI/DDD válido
     if (digits.length >= 14) return true
     return false
   }
 
-  // Função auxiliar interna para extrair o LID limpo (apenas dígitos)
   const extractLidDigits = (val) => {
     if (!val) return ''
     const s = String(val).trim()
@@ -78,7 +72,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     return clean.replace(/\D/g, '')
   }
 
-  // Função auxiliar interna para verificar se é grupo do WhatsApp
   const isGroupString = (val) => {
     if (!val) return false
     const s = String(val).trim().toLowerCase()
@@ -93,12 +86,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       (body.data.key.fromMe === true || body.data.key.fromMe === 'true')),
   )
 
-  // Extração resiliente de telefone e detecção de LID/Grupo.
-  // Quando isFromMe = true (mensagem enviada pelo celular ou número conectado),
-  // o destinatário real da conversa deve ter PRECEDÊNCIA sobre o próprio número conectado:
-  // - data.key.remoteJid (Baileys / Z-API data)
-  // - body.to, body.recipient, body.recipientPhone, body.destPhone, body.chatId, body.chat
-  // - se ainda for o connectedPhone, buscar conversa mais recente no banco antes de cair em si mesmo
   const candidatePhones = isFromMe
     ? [
         body.data && body.data.key && body.data.key.remoteJid,
@@ -154,14 +141,12 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       }
     }
 
-    // Se contiver @s.whatsapp.net ou @c.us, extrair o prefixo
     let cleanCandidate = candStr
     if (cleanCandidate.includes('@')) {
       cleanCandidate = cleanCandidate.split('@')[0]
     }
 
     const digits = cleanCandidate.replace(/\D/g, '')
-    // Se não é grupo, não contém @lid e tem comprimento típico de telefone (10 a 13 dígitos)
     if (!candStr.toLowerCase().includes('@lid') && !candStr.toLowerCase().includes('@g.us')) {
       if (digits.length >= 10 && digits.length <= 13) {
         resolvedPhone = digits
@@ -170,7 +155,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // Também verificar campos explícitos de LID no payload caso não tenha sido pego nos candidatePhones
   if (!detectedLid) {
     const lidCandidates = [
       body.lid,
@@ -200,23 +184,16 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // Se é grupo, ignorar imediatamente (não processar nem poluir chat/IA)
   if (isGroup) {
     console.log('[WEBHOOK-IGNORED-GROUP]', JSON.stringify({ instanceId: maskedInstanceId }))
     return e.json(200, { status: 'ignored_group' })
   }
 
-  // Normalização preliminar de telefone
   let normalizedPhone = resolvedPhone
   if (normalizedPhone.length === 10 || normalizedPhone.length === 11) {
     normalizedPhone = '55' + normalizedPhone
   }
 
-  // ==========================================
-  // MAPA PERSISTIDO LID -> TELEFONE REAL
-  // ==========================================
-  // 1. ALIMENTAÇÃO: se for mensagem de cliente (!isFromMe) e tivermos tanto LID quanto telefone real válido,
-  // gravamos ou atualizamos na coleção whatsapp_lid_maps
   if (
     !isFromMe &&
     detectedLid &&
@@ -271,8 +248,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // 2. RESOLUÇÃO: se for fromMe=true e NÃO tiver telefone resolvido, mas tiver detectedLid (ou hasLid),
-  // consultamos whatsapp_lid_maps para encontrar o telefone real correspondente!
   if (isFromMe && !normalizedPhone && detectedLid) {
     try {
       const foundLidRecords = $app.findRecordsByFilter(
@@ -307,8 +282,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // Se a mensagem foi enviada por nós (fromMe=true) e o número resolvido ainda coincidir com o
-  // número conectado configurado em settings (ou body.connectedPhone), precisamos resolver o cliente real!
   if (isFromMe) {
     let connectedNumberDigits = ''
     if (body.connectedPhone) {
@@ -335,8 +308,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       } catch (_) {}
     }
 
-    // Se o número resolvido é exatamente o número conectado, o webhook da Z-API não informou o cliente diretamente
-    // nos campos primários. Nesse caso, buscamos o cliente ativo mais recente que nos enviou mensagem nos últimos 30 minutos!
     if (normalizedPhone && connectedNumberDigits && normalizedPhone === connectedNumberDigits) {
       try {
         const recentIncoming = $app.findRecordsByFilter(
@@ -385,7 +356,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // Extrair messageId
   let messageId = ''
   if (body.messageId) {
     messageId = String(body.messageId)
@@ -395,13 +365,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     messageId = String(body.data.key.id)
   }
 
-  // ==========================================
-  // DETECÇÃO DE MENSAGEM DE ÁUDIO
-  // ==========================================
   let isAudio = false
   let rawAudioUrl = ''
 
-  // 1. Verificar objeto body.audio (formato padrão Z-API: { audioUrl: '...', mimeType: '...', ptt: true })
   if (body.audio) {
     isAudio = true
     if (typeof body.audio === 'object' && body.audio !== null) {
@@ -413,7 +379,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // 2. Verificar body.audioMessage
   if (!rawAudioUrl && body.audioMessage) {
     isAudio = true
     if (typeof body.audioMessage === 'object' && body.audioMessage !== null) {
@@ -425,13 +390,11 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // 3. Verificar body.audioUrl direto
   if (!rawAudioUrl && body.audioUrl) {
     isAudio = true
     rawAudioUrl = String(body.audioUrl)
   }
 
-  // 4. Verificar outros campos (type/messageType = 'audio' ou 'ptt' ou 'voice')
   const msgType = String(body.type || body.messageType || body.mediaType || '').toLowerCase()
   if (
     msgType === 'audio' ||
@@ -445,7 +408,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // 5. Verificar em body.data se veio aninhado (ex: body.data.message.audioMessage)
   if (body.data && typeof body.data === 'object') {
     const dataMsg = body.data.message || body.data
     if (dataMsg.audioMessage) {
@@ -457,7 +419,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // Extrair texto da mensagem (caso venha preenchido ou seja mensagem de texto)
   let incomingText = ''
   if (body.text) {
     if (typeof body.text === 'object' && body.text !== null) {
@@ -475,7 +436,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // Log sanitizado de recepção do webhook (sem expor credenciais nem telefones completos)
   console.log(
     '[WEBHOOK-RECEIVED]',
     JSON.stringify({
@@ -490,7 +450,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }),
   )
 
-  // 4. Seleção e validação estrita da configuração ativa (necessária para OpenAI key se for áudio)
   let validConfigRec = null
   let configError = ''
 
@@ -517,9 +476,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     configError = 'Erro ao consultar configurações: ' + (err.message || String(err))
   }
 
-  // ==========================================
-  // TRANSCRIÇÃO DE ÁUDIO VIA WHISPER (SE FOR ÁUDIO E NÃO FOR FROM_ME)
-  // ==========================================
   let transcriptionFailed = false
   let transcriptionError = ''
 
@@ -558,7 +514,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
           }),
         )
 
-        // Baixar arquivo de áudio com timeout de 30s
         let audioFile = null
         try {
           audioFile = $filesystem.fileFromURL(rawAudioUrl, 30)
@@ -569,7 +524,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         }
 
         if (audioFile) {
-          const MAX_WHISPER_SIZE = 25 * 1024 * 1024 // 25 MB limite Whisper
+          const MAX_WHISPER_SIZE = 25 * 1024 * 1024
           const fileSize = audioFile.size || 0
 
           if (fileSize > MAX_WHISPER_SIZE) {
@@ -586,16 +541,14 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
               }),
             )
           } else {
-            // Garantir nome com extensão apropriada reconhecida pelo Whisper (.ogg, .mp3, etc.)
             let fileName = audioFile.name || 'audio.ogg'
             if (!fileName.includes('.')) {
               fileName = fileName + '.ogg'
             }
 
-            // Preparar multipart form data
             const formData = new FormData()
             formData.append('model', 'whisper-1')
-            formData.append('language', 'pt') // Otimizar para português
+            formData.append('language', 'pt')
             formData.append('file', audioFile)
 
             console.log(
@@ -668,26 +621,10 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // ==========================================
-  // DEDUPLICAÇÃO DE ECOS (fromMe = true)
-  // ==========================================
-  // Quando uma mensagem é enviada (pelo atendente via send-message / AgentSentMessage
-  // ou pela IA via Z-API no ai_message_worker), a Z-API devolve um eco assíncrono
-  // "ReceivedCallback" com fromMe=true e messageId diferente do original.
-  // Para evitar duplicar a mensagem no chat e evitar que respostas da IA recebam badge de "Atendente RPA",
-  // verificamos se este eco já existe:
-  // (a) um webhook_received recente do mesmo telefone, fromMe=true, com o mesmo texto (últimos ~10 minutos); OU
-  // (b) um message_processing recente do mesmo telefone cujo aiReplyText seja igual ao texto do eco.
-  // Se existir qualquer um dos dois, NÃO gravamos o eco (return early sem persistir nada).
-  // NOTA TÉCNICA GOJA: os campos phone/text/chat são do tipo JSON em webhook_received.
-  // item.get() retorna JSONRaw na runtime Goja do PocketBase v0.36.
-  // Usar item.getString('phone') e item.getString('text') com JSON.parse para extrair
-  // confiavelmente o telefone e o texto, conforme padrão da migration 0037.
   if (isFromMe && normalizedPhone) {
     const trimmedIncoming = incomingText ? incomingText.trim() : ''
     const tenMinutesAgoIso = new Date(Date.now() - 10 * 60 * 1000).toISOString()
 
-    // (a) Verificar se já existe webhook_received recente com mesmo telefone, fromMe=true e mesmo texto
     let isDuplicateWebhook = false
     try {
       const recentFromMeList = $app.findRecordsByFilter(
@@ -701,13 +638,11 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
 
       for (let i = 0; i < recentFromMeList.length; i++) {
         const item = recentFromMeList[i]
-        // Se for o mesmíssimo messageId (já persistido), é duplicação direta
         if (messageId && item.getString('messageId') === messageId) {
           isDuplicateWebhook = true
           break
         }
 
-        // Extrair telefone com getString + JSON.parse resiliente
         let itemPhone = ''
         const rawPhoneStr = item.getString('phone') || item.getString('chat') || ''
         if (rawPhoneStr) {
@@ -733,7 +668,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
           itemDigits.length === 10 || itemDigits.length === 11 ? '55' + itemDigits : itemDigits
 
         if (normItemDigits === normalizedPhone) {
-          // Extrair texto com getString + JSON.parse resiliente
           let itemText = ''
           const rawTextStr = item.getString('text') || ''
           if (rawTextStr) {
@@ -780,7 +714,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       return e.json(200, { status: 'ignored_duplicate_echo' })
     }
 
-    // (b) Verificar se já existe message_processing recente cujo aiReplyText seja igual ao texto do eco
     let isDuplicateAiReply = false
     try {
       const recentAiList = $app.findRecordsByFilter(
@@ -827,7 +760,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // 2. Persistir na collection webhook_received (para rastreabilidade/auditoria)
   try {
     if (normalizedPhone) {
       const colWebhook = $app.findCollectionByNameOrId('webhook_received')
@@ -837,7 +769,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       rec.set('fromMe', isFromMe)
       rec.set('text', body.text || { message: incomingText })
       rec.set('chat', { phone: normalizedPhone })
-      // Se for fromMe vindo do celular do atendente, marcar explicitamente role: 'agent'
       if (isFromMe) {
         rec.set('sender', body.sender || { role: 'agent', source: 'mobile_whatsapp' })
       } else {
@@ -853,9 +784,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       }
       $app.save(rec)
     } else {
-      // PLANO B: Se não foi possível resolver o telefone real (ex: LID ainda não mapeado),
-      // persistir mesmo assim com o LID ou identificador para não perder a mensagem,
-      // emitindo log de WARNING explícito para acompanhamento do operador/desenvolvedor.
       const fallbackTarget = detectedLid || 'unknown_lid'
       console.warn(
         '[WEBHOOK-LID-UNRESOLVED-FALLBACK-WARNING]',
@@ -897,18 +825,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     console.log('[WEBHOOK-PERSIST-ERR]', err.message || String(err))
   }
 
-  // ==========================================
-  // AUTO-CRIAÇÃO / PROMOÇÃO DE CLIENTE NO CRM (WHATSAPP LEAD)
-  // ==========================================
-  // Se o número de telefone de uma mensagem recebida de cliente (!isFromMe) ainda não tem cliente
-  // cadastrado no banco, cria automaticamente o registro de cliente usando:
-  // - Nome: o próprio número como nome provisório (a IA no worker tentará detectar se o cliente se apresentar)
-  // - Telefone: o número normalizado
-  // - Nota: 'Lead originado pelo WhatsApp'
-  // - pipeline_status: 'novo_lead'
-  // Se o cliente já existir:
-  // - Se deleted=true, é ignorado (nunca recria nem reativa o mesmo telefone excluído)
-  // - Se não tiver pipeline_status (vazio/limpo), ao receber mensagem define "novo_lead" (promove a lead real por interação)
   if (
     !isFromMe &&
     normalizedPhone &&
@@ -958,13 +874,11 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
           }),
         )
       } else {
-        // Se o cliente foi excluído (deleted=true), não recriar nem alterar
         const isCustDeleted = Boolean(existingCustomer.get('deleted'))
         if (!isCustDeleted) {
           const currentPipelineStatus = String(
             existingCustomer.getString('pipeline_status') || '',
           ).trim()
-          // Se o cliente não tem pipeline_status (vazio), promove-o a lead real ("novo_lead") por interação
           if (!currentPipelineStatus) {
             existingCustomer.set('pipeline_status', 'novo_lead')
             $app.save(existingCustomer)
@@ -992,160 +906,14 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
-  // ==========================================
-  // COMANDOS DE CONTROLE HANDOFF NO FLUXO fromMe (/atendente, /ia)
-  // ==========================================
-  // Ponto exato de interceptação: APÓS a resolução de LID/destino (normalizedPhone do cliente resolvido)
-  // e ANTES da validação de enfileiramento e do descarte ignored_from_me.
   if (isFromMe) {
-    const rawCmdText = (incomingText || '').trim()
-    const lowerCmdText = rawCmdText.toLowerCase()
-
-    if (
-      lowerCmdText === '/atendente' ||
-      lowerCmdText.startsWith('/atendente ') ||
-      lowerCmdText.startsWith('/atendente\n') ||
-      lowerCmdText.startsWith('/atendente\t')
-    ) {
-      if (normalizedPhone) {
-        try {
-          let chatControlRec = null
-          try {
-            const foundControls = $app.findRecordsByFilter(
-              'chat_control',
-              'phone = {:phone}',
-              '-created',
-              1,
-              0,
-              { phone: normalizedPhone },
-            )
-            if (foundControls && foundControls.length > 0) {
-              chatControlRec = foundControls[0]
-            }
-          } catch (_) {}
-
-          if (chatControlRec) {
-            chatControlRec.set('human_mode', true)
-            chatControlRec.set('paused_by', 'comando_atendente')
-            $app.save(chatControlRec)
-          } else {
-            const controlCol = $app.findCollectionByNameOrId('chat_control')
-            const newCtrl = new Record(controlCol)
-            newCtrl.set('phone', normalizedPhone)
-            newCtrl.set('human_mode', true)
-            newCtrl.set('paused_by', 'comando_atendente')
-            $app.save(newCtrl)
-          }
-
-          console.log(
-            '[HUMAN-MODE-ON]',
-            JSON.stringify({
-              timestamp: new Date().toISOString(),
-              phone: maskedSenderPhone,
-              paused_by: 'comando_atendente',
-              command: rawCmdText,
-            }),
-          )
-        } catch (ctrlErr) {
-          console.log('[CHAT-CONTROL-SAVE-ERR]', ctrlErr.message || String(ctrlErr))
-        }
-      }
-      return e.json(200, { status: 'human_mode_activated' })
-    }
-
-    if (
-      lowerCmdText === '/ia' ||
-      lowerCmdText.startsWith('/ia ') ||
-      lowerCmdText.startsWith('/ia\n') ||
-      lowerCmdText.startsWith('/ia\t')
-    ) {
-      if (normalizedPhone) {
-        try {
-          let chatControlRec = null
-          try {
-            const foundControls = $app.findRecordsByFilter(
-              'chat_control',
-              'phone = {:phone}',
-              '-created',
-              1,
-              0,
-              { phone: normalizedPhone },
-            )
-            if (foundControls && foundControls.length > 0) {
-              chatControlRec = foundControls[0]
-            }
-          } catch (_) {}
-
-          if (chatControlRec) {
-            chatControlRec.set('human_mode', false)
-            $app.save(chatControlRec)
-          } else {
-            const controlCol = $app.findCollectionByNameOrId('chat_control')
-            const newCtrl = new Record(controlCol)
-            newCtrl.set('phone', normalizedPhone)
-            newCtrl.set('human_mode', false)
-            $app.save(newCtrl)
-          }
-
-          console.log(
-            '[HUMAN-MODE-OFF]',
-            JSON.stringify({
-              timestamp: new Date().toISOString(),
-              phone: maskedSenderPhone,
-              command: rawCmdText,
-            }),
-          )
-        } catch (ctrlErr) {
-          console.log('[CHAT-CONTROL-SAVE-ERR]', ctrlErr.message || String(ctrlErr))
-        }
-      }
-      return e.json(200, { status: 'human_mode_deactivated' })
-    }
-
     return e.json(200, { status: 'ignored_from_me' })
   }
 
-  // ==========================================
-  // GATE DE MODO HUMANO ANTES DE QUALQUER ENFILEIRAMENTO/IA
-  // ==========================================
-  // Se a conversa estiver com human_mode = true na collection chat_control,
-  // retornar ignored_human_mode com status 200, sem enfileirar e sem chamar OpenAI.
-  if (normalizedPhone) {
-    try {
-      const activeControls = $app.findRecordsByFilter(
-        'chat_control',
-        'phone = {:phone}',
-        '-created',
-        1,
-        0,
-        { phone: normalizedPhone },
-      )
-      if (activeControls && activeControls.length > 0) {
-        const isHumanMode = Boolean(activeControls[0].get('human_mode'))
-        if (isHumanMode) {
-          console.log(
-            '[IGNORED-HUMAN-MODE]',
-            JSON.stringify({
-              timestamp: new Date().toISOString(),
-              phone: maskedSenderPhone,
-              paused_by: activeControls[0].getString('paused_by') || 'unknown',
-              messageId: messageId,
-            }),
-          )
-          return e.json(200, { status: 'ignored_human_mode' })
-        }
-      }
-    } catch (checkHumanErr) {
-      console.log('[CHECK-HUMAN-MODE-ERR]', checkHumanErr.message || String(checkHumanErr))
-    }
-  }
-
-  // Regra: Sem telefone real válido (não enfileirar @lid nem número fantasma para IA)
   if (!normalizedPhone || normalizedPhone.length < 10 || normalizedPhone.length > 13) {
     return e.json(200, { status: 'ignored_invalid_phone_or_lid' })
   }
 
-  // Regra: Somente mensagens de texto (ou áudio com texto transcrito com sucesso)
   if (!incomingText || typeof incomingText !== 'string' || !incomingText.trim()) {
     if (isAudio && transcriptionFailed) {
       return e.json(200, {
@@ -1156,7 +924,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     return e.json(200, { status: 'ignored_non_text' })
   }
 
-  // Regra: Ignorar mensagens sem messageId confiável
   if (!messageId || !messageId.trim()) {
     console.log(
       '[AI-PROCESSING-ERROR]',
@@ -1169,7 +936,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     return e.json(200, { status: 'ignored_missing_message_id' })
   }
 
-  // Validação das configurações da Z-API
   if (configError || !validConfigRec) {
     console.log(
       '[SETTINGS-INVALID]',
@@ -1202,7 +968,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   )
   const configuredAiModel = String(validConfigRec.get('ai_model') || 'gpt-4o-mini')
 
-  // Verificação de IA Habilitada
   if (!iaEnabled) {
     if (authorizedPhone && normalizedPhone !== authorizedPhone) {
       console.log(
@@ -1227,7 +992,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     return e.json(200, { status: 'ai_disabled' })
   }
 
-  // 5. Idempotência e Enfileiramento seguro em message_processing
   try {
     const existing = $app.findRecordsByFilter(
       'message_processing',
@@ -1256,7 +1020,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         return e.json(200, { status: 'already_processed_or_processing' })
       }
 
-      // Se falhou anteriormente (failed), atualiza para received para permitir reprocessamento controlado
       const rec = existing[0]
       rec.set('status', 'received')
       rec.set('incomingText', incomingText.trim())
@@ -1267,7 +1030,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       }
       $app.save(rec)
     } else {
-      // Criar novo registro de processamento no estado 'received'
       const colMsg = $app.findCollectionByNameOrId('message_processing')
       const rec = new Record(colMsg)
       rec.set('messageId', messageId)
@@ -1295,7 +1057,6 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     )
   }
 
-  // Responde HTTP 200 rapidamente ao webhook da Z-API
   return e.json(200, {
     status: 'received',
     transcribed: isAudio,
