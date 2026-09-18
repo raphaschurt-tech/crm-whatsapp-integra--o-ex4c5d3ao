@@ -31,7 +31,11 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
         const setting = $app.findFirstRecordByFilter('settings', "stock_api_url != ''")
         if (setting) {
           const rawUrl = setting.getString('stock_api_url')
-          if (rawUrl && (rawUrl.indexOf('sou.is') !== -1 || rawUrl.indexOf('bridge') !== -1)) {
+          if (
+            rawUrl &&
+            !rawUrl.trim().startsWith('{') &&
+            (rawUrl.indexOf('sou.is') !== -1 || rawUrl.indexOf('bridge') !== -1)
+          ) {
             bridgeUrl = rawUrl
           }
         }
