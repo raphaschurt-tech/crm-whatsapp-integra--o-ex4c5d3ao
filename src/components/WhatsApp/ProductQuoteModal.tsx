@@ -140,6 +140,9 @@ export function ProductQuoteModal({
 
   // Adicionar produto ao orçamento
   const handleAddProduct = (prod: Product) => {
+    const hasStock = Boolean(prod.stock_quantity && prod.stock_quantity > 0)
+    const initialUnitPrice = hasStock ? prod.price : 0
+
     setSelectedItems((prev) => {
       const existing = prev.find((item) => item.product.id === prod.id)
       if (existing) {
@@ -160,8 +163,8 @@ export function ProductQuoteModal({
         {
           product: prod,
           quantity: 1,
-          unitPrice: prod.price,
-          total: prod.price,
+          unitPrice: initialUnitPrice,
+          total: initialUnitPrice,
         },
       ]
     })
@@ -686,9 +689,15 @@ export function ProductQuoteModal({
                           )}
 
                           <div className="flex items-center gap-3 mt-1 text-xs">
-                            <span className="font-extrabold text-emerald-700 text-sm">
-                              {formatCurrency(prod.price)}
-                            </span>
+                            {isOutOfStock ? (
+                              <span className="font-bold text-amber-700 text-xs bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                Sob consulta
+                              </span>
+                            ) : (
+                              <span className="font-extrabold text-emerald-700 text-sm">
+                                {formatCurrency(prod.price)}
+                              </span>
+                            )}
 
                             <span
                               className={`text-[11px] font-medium px-1.5 py-0.2 rounded ${
@@ -857,11 +866,29 @@ export function ProductQuoteModal({
 
                         {/* Preço Unitário */}
                         <div className="col-span-4">
-                          <Label className="text-[10px] text-slate-500">Unitário (R$)</Label>
+                          <div className="flex items-center justify-between">
+                            <Label className="text-[10px] text-slate-500">Unitário (R$)</Label>
+                            {(!item.product.stock_quantity || item.product.stock_quantity <= 0) &&
+                              item.unitPrice === 0 && (
+                                <span className="text-[9px] text-amber-700 font-bold bg-amber-50 px-1 rounded">
+                                  Sob consulta
+                                </span>
+                              )}
+                          </div>
                           <Input
                             type="number"
                             step="0.01"
-                            value={item.unitPrice}
+                            placeholder={
+                              !item.product.stock_quantity || item.product.stock_quantity <= 0
+                                ? 'Sob consulta'
+                                : '0.00'
+                            }
+                            value={
+                              item.unitPrice === 0 &&
+                              (!item.product.stock_quantity || item.product.stock_quantity <= 0)
+                                ? ''
+                                : item.unitPrice
+                            }
                             onChange={(e) =>
                               handleUpdatePrice(item.product.id, parseFloat(e.target.value) || 0)
                             }

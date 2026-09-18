@@ -227,6 +227,24 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
   }
 
   // Persistir / Atualizar na coleção 'products'
+  // ADIÇÃO B (PROTEÇÃO SYNC): Whitelist estrita de campos gravados no sync.
+  // souis_sync.js e qualquer sync NUNCA devem alterar products.reserved_quantity nem order_items.*.
+  // reserved_quantity e order_items são geridos com exclusividade pelo módulo de pedidos/PCP.
+  const ALLOWED_SYNC_FIELDS = [
+    'name',
+    'price',
+    'cost',
+    'stock_quantity',
+    'price_110',
+    'price_130',
+    'supplier',
+    'is_purchased',
+    'product_type',
+    'min_stock',
+    'external_id',
+    'description',
+  ]
+
   const productsCol = $app.findCollectionByNameOrId('products')
   let createdCount = 0
   let updatedCount = 0
@@ -244,34 +262,40 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
     const price130 = p.preco_130
     const stockQty = p.saldo_prod
 
+    const fieldsToSet = {
+      name: name,
+      price: basePrice,
+      cost: basePrice,
+      stock_quantity: stockQty,
+      price_110: price110,
+      price_130: price130,
+      supplier: 'SOU.IS',
+      is_purchased: true,
+      product_type: 'comprado',
+    }
+
     try {
       const existing = $app.findFirstRecordByData('products', 'sku', sku)
-      existing.set('name', name)
-      existing.set('price', basePrice)
-      existing.set('cost', basePrice)
-      existing.set('stock_quantity', stockQty)
-      existing.set('price_110', price110)
-      existing.set('price_130', price130)
-      existing.set('supplier', 'SOU.IS')
-      existing.set('is_purchased', true)
-      existing.set('product_type', 'comprado')
+      for (let f = 0; f < ALLOWED_SYNC_FIELDS.length; f++) {
+        const fieldName = ALLOWED_SYNC_FIELDS[f]
+        if (fieldsToSet[fieldName] !== undefined) {
+          existing.set(fieldName, fieldsToSet[fieldName])
+        }
+      }
       $app.save(existing)
       updatedCount++
     } catch (_) {
       const rec = new Record(productsCol)
       rec.set('sku', sku)
-      rec.set('name', name)
-      rec.set('price', basePrice)
-      rec.set('cost', basePrice)
-      rec.set('stock_quantity', stockQty)
       rec.set('min_stock', 1)
-      rec.set('price_110', price110)
-      rec.set('price_130', price130)
-      rec.set('supplier', 'SOU.IS')
-      rec.set('is_purchased', true)
-      rec.set('product_type', 'comprado')
       rec.set('external_id', 'SOU_' + sku)
       rec.set('description', 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE')
+      for (let f = 0; f < ALLOWED_SYNC_FIELDS.length; f++) {
+        const fieldName = ALLOWED_SYNC_FIELDS[f]
+        if (fieldsToSet[fieldName] !== undefined) {
+          rec.set(fieldName, fieldsToSet[fieldName])
+        }
+      }
       $app.save(rec)
       createdCount++
     }

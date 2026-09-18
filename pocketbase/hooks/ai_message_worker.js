@@ -210,8 +210,18 @@ onRecordAfterCreateSuccess((e) => {
     'NÃO invente preços, estoque, prazos ou especificações técnicas. ' +
     'Se não souber uma informação, informe que a equipe humana irá confirmar.'
 
+  // Regra 'Sem estoque, sem preço': a IA de atendimento (WhatsApp) NUNCA deve informar preço de itens sem estoque (stock_quantity = 0 ou nulo).
+  // Se o item estiver sem estoque, deve ser tratado como 'sob consulta' e o cliente deve ser informado que nossa equipe irá consultar a disponibilidade.
+  const stockPriceGuardRule =
+    '\n\n[REGRA CRÍTICA DE PREÇOS E ESTOQUE]\n' +
+    'Quando um item ou peça NÃO possuir estoque disponível (estoque 0, nulo ou indisponível), ' +
+    'NUNCA informe valor ou preço ao cliente (o valor é sempre "Sob consulta"). ' +
+    'Informe apenas que a peça está sob consulta e que nossa equipe de consultores humanos verificará a disponibilidade e orçamento.'
+
   const effectiveSystemPrompt =
-    (configuredPrompt.length > 0 ? configuredPrompt : fallbackPrompt) + timeContextLine
+    (configuredPrompt.length > 0 ? configuredPrompt : fallbackPrompt) +
+    stockPriceGuardRule +
+    timeContextLine
 
   // 6. Buscar histórico da conversa na collection message_processing para o mesmo telefone
   // Filtrar apenas interações anteriores já concluídas com resposta da IA enviada (replySent = true && aiReplyText != '')

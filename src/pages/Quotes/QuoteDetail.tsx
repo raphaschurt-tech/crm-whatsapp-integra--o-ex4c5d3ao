@@ -23,7 +23,27 @@ import {
   getPurchaseRequestsForQuote,
   createPurchaseFromQuoteItems,
 } from '@/services/purchaseRequestsService'
-import { Quote, QuoteItem, Payment, PurchaseRequest } from '@/types/crm'
+import { Quote, QuoteItem, Payment, PurchaseRequest, Order, User } from '@/types/crm'
+import { convertQuoteToOrder, getActiveOrderByQuoteId } from '@/services/ordersService'
+import { getUsers } from '@/services/users'
+import { useAuth } from '@/hooks/use-auth'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { ShoppingBag } from 'lucide-react'
 import {
   formatCurrency,
   openWhatsApp,
@@ -58,14 +78,23 @@ import { toast } from '@/hooks/use-toast'
 export default function QuoteDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user: currentUser } = useAuth()
 
   const [quote, setQuote] = useState<Quote | null>(null)
   const [items, setItems] = useState<QuoteItem[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
   const [linkedPurchases, setLinkedPurchases] = useState<PurchaseRequest[]>([])
+  const [existingOrder, setExistingOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+
+  // Estados da conversão em pedido (Slice 1A - PCP)
+  const [convertModalOpen, setConvertModalOpen] = useState(false)
+  const [convertingOrder, setConvertingOrder] = useState(false)
+  const [promisedDeliveryDate, setPromisedDeliveryDate] = useState('')
+  const [responsibleUserId, setResponsibleUserId] = useState('')
+  const [systemUsers, setSystemUsers] = useState<User[]>([])
 
   // Send Quote Dialog
   const [sendQuoteModal, setSendQuoteModal] = useState(false)
@@ -86,16 +115,24 @@ export default function QuoteDetail() {
     setLoading(true)
     setLoadError(null)
     try {
-      const q = await getQuote(id)
+      const [q, qItems, pList, purchases, ord, uList] = await Promise.all([
+        getQuote(id),
+        getQuoteItems(id),
+        getPaymentsForQuote(id),
+        getPurchaseRequestsForQuote(id),
+        getActiveOrderByQuoteId(id),
+        getUsers().catch(() => []),
+      ])
       setQuote(q)
-      const qItems = await getQuoteItems(id)
       setItems(qItems)
-      const pList = await getPaymentsForQuote(id)
       setPayments(pList)
       setAmount(q.total.toString())
-
-      const purchases = await getPurchaseRequestsForQuote(id)
       setLinkedPurchases(purchases)
+      setExistingOrder(ord)
+      setSystemUsers(uList || [])
+      if (currentUser && !responsibleUserId) {
+        setResponsibleUserId(currentUser.id)
+      }
     } catch (e: any) {
       console.error(e)
       setLoadError(e?.message || 'Falha ao carregar orçamento.')
@@ -280,6 +317,54 @@ export default function QuoteDetail() {
     }
   }
 
+  // Ação de conversão em pedido (Slice 1A)
+  const handleOpenConvertModal = () => {
+    if (existingOrder) {
+      navigate('/pedidos')
+      return
+    }
+    if (currentUser && !responsibleUserId) {
+      setResponsibleUserId(currentUser.id)
+    }
+    setConvertModalOpen(true)
+  }
+
+  const handleConfirmConvertToOrder = async () => {
+    if (!quote) return
+    setConvertingOrder(true)
+    try {
+      const res = await convertQuoteToOrder({
+        quoteId: quote.id,
+        promisedDeliveryDate: promisedDeliveryDate || undefined,
+        responsibleUserId: responsibleUserId || (currentUser ? currentUser.id : undefined),
+      })
+
+      if (res.success && res.order) {
+        toast({
+          title: res.idempotent ? 'Pedido já existente' : 'Pedido gerado com sucesso!',
+          description: `Código do pedido: ${res.order.code}`,
+        })
+        setConvertModalOpen(false)
+        await loadData()
+        navigate('/pedidos')
+      } else {
+        toast({
+          title: 'Erro ao converter orçamento',
+          description: res.error || 'Falha na operação.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro inesperado',
+        description: err.message || 'Falha ao converter orçamento.',
+        variant: 'destructive',
+      })
+    } finally {
+      setConvertingOrder(false)
+    }
+  }
+
   const handleSendWhatsAppPaymentLink = () => {
     const phone = quote.expand?.customer?.phone || ''
     const msg = buildPaymentLinkMessage(quote.number, quote.total, paymentLink)
@@ -433,6 +518,21 @@ export default function QuoteDetail() {
               className="bg-emerald-500 hover:bg-emerald-600 text-white text-xs"
             >
               <FileCheck className="h-4 w-4 mr-1" /> Enviar Comprovante
+            </Button>
+          )}
+
+          {/* Botão "Converter em pedido" (visível apenas para status aprovado ou pago) - Slice 1A */}
+          {(quote.status === 'aprovado' || quote.status === 'pago') && (
+            <Button
+              onClick={handleOpenConvertModal}
+              className={`text-xs font-bold text-white shadow-xs ${
+                existingOrder
+                  ? 'bg-indigo-600 hover:bg-indigo-700'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              }`}
+            >
+              <ShoppingBag className="h-4 w-4 mr-1.5" />
+              {existingOrder ? `Ver Pedido (${existingOrder.code})` : 'Converter em Pedido'}
             </Button>
           )}
 

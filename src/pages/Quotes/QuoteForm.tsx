@@ -112,7 +112,9 @@ export default function QuoteForm() {
 
   const handleProductChange = (index: number, productId: string) => {
     const prod = products.find((p) => p.id === productId)
-    const price = prod ? prod.price : 0
+    // Se sem estoque (stock_quantity <= 0 ou nulo), não pré-preencher preço (fica 0 até colaborador digitar)
+    const hasStock = Boolean(prod && prod.stock_quantity && prod.stock_quantity > 0)
+    const price = hasStock && prod ? prod.price : 0
     setItems((prev) => {
       const next = [...prev]
       next[index] = {
@@ -346,11 +348,15 @@ export default function QuoteForm() {
                           <SelectValue placeholder="Selecione um produto" />
                         </SelectTrigger>
                         <SelectContent>
-                          {products.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.name} - Est: {p.stock_quantity} ({formatCurrency(p.price)})
-                            </SelectItem>
-                          ))}
+                          {products.map((p) => {
+                            const isOutOfStock = !p.stock_quantity || p.stock_quantity <= 0
+                            return (
+                              <SelectItem key={p.id} value={p.id}>
+                                {p.name} - Est: {p.stock_quantity || 0} (
+                                {isOutOfStock ? 'Sob consulta' : formatCurrency(p.price)})
+                              </SelectItem>
+                            )
+                          })}
                         </SelectContent>
                       </Select>
                     </div>
@@ -367,11 +373,32 @@ export default function QuoteForm() {
                     </div>
 
                     <div className="md:col-span-2 space-y-1">
-                      <Label className="text-xs">Preço Unit. (R$)</Label>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Preço Unit. (R$)</Label>
+                        {selectedProd &&
+                          (!selectedProd.stock_quantity || selectedProd.stock_quantity <= 0) &&
+                          item.unit_price === 0 && (
+                            <span className="text-[10px] text-amber-700 font-bold bg-amber-50 px-1 rounded">
+                              Sob consulta
+                            </span>
+                          )}
+                      </div>
                       <Input
                         type="number"
                         step="0.01"
-                        value={item.unit_price}
+                        placeholder={
+                          selectedProd &&
+                          (!selectedProd.stock_quantity || selectedProd.stock_quantity <= 0)
+                            ? 'Sob consulta'
+                            : '0.00'
+                        }
+                        value={
+                          item.unit_price === 0 &&
+                          selectedProd &&
+                          (!selectedProd.stock_quantity || selectedProd.stock_quantity <= 0)
+                            ? ''
+                            : item.unit_price
+                        }
                         onChange={(e) => handlePriceChange(index, parseFloat(e.target.value) || 0)}
                         className="bg-white"
                       />

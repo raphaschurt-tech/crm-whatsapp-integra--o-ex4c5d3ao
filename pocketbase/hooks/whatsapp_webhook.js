@@ -13,6 +13,30 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     body = rawBody
   }
 
+  // ADIÇÃO E: Verificação NO INÍCIO do processamento contra grupos (@g.us)
+  // Se o remetente (from) contiver "@g.us", retornar resposta "ignored_group" com status 200, sem processar pela IA.
+  // IMPORTANTE: NÃO bloquear "@lid" — JIDs com @lid seguem o fluxo normal existente de resolução via whatsapp_lid_maps.
+  const earlyCheckCandidates = [
+    body.from,
+    body.sender,
+    body.chatId,
+    body.phone,
+    body.data && body.data.key && body.data.key.remoteJid,
+    body.data && body.data.key && body.data.key.participant,
+  ]
+  for (let c = 0; c < earlyCheckCandidates.length; c++) {
+    const cand = earlyCheckCandidates[c]
+    if (cand) {
+      const candStr = String(
+        typeof cand === 'object' ? cand.phone || cand.id || '' : cand,
+      ).toLowerCase()
+      if (candStr.includes('@g.us')) {
+        console.log('[WEBHOOK-IGNORED-GROUP-EARLY]', JSON.stringify({ source: candStr }))
+        return e.json(200, { status: 'ignored_group' })
+      }
+    }
+  }
+
   // 1. Extrair campos do payload Z-API de forma segura e resiliente a diferentes formatos
   const eventType =
     body.type ||

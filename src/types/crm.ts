@@ -52,6 +52,7 @@ export interface Product extends RecordModel {
   is_component?: boolean
   price_110?: number
   price_130?: number
+  reserved_quantity?: number
 }
 
 export interface ItemFamily extends RecordModel {
@@ -219,6 +220,41 @@ export interface PurchaseRequest extends RecordModel {
     supplier?: Customer
     created_by?: User
     quote?: Quote
+    [key: string]: any
+  }
+}
+
+export type OrderFinancialStatus = 'pendente' | 'pago'
+export type OrderCommercialStatus = 'aberto' | 'cancelado'
+
+export interface OrderItem extends RecordModel {
+  order_id: string
+  product_id: string
+  sku?: string
+  name: string
+  unit_price: number
+  quantity_ordered: number
+  quantity_reserved: number
+  line_total: number
+  expand?: {
+    product_id?: Product
+    [key: string]: any
+  }
+}
+
+export interface Order extends RecordModel {
+  code: string
+  quote_id: string
+  client_name: string
+  total: number
+  financial_status: OrderFinancialStatus
+  commercial_status: OrderCommercialStatus
+  promised_delivery_date?: string
+  responsible?: string
+  expand?: {
+    quote_id?: Quote
+    responsible?: User
+    items?: OrderItem[]
     [key: string]: any
   }
 }

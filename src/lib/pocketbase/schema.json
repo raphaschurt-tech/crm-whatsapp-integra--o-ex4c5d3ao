@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-16T20:32:12.304Z",
+  "generatedAt": "2026-09-18T00:00:30.955Z",
   "collections": [
     {
       "name": "users",
@@ -305,6 +305,12 @@
         },
         {
           "name": "price_130",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "reserved_quantity",
           "type": "number",
           "required": false,
           "system": false
@@ -1282,6 +1288,173 @@
         "CREATE INDEX idx_pr_status ON purchase_requests (status)",
         "CREATE INDEX idx_pr_created ON purchase_requests (created DESC)",
         "CREATE INDEX `idx_pr_quote` ON `purchase_requests` (quote)"
+      ]
+    },
+    {
+      "name": "orders",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "code",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "quote_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "quotes"
+        },
+        {
+          "name": "client_name",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "total",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "financial_status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["pendente", "pago"]
+        },
+        {
+          "name": "commercial_status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["aberto", "cancelado"]
+        },
+        {
+          "name": "promised_delivery_date",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "responsible",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_orders_code ON orders (code)",
+        "CREATE INDEX idx_orders_quote ON orders (quote_id)",
+        "CREATE INDEX idx_orders_commercial_status ON orders (commercial_status)",
+        "CREATE INDEX idx_orders_financial_status ON orders (financial_status)"
+      ]
+    },
+    {
+      "name": "order_items",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "order_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "orders"
+        },
+        {
+          "name": "product_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "products"
+        },
+        {
+          "name": "sku",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "unit_price",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "quantity_ordered",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "quantity_reserved",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "line_total",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_order_items_order_product ON order_items (order_id, product_id)",
+        "CREATE INDEX idx_order_items_order ON order_items (order_id)",
+        "CREATE INDEX idx_order_items_product ON order_items (product_id)"
       ]
     }
   ]

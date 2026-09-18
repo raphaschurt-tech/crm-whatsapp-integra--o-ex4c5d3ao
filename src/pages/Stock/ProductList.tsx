@@ -326,7 +326,13 @@ export default function ProductList() {
                         </div>
                       </td>
                       <td className="p-4 font-semibold text-slate-900">
-                        {formatCurrency(p.price || 0)}
+                        {!p.stock_quantity || p.stock_quantity <= 0 ? (
+                          <span className="text-amber-700 font-semibold text-xs italic bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                            Sob consulta
+                          </span>
+                        ) : (
+                          formatCurrency(p.price || 0)
+                        )}
                       </td>
                       <td className="p-4 text-xs font-semibold text-slate-600">
                         {p.cost ? formatCurrency(p.cost || 0) : '—'}

@@ -196,14 +196,27 @@ export default function ProductDetail() {
             <DollarSign className="h-4 w-4 text-emerald-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-emerald-600">
-              {formatCurrency(product.price)}
-            </div>
-            {product.cost && product.cost > 0 && (
-              <p className="text-xs text-slate-500 mt-1">
-                Custo: {formatCurrency(product.cost)} | Margem:{' '}
-                {(((product.price - product.cost) / product.price) * 100).toFixed(1)}%
-              </p>
+            {!product.stock_quantity || product.stock_quantity <= 0 ? (
+              <div>
+                <div className="text-xl font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded inline-block border border-amber-200">
+                  Sob consulta
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5 italic">
+                  Item sem estoque imediato. Valor sob consulta.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-emerald-600">
+                  {formatCurrency(product.price)}
+                </div>
+                {product.cost && product.cost > 0 && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    Custo: {formatCurrency(product.cost)} | Margem:{' '}
+                    {(((product.price - product.cost) / product.price) * 100).toFixed(1)}%
+                  </p>
+                )}
+              </>
             )}
           </CardContent>
         </Card>

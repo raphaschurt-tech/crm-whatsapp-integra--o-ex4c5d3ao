@@ -280,7 +280,13 @@ export default function FamilyList() {
                                   {p.cost ? formatCurrency(p.cost || 0) : 'R$ 0,00'}
                                 </td>
                                 <td className="py-3 px-4 text-right font-medium text-slate-700">
-                                  {formatCurrency(p.price || 0)}
+                                  {!p.stock_quantity || p.stock_quantity <= 0 ? (
+                                    <span className="text-amber-700 font-semibold text-xs italic bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                      Sob consulta
+                                    </span>
+                                  ) : (
+                                    formatCurrency(p.price || 0)
+                                  )}
                                 </td>
                               </tr>
                             )
