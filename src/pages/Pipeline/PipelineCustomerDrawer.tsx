@@ -434,7 +434,7 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => navigate('/atendimento')}
+                  onClick={() => navigate('/whatsapp')}
                   className="h-7 text-xs text-slate-600 hover:text-slate-900"
                 >
                   Ir para Atendimento

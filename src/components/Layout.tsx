@@ -32,9 +32,9 @@ export default function Layout() {
 
   const navItems = [
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { label: 'Pipeline', path: '/pipeline', icon: Filter },
+    { label: 'Pipeline', path: '/funil', icon: Filter },
     { label: 'Pipeline de Compras', path: '/pipeline-compras', icon: ShoppingBag },
-    { label: 'Atendimento', path: '/atendimento', icon: MessageCircle },
+    { label: 'Atendimento', path: '/whatsapp', icon: MessageCircle },
     { label: 'Orçamentos', path: '/orcamentos', icon: FileText },
     { label: 'Pedidos', path: '/pedidos', icon: ShoppingCart },
     { label: 'Clientes', path: '/clientes', icon: Users },
@@ -60,8 +60,9 @@ export default function Layout() {
     const path = location.pathname
     if (path === '/') return 'Dashboard'
     if (path.startsWith('/pipeline-compras')) return 'Pipeline de Compras'
-    if (path.startsWith('/pipeline')) return 'Pipeline de Vendas'
-    if (path.startsWith('/atendimento')) return 'Atendimento WhatsApp'
+    if (path.startsWith('/pipeline') || path.startsWith('/funil')) return 'Pipeline de Vendas'
+    if (path.startsWith('/atendimento') || path.startsWith('/whatsapp'))
+      return 'Atendimento WhatsApp'
     if (path.startsWith('/orcamentos/novo')) return 'Novo Orçamento'
     if (path.startsWith('/orcamentos') && path.includes('/editar')) return 'Editar Orçamento'
     if (path.startsWith('/orcamentos/')) return 'Detalhes do Orçamento'
