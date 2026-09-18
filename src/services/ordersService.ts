@@ -1,4 +1,4 @@
-import { pb } from '@/lib/pocketbase/client'
+import pb from '@/lib/pocketbase/client'
 import { withRetry } from '@/lib/retry'
 import { Order, OrderItem } from '@/types/crm'
 
@@ -36,7 +36,7 @@ export async function getOrders(): Promise<Order[]> {
       })
       return records
     },
-    { maxAttempts: 3, delayMs: 300, backoffMultiplier: 1.5 },
+    { retries: 3, delayMs: 300 },
   )
 }
 
@@ -51,7 +51,7 @@ export async function getOrder(id: string): Promise<Order> {
       })
       return record
     },
-    { maxAttempts: 3, delayMs: 300, backoffMultiplier: 1.5 },
+    { retries: 3, delayMs: 300 },
   )
 }
 
@@ -68,7 +68,7 @@ export async function getOrderItems(orderId: string): Promise<OrderItem[]> {
       })
       return records
     },
-    { maxAttempts: 3, delayMs: 300, backoffMultiplier: 1.5 },
+    { retries: 3, delayMs: 300 },
   )
 }
 
@@ -89,7 +89,7 @@ export async function getActiveOrderByQuoteId(quoteId: string): Promise<Order | 
         return null
       }
     },
-    { maxAttempts: 3, delayMs: 300, backoffMultiplier: 1.5 },
+    { retries: 3, delayMs: 300 },
   )
 }
 

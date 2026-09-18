@@ -16,6 +16,7 @@ import {
   Send,
   AlertTriangle,
   ArrowUpRight,
+  Loader2,
 } from 'lucide-react'
 import { getQuote, getQuoteItems, updateQuoteStatus, deleteQuote } from '@/services/quotes'
 import { getPaymentsForQuote, createPayment } from '@/services/payments'
@@ -36,6 +37,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -43,7 +45,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ShoppingBag } from 'lucide-react'
 import {
   formatCurrency,
   openWhatsApp,
@@ -57,22 +58,6 @@ import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
-import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { toast } from '@/hooks/use-toast'
 
 export default function QuoteDetail() {
@@ -860,6 +845,123 @@ export default function QuoteDetail() {
               className="bg-emerald-500 hover:bg-emerald-600 text-white"
             >
               {uploading ? 'Salvando...' : 'Confirmar e Aprovar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Conversão em Pedido (Slice 1A) */}
+      <Dialog open={convertModalOpen} onOpenChange={setConvertModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <ShoppingBag className="h-5 w-5 text-blue-600" />
+              Converter em Pedido
+            </DialogTitle>
+            <DialogDescription>
+              Crie o pedido formal a partir deste orçamento. O sistema gerará o código sequencial e
+              reservará as quantidades em estoque para os itens disponíveis.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Orçamento:</span>
+                <span className="font-bold text-slate-800">{quote.number}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Cliente:</span>
+                <span className="font-semibold text-slate-800">
+                  {quote.expand?.customer?.name || 'Não informado'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Valor Total:</span>
+                <span className="font-bold text-emerald-700">{formatCurrency(quote.total)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Status Financeiro:</span>
+                <span className="font-semibold uppercase text-slate-700">
+                  {quote.status === 'pago' ? 'Pago' : 'Pendente (Aprovado)'}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label
+                htmlFor="promised-delivery-date"
+                className="text-xs font-semibold text-slate-700"
+              >
+                Prazo Prometido de Entrega
+              </Label>
+              <Input
+                id="promised-delivery-date"
+                type="date"
+                value={promisedDeliveryDate}
+                onChange={(e) => setPromisedDeliveryDate(e.target.value)}
+                className="text-xs"
+              />
+              <p className="text-[11px] text-slate-500">
+                Data combinada com o cliente para entrega (opcional).
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="responsible-user" className="text-xs font-semibold text-slate-700">
+                Responsável pelo Pedido
+              </Label>
+              <Select
+                value={responsibleUserId || currentUser?.id || ''}
+                onValueChange={(val) => setResponsibleUserId(val)}
+              >
+                <SelectTrigger id="responsible-user" className="text-xs">
+                  <SelectValue placeholder="Selecione o responsável" />
+                </SelectTrigger>
+                <SelectContent>
+                  {systemUsers.map((u) => (
+                    <SelectItem key={u.id} value={u.id} className="text-xs">
+                      {u.name || u.email} {u.id === currentUser?.id ? '(Você)' : ''}
+                    </SelectItem>
+                  ))}
+                  {systemUsers.length === 0 && currentUser && (
+                    <SelectItem value={currentUser.id} className="text-xs">
+                      {currentUser.name || currentUser.email} (Você)
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setConvertModalOpen(false)}
+              disabled={convertingOrder}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleConfirmConvertToOrder}
+              disabled={convertingOrder}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+            >
+              {convertingOrder ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  Convertendo...
+                </>
+              ) : (
+                <>
+                  <ShoppingBag className="h-4 w-4 mr-1.5" />
+                  Confirmar Conversão
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

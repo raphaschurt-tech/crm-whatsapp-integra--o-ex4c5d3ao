@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Filter,
   ShoppingBag,
+  ShoppingCart,
   MessageCircle,
   FileText,
   Users,
@@ -35,6 +36,7 @@ export default function Layout() {
     { label: 'Pipeline de Compras', path: '/pipeline-compras', icon: ShoppingBag },
     { label: 'Atendimento', path: '/atendimento', icon: MessageCircle },
     { label: 'Orçamentos', path: '/orcamentos', icon: FileText },
+    { label: 'Pedidos', path: '/pedidos', icon: ShoppingCart },
     { label: 'Clientes', path: '/clientes', icon: Users },
     ...(isAdmin ? [{ label: 'Usuários', path: '/usuarios', icon: Users }] : []),
     { label: 'Produtos', path: '/produtos', icon: Package },
@@ -64,6 +66,7 @@ export default function Layout() {
     if (path.startsWith('/orcamentos') && path.includes('/editar')) return 'Editar Orçamento'
     if (path.startsWith('/orcamentos/')) return 'Detalhes do Orçamento'
     if (path.startsWith('/orcamentos')) return 'Orçamentos'
+    if (path.startsWith('/pedidos')) return 'Pedidos de Venda'
     if (path.startsWith('/clientes/novo')) return 'Novo Cliente'
     if (path.startsWith('/clientes') && path.includes('/editar')) return 'Editar Cliente'
     if (path.startsWith('/clientes/')) return 'Detalhes do Cliente'
