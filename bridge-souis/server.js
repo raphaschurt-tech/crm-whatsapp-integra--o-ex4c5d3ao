@@ -5,6 +5,9 @@
  */
 
 require('dotenv').config()
+const dns = require('dns').promises
+const http = require('http')
+const https = require('https')
 const express = require('express')
 const sql = require('mssql')
 
@@ -39,21 +42,67 @@ const VIEW_NAME = process.env.VIEW_NAME || 'VW_PRODUTO_PRECO_ESTOQUE'
 // Pool compartilhado de conexões SQL Server
 let poolPromise = null
 
+async function resolveHostIpv4(host) {
+  try {
+    const lookupResult = await dns.lookup(host, { family: 4 })
+    return lookupResult.address
+  } catch (err) {
+    throw new Error(`[SOUIS-BRIDGE] Falha ao resolver IPv4 de ${host}: ${err.message}`)
+  }
+}
+
+async function fetchEgressIp() {
+  return new Promise((resolve) => {
+    const req = https.get('https://api.ipify.org?format=json', { timeout: 5000 }, (res) => {
+      let data = ''
+      res.on('data', (chunk) => {
+        data += chunk
+      })
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data)
+          resolve(parsed.ip || null)
+        } catch {
+          resolve(null)
+        }
+      })
+    })
+
+    req.on('error', () => {
+      resolve(null)
+    })
+
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(null)
+    })
+  })
+}
+
 function getPool() {
   if (!poolPromise) {
-    poolPromise = new sql.ConnectionPool(sqlConfig)
-      .connect()
-      .then((pool) => {
-        console.log(
-          `[SQL Server] Conectado com sucesso a ${sqlConfig.server}:${sqlConfig.port}/${sqlConfig.database}`,
-        )
-        return pool
-      })
-      .catch((err) => {
-        console.error('[SQL Server] Erro ao conectar:', err)
-        poolPromise = null
-        throw err
-      })
+    poolPromise = (async () => {
+      const targetHost = sqlConfig.server
+      console.log(`[SQL Server] Resolvendo IPv4 de ${targetHost}...`)
+      const resolvedIp = await resolveHostIpv4(targetHost)
+      console.log(`[SQL Server] IPv4 resolvido para ${targetHost}: ${resolvedIp}`)
+
+      const dynamicConfig = {
+        ...sqlConfig,
+        server: resolvedIp,
+      }
+
+      const pool = new sql.ConnectionPool(dynamicConfig)
+      await pool.connect()
+      console.log(
+        `[SQL Server] Conectado com sucesso a ${dynamicConfig.server} (${targetHost}):${sqlConfig.port}/${sqlConfig.database}`,
+      )
+      return pool
+    })().catch((err) => {
+      console.error('[SQL Server] Erro ao conectar:', err)
+      poolPromise = null
+      throw err
+    })
   }
   return poolPromise
 }
@@ -90,6 +139,10 @@ app.get('/health', async (req, res) => {
   let sqlLatencyMs = 0
   let sqlError = null
 
+  // Consultar egress IP e resolver registro A do host SQL em paralelo
+  const egressPromise = fetchEgressIp()
+  const resolvedIpPromise = resolveHostIpv4(sqlConfig.server).catch(() => null)
+
   try {
     const pool = await getPool()
     const result = await pool.request().query('SELECT 1 AS alive')
@@ -105,6 +158,8 @@ app.get('/health', async (req, res) => {
     }
   }
 
+  const [egressIp, resolvedIp] = await Promise.all([egressPromise, resolvedIpPromise])
+
   const isHealthy = sqlStatus === 'conectado' || sqlStatus === 'ok'
 
   return res.status(isHealthy ? 200 : 503).json({
@@ -112,8 +167,10 @@ app.get('/health', async (req, res) => {
     service: 'souis-bridge',
     timestamp: new Date().toISOString(),
     latency_ms: sqlLatencyMs,
+    egress_ip: egressIp,
     sql_server: {
       host: sqlConfig.server,
+      resolved_ip: resolvedIp,
       port: sqlConfig.port,
       database: sqlConfig.database,
       view: VIEW_NAME,
