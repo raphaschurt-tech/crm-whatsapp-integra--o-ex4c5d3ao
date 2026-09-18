@@ -7,17 +7,13 @@
 // Expressão cron UTC: 0 12,15,18,21 * * 1-5
 
 cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
-  const bridgeToken = $os.getenv('SOIS_BRIDGE_TOKEN') || ''
-  if (!bridgeToken) {
-    console.log('[SOUIS-SYNC-SKIPPED] token ausente')
-    return
-  }
-
+  let bridgeToken = $os.getenv('SOIS_BRIDGE_TOKEN') || ''
   let bridgeUrl = $os.getenv('SOIS_BRIDGE_URL') || ''
-  if (!bridgeUrl) {
-    try {
-      const setting = $app.findFirstRecordByFilter('settings', "stock_api_url != ''")
-      if (setting) {
+
+  try {
+    const setting = $app.findFirstRecordByFilter('settings', "id != ''")
+    if (setting) {
+      if (!bridgeUrl) {
         const rawUrl = setting.getString('stock_api_url')
         if (
           rawUrl &&
@@ -27,7 +23,18 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
           bridgeUrl = rawUrl
         }
       }
-    } catch (_) {}
+      if (!bridgeToken) {
+        const rawToken = setting.getString('stock_api_token')
+        if (rawToken) {
+          bridgeToken = rawToken
+        }
+      }
+    }
+  } catch (_) {}
+
+  if (!bridgeToken) {
+    console.log('[SOUIS-SYNC-SKIPPED] token ausente')
+    return
   }
 
   if (!bridgeUrl) {
@@ -266,6 +273,10 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
           rec.set(fieldName, fieldsToSet[fieldName])
         }
       }
+      // Campos obrigatórios ou auxiliares com valores padrão
+      rec.set('reserved_quantity', 0)
+      rec.set('is_produced', false)
+      rec.set('is_component', false)
       $app.save(rec)
       createdCount++
     }

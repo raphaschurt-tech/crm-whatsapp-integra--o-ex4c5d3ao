@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-18T21:18:59.509Z",
+  "generatedAt": "2026-09-18T22:44:31.063Z",
   "collections": [
     {
       "name": "users",
@@ -639,6 +639,12 @@
         },
         {
           "name": "ai_model",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "stock_api_token",
           "type": "text",
           "required": false,
           "system": false
