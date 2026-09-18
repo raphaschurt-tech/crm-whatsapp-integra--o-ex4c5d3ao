@@ -31,9 +31,19 @@ export default function Login() {
     setLoading(false)
 
     if (error) {
+      const isNetworkError =
+        (error instanceof TypeError && error.message.includes('fetch')) ||
+        error?.status === 0 ||
+        (error?.status === undefined && error?.name === 'ClientResponseError') ||
+        error?.isAbort
+
+      const description = isNetworkError
+        ? 'Não foi possível conectar ao servidor. Verifique a conexão ou se o serviço está temporariamente indisponível.'
+        : error?.message || 'E-mail ou senha inválidos. Tente novamente.'
+
       toast({
-        title: 'Erro de Autenticação',
-        description: 'E-mail ou senha inválidos. Tente novamente.',
+        title: isNetworkError ? 'Servidor Indisponível' : 'Erro de Autenticação',
+        description,
         variant: 'destructive',
       })
     } else {
