@@ -183,10 +183,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
         cod_prod: codProd,
         nome_prod: nomeProd,
         saldo_prod: saldo,
-        preco_110: 0,
-        preco_130: 0,
-        found_110: false,
-        found_130: false,
+        preco_110: null,
+        preco_130: null,
+        preco_outra: null,
       }
     }
 
@@ -196,14 +195,10 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
 
     if (listaPreco.indexOf('110') !== -1) {
       productsMap[codProd].preco_110 = preco
-      productsMap[codProd].found_110 = true
     } else if (listaPreco.indexOf('130') !== -1) {
       productsMap[codProd].preco_130 = preco
-      productsMap[codProd].found_130 = true
     } else {
-      if (productsMap[codProd].preco_130 === 0) {
-        productsMap[codProd].preco_130 = preco
-      }
+      productsMap[codProd].preco_outra = preco
     }
   }
 
@@ -227,6 +222,7 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
   const productsCol = $app.findCollectionByNameOrId('products')
   let createdCount = 0
   let updatedCount = 0
+  const noPriceSkus = []
 
   const productCodes = Object.keys(productsMap)
 
@@ -234,10 +230,31 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
     const p = productsMap[productCodes[j]]
     const sku = p.cod_prod
     const name = p.nome_prod
-    const basePrice = p.preco_130 > 0 ? p.preco_130 : p.preco_110
-    const price110 = p.preco_110
-    const price130 = p.preco_130
     const stockQty = p.saldo_prod
+
+    let price110 = p.preco_110
+    let price130 = p.preco_130
+    let basePrice = 0
+
+    if (price130 !== null && price130 > 0 && price110 !== null && price110 > 0) {
+      basePrice = price130
+    } else if (price130 !== null && price130 > 0 && (price110 === null || price110 <= 0)) {
+      basePrice = price130
+      price110 = price130
+    } else if (price110 !== null && price110 > 0 && (price130 === null || price130 <= 0)) {
+      basePrice = price110
+      price130 = price110
+    } else if (p.preco_outra !== null && p.preco_outra > 0) {
+      basePrice = p.preco_outra
+      if (price130 === null || price130 <= 0) price130 = p.preco_outra
+      if (price110 === null || price110 <= 0) price110 = p.preco_outra
+    }
+
+    if (basePrice <= 0) {
+      noPriceSkus.push(sku)
+      price110 = price110 || 0
+      price130 = price130 || 0
+    }
 
     const fieldsToSet = {
       name: name,
@@ -291,6 +308,7 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
       distinctProducts: productCodes.length,
       created: createdCount,
       updated: updatedCount,
+      noPriceSkus: noPriceSkus,
     }),
   )
 })

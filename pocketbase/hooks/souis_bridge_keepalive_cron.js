@@ -31,247 +31,273 @@ cronAdd('souis-bridge-keepalive', '* * * * *', () => {
     }
   } catch (_) {}
 
-  // Se a sincronização ainda não rodou hoje (payment_link_template não tem distinctProducts com created > 0)
+  // Execução única do sync pós-correção se a contagem de produtos SOU.IS for baixa
   try {
-    const settingRec = $app.findFirstRecordByFilter('settings', "id != ''")
-    const plt = settingRec ? settingRec.getString('payment_link_template') : ''
-    let shouldRunSync = true
-    if (plt && plt.indexOf('"created":340') !== -1) {
-      shouldRunSync = false
-    }
+    if (bridgeUrl && bridgeToken) {
+      const souisCount = $app.countRecords('products', "supplier = 'SOU.IS'")
+      if (souisCount < 300) {
+        let cleanUrl = bridgeUrl.replace(/\/$/, '')
+        let targetUrl = cleanUrl.includes('/produtos') ? cleanUrl : cleanUrl + '/produtos/all'
 
-    if (shouldRunSync && bridgeUrl && bridgeToken) {
-      let cleanUrl = bridgeUrl.replace(/\/$/, '')
-      let targetUrl = cleanUrl.includes('/produtos') ? cleanUrl : cleanUrl + '/produtos/all'
+        const bRes = $http.send({
+          url: targetUrl,
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Bridge-Token': bridgeToken,
+          },
+          timeout: 65,
+        })
 
-      const bRes = $http.send({
-        url: targetUrl,
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Bridge-Token': bridgeToken,
-        },
-        timeout: 65,
-      })
+        if (bRes.statusCode === 200 && bRes.json) {
+          const rows = Array.isArray(bRes.json) ? bRes.json : bRes.json.rows || bRes.json.data || []
+          const testKeywords = [
+            'duplicidade',
+            'não usar',
+            'nao usar',
+            'tabela simulação de preço',
+            'simulação de preço',
+            'simulacao de preco',
+            'teste',
+          ]
 
-      if (bRes.statusCode === 200 && bRes.json) {
-        const rows = Array.isArray(bRes.json) ? bRes.json : bRes.json.rows || bRes.json.data || []
-        const testKeywords = [
-          'duplicidade',
-          'não usar',
-          'nao usar',
-          'tabela simulação de preço',
-          'simulação de preço',
-          'simulacao de preco',
-          'teste',
-        ]
+          const productsMap = {}
+          let ignoredRowsCount = 0
 
-        const productsMap = {}
-        let ignoredRowsCount = 0
-
-        for (let i = 0; i < rows.length; i++) {
-          const r = rows[i]
-          if (!r) {
-            ignoredRowsCount++
-            continue
-          }
-
-          const codProd = String(r.COD_PROD || r.cod_prod || r.sku || '').trim()
-          const nomeProd = String(r.NOME_PROD || r.nome_prod || r.name || '').trim()
-          const listaPreco = String(r.lista_preco || r.LISTA_PRECO || r.tabela || '').trim()
-          const precoRaw =
-            r['preço'] !== undefined ? r['preço'] : r.preco !== undefined ? r.preco : r.price
-          const saldoRaw =
-            r.saldo_prod !== undefined
-              ? r.saldo_prod
-              : r.SALDO_PROD !== undefined
-                ? r.SALDO_PROD
-                : r.stock
-
-          if (!codProd || !nomeProd) {
-            ignoredRowsCount++
-            continue
-          }
-
-          const lowerNome = nomeProd.toLowerCase()
-          const lowerLista = listaPreco.toLowerCase()
-          let isTest = false
-          for (let k = 0; k < testKeywords.length; k++) {
-            if (
-              lowerNome.indexOf(testKeywords[k]) !== -1 ||
-              lowerLista.indexOf(testKeywords[k]) !== -1
-            ) {
-              isTest = true
-              break
+          for (let i = 0; i < rows.length; i++) {
+            const r = rows[i]
+            if (!r) {
+              ignoredRowsCount++
+              continue
             }
-          }
 
-          if (isTest) {
-            ignoredRowsCount++
-            continue
-          }
+            const codProd = String(r.COD_PROD || r.cod_prod || r.sku || '').trim()
+            const nomeProd = String(r.NOME_PROD || r.nome_prod || r.name || '').trim()
+            const listaPreco = String(r.lista_preco || r.LISTA_PRECO || r.tabela || '').trim()
+            const precoRaw =
+              r['preço'] !== undefined ? r['preço'] : r.preco !== undefined ? r.preco : r.price
+            const saldoRaw =
+              r.saldo_prod !== undefined
+                ? r.saldo_prod
+                : r.SALDO_PROD !== undefined
+                  ? r.SALDO_PROD
+                  : r.stock
 
-          let saldo = 0
-          if (saldoRaw !== null && saldoRaw !== undefined && saldoRaw !== '') {
-            const numSaldo = Number(saldoRaw)
-            if (!isNaN(numSaldo) && numSaldo > 0) {
-              saldo = numSaldo
+            if (!codProd || !nomeProd) {
+              ignoredRowsCount++
+              continue
             }
-          }
 
-          let preco = 0
-          if (precoRaw !== null && precoRaw !== undefined && precoRaw !== '') {
-            const numPreco = Number(precoRaw)
-            if (!isNaN(numPreco)) {
-              preco = numPreco
+            const lowerNome = nomeProd.toLowerCase()
+            const lowerLista = listaPreco.toLowerCase()
+            let isTest = false
+            for (let k = 0; k < testKeywords.length; k++) {
+              if (
+                lowerNome.indexOf(testKeywords[k]) !== -1 ||
+                lowerLista.indexOf(testKeywords[k]) !== -1
+              ) {
+                isTest = true
+                break
+              }
             }
-          }
 
-          if (!productsMap[codProd]) {
-            productsMap[codProd] = {
-              cod_prod: codProd,
-              nome_prod: nomeProd,
-              saldo_prod: saldo,
-              preco_110: 0,
-              preco_130: 0,
-              found_110: false,
-              found_130: false,
+            if (isTest) {
+              ignoredRowsCount++
+              continue
             }
-          }
 
-          if (saldo > productsMap[codProd].saldo_prod) {
-            productsMap[codProd].saldo_prod = saldo
-          }
+            let saldo = 0
+            if (saldoRaw !== null && saldoRaw !== undefined && saldoRaw !== '') {
+              const numSaldo = Number(saldoRaw)
+              if (!isNaN(numSaldo) && numSaldo > 0) {
+                saldo = numSaldo
+              }
+            }
 
-          if (listaPreco.indexOf('110') !== -1) {
-            productsMap[codProd].preco_110 = preco
-            productsMap[codProd].found_110 = true
-          } else if (listaPreco.indexOf('130') !== -1) {
-            productsMap[codProd].preco_130 = preco
-            productsMap[codProd].found_130 = true
-          } else {
-            if (productsMap[codProd].preco_130 === 0) {
+            let preco = 0
+            if (precoRaw !== null && precoRaw !== undefined && precoRaw !== '') {
+              const numPreco = Number(precoRaw)
+              if (!isNaN(numPreco)) {
+                preco = numPreco
+              }
+            }
+
+            if (!productsMap[codProd]) {
+              productsMap[codProd] = {
+                cod_prod: codProd,
+                nome_prod: nomeProd,
+                saldo_prod: saldo,
+                preco_110: null,
+                preco_130: null,
+                preco_outra: null,
+              }
+            }
+
+            if (saldo > productsMap[codProd].saldo_prod) {
+              productsMap[codProd].saldo_prod = saldo
+            }
+
+            if (listaPreco.indexOf('110') !== -1) {
+              productsMap[codProd].preco_110 = preco
+            } else if (listaPreco.indexOf('130') !== -1) {
               productsMap[codProd].preco_130 = preco
+            } else {
+              productsMap[codProd].preco_outra = preco
             }
           }
-        }
 
-        const ALLOWED_SYNC_FIELDS = [
-          'name',
-          'price',
-          'cost',
-          'stock_quantity',
-          'price_110',
-          'price_130',
-          'supplier',
-          'is_purchased',
-          'product_type',
-          'min_stock',
-          'external_id',
-          'description',
-        ]
+          const ALLOWED_SYNC_FIELDS = [
+            'name',
+            'price',
+            'cost',
+            'stock_quantity',
+            'price_110',
+            'price_130',
+            'supplier',
+            'is_purchased',
+            'product_type',
+            'min_stock',
+            'external_id',
+            'description',
+          ]
 
-        const productsCol = $app.findCollectionByNameOrId('products')
-        let createdCount = 0
-        let updatedCount = 0
-        let errorCount = 0
-        let firstErr = null
+          const productsCol = $app.findCollectionByNameOrId('products')
+          let createdCount = 0
+          let updatedCount = 0
+          let errorCount = 0
+          let firstError = null
+          const noPriceSkus = []
 
-        const productCodes = Object.keys(productsMap)
+          const productCodes = Object.keys(productsMap)
 
-        for (let j = 0; j < productCodes.length; j++) {
-          const p = productsMap[productCodes[j]]
-          const sku = p.cod_prod
-          const name = p.nome_prod
-          const basePrice = (p.preco_130 > 0 ? p.preco_130 : p.preco_110) || 0
-          const price110 = p.preco_110 || 0
-          const price130 = p.preco_130 || 0
-          const stockQty = p.saldo_prod || 0
+          for (let j = 0; j < productCodes.length; j++) {
+            const p = productsMap[productCodes[j]]
+            const sku = p.cod_prod
+            const name = p.nome_prod
+            const stockQty = p.saldo_prod
 
-          const fieldsToSet = {
-            name: name,
-            price: basePrice,
-            cost: basePrice,
-            stock_quantity: stockQty,
-            price_110: price110,
-            price_130: price130,
-            supplier: 'SOU.IS',
-            is_purchased: true,
-            product_type: 'comprado',
-          }
+            let price110 = p.preco_110
+            let price130 = p.preco_130
+            let basePrice = 0
 
-          let existingRecord = null
-          try {
-            existingRecord = $app.findFirstRecordByData('products', 'sku', sku)
-          } catch (_) {
-            existingRecord = null
-          }
+            if (price130 !== null && price130 > 0 && price110 !== null && price110 > 0) {
+              basePrice = price130
+            } else if (price130 !== null && price130 > 0 && (price110 === null || price110 <= 0)) {
+              basePrice = price130
+              price110 = price130
+            } else if (price110 !== null && price110 > 0 && (price130 === null || price130 <= 0)) {
+              basePrice = price110
+              price130 = price110
+            } else if (p.preco_outra !== null && p.preco_outra > 0) {
+              basePrice = p.preco_outra
+              if (price130 === null || price130 <= 0) price130 = p.preco_outra
+              if (price110 === null || price110 <= 0) price110 = p.preco_outra
+            }
 
-          if (existingRecord) {
+            if (basePrice <= 0) {
+              noPriceSkus.push(sku)
+              price110 = price110 || 0
+              price130 = price130 || 0
+            }
+
+            const fieldsToSet = {
+              name: name,
+              price: basePrice,
+              cost: basePrice,
+              stock_quantity: stockQty,
+              price_110: price110,
+              price_130: price130,
+              supplier: 'SOU.IS',
+              is_purchased: true,
+              product_type: 'comprado',
+            }
+
+            let existingRecord = null
             try {
-              for (let f = 0; f < ALLOWED_SYNC_FIELDS.length; f++) {
-                const fieldName = ALLOWED_SYNC_FIELDS[f]
-                if (fieldsToSet[fieldName] !== undefined) {
-                  existingRecord.set(fieldName, fieldsToSet[fieldName])
+              existingRecord = $app.findFirstRecordByData('products', 'sku', sku)
+            } catch (_) {
+              existingRecord = null
+            }
+
+            if (existingRecord) {
+              try {
+                for (let f = 0; f < ALLOWED_SYNC_FIELDS.length; f++) {
+                  const fieldName = ALLOWED_SYNC_FIELDS[f]
+                  if (fieldsToSet[fieldName] !== undefined) {
+                    existingRecord.set(fieldName, fieldsToSet[fieldName])
+                  }
+                }
+                $app.save(existingRecord)
+                updatedCount++
+              } catch (errUpd) {
+                errorCount++
+                if (firstError === null) {
+                  firstError = {
+                    type: 'update',
+                    sku: sku,
+                    err: String(errUpd),
+                    fieldsToSet: fieldsToSet,
+                  }
                 }
               }
-              $app.save(existingRecord)
-              updatedCount++
-            } catch (errUpd) {
-              errorCount++
-              if (!firstErr) firstErr = { type: 'update', sku: sku, err: String(errUpd) }
-            }
-          } else {
-            try {
-              const rec = new Record(productsCol)
-              rec.set('sku', sku)
-              rec.set('name', name)
-              rec.set('price', basePrice)
-              rec.set('cost', basePrice)
-              rec.set('stock_quantity', stockQty)
-              rec.set('price_110', price110)
-              rec.set('price_130', price130)
-              rec.set('supplier', 'SOU.IS')
-              rec.set('is_purchased', true)
-              rec.set('product_type', 'comprado')
-              rec.set('min_stock', 1)
-              rec.set('external_id', 'SOU_' + sku)
-              rec.set(
-                'description',
-                'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
-              )
-              rec.set('reserved_quantity', 0)
-              rec.set('is_produced', false)
-              rec.set('is_component', false)
+            } else {
+              try {
+                const rec = new Record(productsCol)
+                rec.set('sku', sku)
+                rec.set('name', name)
+                rec.set('price', basePrice)
+                rec.set('cost', basePrice)
+                rec.set('stock_quantity', stockQty)
+                rec.set('price_110', price110)
+                rec.set('price_130', price130)
+                rec.set('supplier', 'SOU.IS')
+                rec.set('is_purchased', true)
+                rec.set('product_type', 'comprado')
+                rec.set('min_stock', 1)
+                rec.set('external_id', 'SOU_' + sku)
+                rec.set(
+                  'description',
+                  'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+                )
+                rec.set('reserved_quantity', 0)
+                rec.set('is_produced', false)
+                rec.set('is_component', false)
 
-              $app.save(rec)
-              createdCount++
-            } catch (errCreate) {
-              errorCount++
-              if (!firstErr) firstErr = { type: 'create', sku: sku, err: String(errCreate) }
+                $app.save(rec)
+                createdCount++
+              } catch (errCreate) {
+                errorCount++
+                if (firstError === null) {
+                  firstError = {
+                    type: 'create',
+                    sku: sku,
+                    err: String(errCreate),
+                    fieldsToSet: fieldsToSet,
+                  }
+                }
+              }
             }
           }
-        }
 
-        const resultSummary = {
-          timestamp: new Date().toISOString(),
-          rawRows: rows.length,
-          ignoredRows: ignoredRowsCount,
-          distinctProducts: productCodes.length,
-          created: createdCount,
-          updated: updatedCount,
-          errors: errorCount,
-          firstErr: firstErr,
-        }
-
-        if (settingRec) {
-          settingRec.set('payment_link_template', JSON.stringify(resultSummary))
-          $app.save(settingRec)
+          console.log(
+            '[SOUIS-ONE-SHOT-SYNC-COMPLETE]',
+            JSON.stringify({
+              timestamp: new Date().toISOString(),
+              rawRows: rows.length,
+              ignoredRows: ignoredRowsCount,
+              distinctProducts: productCodes.length,
+              created: createdCount,
+              updated: updatedCount,
+              errors: errorCount,
+              firstError: firstError,
+              noPriceSkus: noPriceSkus,
+            }),
+          )
         }
       }
     }
-  } catch (errSync) {
-    console.log('[KEEPALIVE-SYNC-ERR]', errSync)
+  } catch (errOneShot) {
+    console.log('[SOUIS-ONE-SHOT-ERR]', errOneShot)
   }
 
   // Se bridgeUrl não estiver definida, o job apenas pula, sem erro
@@ -302,7 +328,9 @@ cronAdd('souis-bridge-keepalive', '* * * * *', () => {
         ' latency=' +
         latency +
         'ms endpoint=' +
-        healthUrl,
+        healthUrl +
+        ' body=' +
+        (res.body ? res.body.substring(0, 150) : ''),
     )
   } catch (err) {
     const latency = new Date().getTime() - startTime
