@@ -56,31 +56,79 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
         headers['X-Bridge-Token'] = bridgeToken
       }
 
-      try {
-        const bridgeRes = $http.send({
-          url: targetUrl,
-          method: 'GET',
-          headers: headers,
-          timeout: 45,
-        })
-        if (bridgeRes.statusCode === 200 && bridgeRes.json) {
-          rows = Array.isArray(bridgeRes.json)
-            ? bridgeRes.json
-            : bridgeRes.json.rows || bridgeRes.json.data || []
-        } else {
-          return e.json(502, {
-            success: false,
-            error: 'Bridge HTTP retornou status ' + bridgeRes.statusCode,
-            details: bridgeRes.body,
-            target_url: targetUrl,
+      // Cold start handling: a ponte roda em Render Free e adormece após inatividade.
+      // A primeira chamada após período ocioso pode levar de 30 a 60s ou dar timeout.
+      // Implementamos tolerância a timeout e status de inicialização com pelo menos 1 retry automático.
+      const MAX_ATTEMPTS = 2
+      let lastBridgeError = null
+      let lastStatusCode = 0
+      let lastResponseBody = null
+
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          // Timeout de 65s para permitir o acordar do container no Render Free
+          const bridgeRes = $http.send({
+            url: targetUrl,
+            method: 'GET',
+            headers: headers,
+            timeout: 65,
           })
+
+          lastStatusCode = bridgeRes.statusCode
+          lastResponseBody = bridgeRes.body
+
+          if (bridgeRes.statusCode === 200 && bridgeRes.json) {
+            rows = Array.isArray(bridgeRes.json)
+              ? bridgeRes.json
+              : bridgeRes.json.rows || bridgeRes.json.data || []
+            lastBridgeError = null
+            break // Sucesso
+          } else if (attempt < MAX_ATTEMPTS) {
+            // Se retornou status não-200 (ex: 502/503/504 durante spin-up), tenta novamente
+            console.log(
+              '[SOU.IS Sync] Tentativa ' +
+                attempt +
+                ' retornou status ' +
+                bridgeRes.statusCode +
+                '. Realizando retry após cold start...',
+            )
+            continue
+          } else {
+            return e.json(502, {
+              success: false,
+              error:
+                'Bridge HTTP retornou status ' +
+                bridgeRes.statusCode +
+                ' após ' +
+                attempt +
+                ' tentativa(s).',
+              details: bridgeRes.body,
+              target_url: targetUrl,
+              attempts: attempt,
+            })
+          }
+        } catch (errBridge) {
+          lastBridgeError = String(errBridge)
+          console.log(
+            '[SOU.IS Sync] Tentativa ' +
+              attempt +
+              ' falhou com timeout/erro de rede: ' +
+              lastBridgeError +
+              (attempt < MAX_ATTEMPTS ? '. Realizando retry de cold start...' : ''),
+          )
+          if (attempt >= MAX_ATTEMPTS) {
+            return e.json(502, {
+              success: false,
+              error:
+                'Falha ao conectar com bridge HTTP SOU.IS após ' +
+                attempt +
+                ' tentativa(s): ' +
+                lastBridgeError,
+              target_url: targetUrl,
+              attempts: attempt,
+            })
+          }
         }
-      } catch (errBridge) {
-        return e.json(502, {
-          success: false,
-          error: 'Falha ao conectar com bridge HTTP SOU.IS: ' + String(errBridge),
-          target_url: targetUrl,
-        })
       }
     } else {
       // Se não há rows no body nem SOIS_BRIDGE_URL configurada:
