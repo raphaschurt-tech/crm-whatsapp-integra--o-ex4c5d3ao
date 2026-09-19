@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Plus,
   Search,
+  X,
   RefreshCw,
   Edit,
   Trash2,
@@ -84,10 +85,13 @@ export default function ProductList() {
   })
 
   const filtered = products.filter((p) => {
+    const term = search.trim().toLowerCase()
     const matchSearch =
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.sku.toLowerCase().includes(search.toLowerCase()) ||
-      (p.supplier && p.supplier.toLowerCase().includes(search.toLowerCase()))
+      !term ||
+      p.name.toLowerCase().includes(term) ||
+      p.sku.toLowerCase().includes(term) ||
+      (p.description && p.description.toLowerCase().includes(term)) ||
+      (p.supplier && p.supplier.toLowerCase().includes(term))
 
     const isPurchased =
       p.is_purchased !== undefined ? p.is_purchased : p.product_type !== 'produzido'
@@ -188,11 +192,21 @@ export default function ProductList() {
         <div className="relative w-full lg:w-80">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <Input
-            placeholder="Buscar por nome, SKU ou fornecedor..."
+            placeholder="Buscar por nome, SKU ou descrição..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
+            className="pl-9 pr-8"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+              title="Limpar busca"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-4">

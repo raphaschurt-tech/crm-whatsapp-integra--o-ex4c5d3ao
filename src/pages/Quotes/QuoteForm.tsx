@@ -17,13 +17,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { CustomerSearchCombobox } from '@/components/Quotes/CustomerSearchCombobox'
+import { ProductSearchCombobox } from '@/components/Quotes/ProductSearchCombobox'
 import {
   Dialog,
   DialogContent,
@@ -307,24 +302,18 @@ export default function QuoteForm() {
             <Button
               variant="link"
               size="sm"
-              className="text-emerald-600 h-auto p-0"
+              className="text-emerald-600 h-auto p-0 hover:text-emerald-700"
               onClick={() => setNewCustomerModal(true)}
             >
               + Novo cliente
             </Button>
           </div>
-          <Select value={selectedCustomer} onValueChange={setSelectedCustomer}>
-            <SelectTrigger>
-              <SelectValue placeholder="Selecione um cliente" />
-            </SelectTrigger>
-            <SelectContent>
-              {customers.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name} {c.company ? `(${c.company})` : ''} - {c.phone}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <CustomerSearchCombobox
+            customers={customers}
+            value={selectedCustomer}
+            onChange={setSelectedCustomer}
+            placeholder="Buscar cliente por nome, telefone ou e-mail..."
+          />
         </div>
 
         <div className="space-y-4 border-t pt-4">
@@ -339,26 +328,13 @@ export default function QuoteForm() {
                 <div key={index} className="p-4 border rounded-xl bg-slate-50/50 space-y-3">
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
                     <div className="md:col-span-5 space-y-1">
-                      <Label className="text-xs">Produto</Label>
-                      <Select
+                      <Label className="text-xs font-semibold">Produto</Label>
+                      <ProductSearchCombobox
+                        products={products}
                         value={item.product}
-                        onValueChange={(val) => handleProductChange(index, val)}
-                      >
-                        <SelectTrigger className="bg-white">
-                          <SelectValue placeholder="Selecione um produto" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {products.map((p) => {
-                            const isOutOfStock = !p.stock_quantity || p.stock_quantity <= 0
-                            return (
-                              <SelectItem key={p.id} value={p.id}>
-                                {p.name} - Est: {p.stock_quantity || 0} (
-                                {isOutOfStock ? 'Sob consulta' : formatCurrency(p.price)})
-                              </SelectItem>
-                            )
-                          })}
-                        </SelectContent>
-                      </Select>
+                        onChange={(val) => handleProductChange(index, val)}
+                        placeholder="Buscar por nome, descrição ou código/SKU..."
+                      />
                     </div>
 
                     <div className="md:col-span-2 space-y-1">
