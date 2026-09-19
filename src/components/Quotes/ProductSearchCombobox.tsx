@@ -26,6 +26,8 @@ export function ProductSearchCombobox({
   const [searchTerm, setSearchTerm] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
 
   const selectedProduct = useMemo(() => products.find((p) => p.id === value), [products, value])
 
@@ -47,9 +49,77 @@ export function ProductSearchCombobox({
       .slice(0, 50)
   }, [products, searchTerm])
 
+  // Atualiza posição e largura do painel suspenso para cobrir toda a largura da linha de itens
+  useEffect(() => {
+    if (!isOpen) return
+
+    function updateDropdownPosition() {
+      if (!containerRef.current) return
+
+      // Busca o contêiner de linha do item (.p-4.border.rounded-xl ou similar) para ancorar largura
+      const rowContainer =
+        containerRef.current.closest<HTMLElement>('.border.rounded-xl') ||
+        containerRef.current.closest<HTMLElement>('.grid') ||
+        containerRef.current.parentElement
+
+      const inputRect = containerRef.current.getBoundingClientRect()
+      const rowRect = rowContainer ? rowContainer.getBoundingClientRect() : inputRect
+      const viewportWidth = window.innerWidth
+      const paddingMargin = 12
+
+      // O dropdown alinha com o lado esquerdo do input e se estende até o lado direito da linha do item
+      const left = inputRect.left
+      // Largura da posição do input até a borda direita da linha do item
+      let width = Math.max(inputRect.width, rowRect.right - inputRect.left)
+
+      // Garante largura mínima generosa (ex: 550px ou 600px se houver espaço no viewport)
+      const minDesiredWidth = Math.min(680, viewportWidth - 2 * paddingMargin)
+      if (width < minDesiredWidth) {
+        width = minDesiredWidth
+      }
+
+      // Evita estourar para fora da tela na direita
+      let adjustedLeft = left
+      if (adjustedLeft + width > viewportWidth - paddingMargin) {
+        const overflow = adjustedLeft + width - (viewportWidth - paddingMargin)
+        // Move para a esquerda se couber, mas sem passar da margem esquerda
+        adjustedLeft = Math.max(paddingMargin, adjustedLeft - overflow)
+        // Se ainda assim ultrapassar o viewport total
+        if (adjustedLeft + width > viewportWidth - paddingMargin) {
+          width = viewportWidth - adjustedLeft - paddingMargin
+        }
+      }
+
+      const top = inputRect.bottom + 6
+
+      setDropdownStyle({
+        position: 'fixed',
+        top: `${top}px`,
+        left: `${adjustedLeft}px`,
+        width: `${width}px`,
+        maxWidth: `calc(100vw - 24px)`,
+      })
+    }
+
+    updateDropdownPosition()
+    window.addEventListener('resize', updateDropdownPosition)
+    window.addEventListener('scroll', updateDropdownPosition, true)
+
+    return () => {
+      window.removeEventListener('resize', updateDropdownPosition)
+      window.removeEventListener('scroll', updateDropdownPosition, true)
+    }
+  }, [isOpen])
+
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(target)
+      ) {
         setIsOpen(false)
       }
     }
@@ -136,81 +206,137 @@ export function ProductSearchCombobox({
       </div>
 
       {isOpen && !disabled && (
-        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-72 overflow-y-auto animate-in fade-in-50 zoom-in-95">
+        <div
+          ref={dropdownRef}
+          style={dropdownStyle}
+          className="z-50 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-96 overflow-y-auto animate-in fade-in-50 zoom-in-95"
+        >
           {filteredProducts.length === 0 ? (
-            <div className="p-4 text-center text-xs text-slate-500">
-              Nenhum produto encontrado com &quot;{searchTerm}&quot;
+            <div className="p-6 text-center text-sm text-slate-500 space-y-1">
+              <Package className="h-8 w-8 mx-auto text-slate-300 stroke-1" />
+              <p className="font-medium">Nenhum produto encontrado</p>
+              <p className="text-xs text-slate-400">
+                Não localizamos produtos correspondentes a &quot;{searchTerm}&quot;
+              </p>
             </div>
           ) : (
-            <div className="py-1 divide-y divide-slate-100">
-              {filteredProducts.map((p) => {
-                const isSelected = p.id === value
-                const isOutOfStock = !p.stock_quantity || p.stock_quantity <= 0
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => handleSelect(p)}
-                    className={cn(
-                      'w-full px-3 py-2.5 text-left flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors cursor-pointer',
-                      isSelected && 'bg-emerald-50 text-emerald-900',
-                    )}
-                  >
-                    <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                      <div
-                        className={cn(
-                          'p-1.5 rounded-full mt-0.5 shrink-0',
-                          isSelected
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-slate-100 text-slate-500',
-                        )}
-                      >
-                        <Package className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-semibold text-xs text-slate-900 truncate">
-                            {p.name}
-                          </span>
-                          <span className="text-xs font-bold text-slate-900 shrink-0">
-                            {isOutOfStock ? (
-                              <span className="text-amber-700 font-medium">Sob consulta</span>
-                            ) : (
-                              formatCurrency(p.price)
-                            )}
-                          </span>
+            <div>
+              <div className="px-3.5 py-2 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+                <span>
+                  Resultados ({filteredProducts.length}
+                  {products.length > filteredProducts.length ? ` de ${products.length}` : ''})
+                </span>
+                <span className="text-[10px] text-slate-400">Selecione com um clique</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {filteredProducts.map((p) => {
+                  const isSelected = p.id === value
+                  const isOutOfStock = !p.stock_quantity || p.stock_quantity <= 0
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => handleSelect(p)}
+                      className={cn(
+                        'w-full px-4 py-3 text-left flex items-start justify-between gap-3 hover:bg-emerald-50/40 transition-colors cursor-pointer group',
+                        isSelected && 'bg-emerald-50/80 text-emerald-950',
+                      )}
+                    >
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <div
+                          className={cn(
+                            'p-2 rounded-lg mt-0.5 shrink-0 transition-colors',
+                            isSelected
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-slate-100 text-slate-600 group-hover:bg-emerald-100/60 group-hover:text-emerald-700',
+                          )}
+                        >
+                          <Package className="h-4 w-4" />
                         </div>
-                        <div className="flex items-center gap-2 text-[11px] text-slate-500 flex-wrap mt-0.5">
-                          <span className="font-mono text-slate-600 bg-slate-100 px-1 py-0.5 rounded text-[10px]">
-                            SKU: {p.sku}
-                          </span>
-                          <span>•</span>
-                          <span className="flex items-center gap-1">
-                            Est: <strong>{p.stock_quantity || 0} un.</strong>
-                            {isOutOfStock && (
-                              <Badge
-                                variant="outline"
-                                className="text-[9px] py-0 px-1 bg-rose-50 text-rose-700 border-rose-200"
+                        <div className="min-w-0 flex-1 space-y-1">
+                          {/* Linha 1: Nome do produto e Preço / Sob Consulta */}
+                          <div className="flex items-baseline justify-between gap-3">
+                            <span className="font-semibold text-sm text-slate-900 leading-snug break-words">
+                              {p.name}
+                            </span>
+                            <div className="text-right shrink-0">
+                              {isOutOfStock ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200/80">
+                                  Sob consulta
+                                </span>
+                              ) : (
+                                <span className="text-sm font-bold text-slate-900">
+                                  {formatCurrency(p.price)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Linha 2: Badges e metadados (SKU, Estoque, Fornecedor) */}
+                          <div className="flex items-center gap-2 text-xs text-slate-600 flex-wrap pt-0.5">
+                            <span className="font-mono text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-[11px] font-medium">
+                              SKU: {p.sku}
+                            </span>
+                            <span className="text-slate-300">•</span>
+                            <span className="flex items-center gap-1 text-[11px]">
+                              Estoque:
+                              <strong
+                                className={cn(
+                                  isOutOfStock ? 'text-rose-600 font-semibold' : 'text-slate-900',
+                                )}
                               >
-                                Sem estoque
-                              </Badge>
+                                {p.stock_quantity || 0} un.
+                              </strong>
+                              {isOutOfStock ? (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] py-0 px-1.5 bg-rose-50 text-rose-700 border-rose-200 font-medium"
+                                >
+                                  Sem estoque
+                                </Badge>
+                              ) : p.min_stock && p.stock_quantity <= p.min_stock ? (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] py-0 px-1.5 bg-amber-50 text-amber-700 border-amber-200 font-medium"
+                                >
+                                  Estoque baixo
+                                </Badge>
+                              ) : null}
+                            </span>
+
+                            {p.supplier && (
+                              <>
+                                <span className="text-slate-300">•</span>
+                                <span className="text-[11px] text-slate-500">
+                                  Fornecedor:{' '}
+                                  <strong className="text-slate-700 font-medium">
+                                    {p.supplier}
+                                  </strong>
+                                </span>
+                              </>
                             )}
-                          </span>
+                          </div>
+
+                          {/* Linha 3: Descrição completa e legível sem truncar */}
                           {p.description && (
-                            <>
-                              <span>•</span>
-                              <span className="truncate max-w-xs text-slate-400">
-                                {p.description}
-                              </span>
-                            </>
+                            <p className="text-xs text-slate-600 leading-relaxed pt-0.5 whitespace-normal break-words">
+                              {p.description}
+                            </p>
                           )}
                         </div>
                       </div>
-                    </div>
-                    {isSelected && <Check className="h-4 w-4 text-emerald-600 shrink-0 ml-1" />}
-                  </button>
-                )
-              })}
+
+                      {isSelected && (
+                        <div className="shrink-0 ml-2 mt-1">
+                          <div className="h-5 w-5 rounded-full bg-emerald-600 text-white flex items-center justify-center">
+                            <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                          </div>
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           )}
         </div>
