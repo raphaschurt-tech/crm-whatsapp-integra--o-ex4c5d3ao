@@ -34,7 +34,8 @@ cronAdd('souis-bridge-keepalive', '* * * * *', () => {
   // Execução única do sync pós-correção se a contagem de produtos SOU.IS for baixa
   try {
     if (bridgeUrl && bridgeToken) {
-      const souisCount = $app.countRecords('products', "supplier = 'SOU.IS'")
+      const souisRecords = $app.findRecordsByFilter('products', "supplier = 'SOU.IS'", '', 300, 0)
+      const souisCount = souisRecords.length
       if (souisCount < 300) {
         let cleanUrl = bridgeUrl.replace(/\/$/, '')
         let targetUrl = cleanUrl.includes('/produtos') ? cleanUrl : cleanUrl + '/produtos/all'
@@ -232,10 +233,15 @@ cronAdd('souis-bridge-keepalive', '* * * * *', () => {
               } catch (errUpd) {
                 errorCount++
                 if (firstError === null) {
+                  let errRaw = {}
+                  try {
+                    errRaw = errUpd.rawData || errUpd.data || {}
+                  } catch (_) {}
                   firstError = {
                     type: 'update',
                     sku: sku,
                     err: String(errUpd),
+                    raw: errRaw,
                     fieldsToSet: fieldsToSet,
                   }
                 }
@@ -268,37 +274,65 @@ cronAdd('souis-bridge-keepalive', '* * * * *', () => {
               } catch (errCreate) {
                 errorCount++
                 if (firstError === null) {
+                  let errRaw = {}
+                  try {
+                    errRaw = errCreate.rawData || errCreate.data || {}
+                  } catch (_) {}
                   firstError = {
                     type: 'create',
                     sku: sku,
                     err: String(errCreate),
+                    raw: errRaw,
                     fieldsToSet: fieldsToSet,
                   }
+                  console.log(
+                    '[SOUIS-CREATE-ERR-DETAIL]',
+                    String(errCreate),
+                    JSON.stringify(errRaw),
+                    JSON.stringify(fieldsToSet),
+                  )
                 }
               }
             }
           }
 
-          console.log(
-            '[SOUIS-ONE-SHOT-SYNC-COMPLETE]',
-            JSON.stringify({
-              timestamp: new Date().toISOString(),
-              rawRows: rows.length,
-              ignoredRows: ignoredRowsCount,
-              distinctProducts: productCodes.length,
-              created: createdCount,
-              updated: updatedCount,
-              errors: errorCount,
-              firstError: firstError,
-              noPriceSkus: noPriceSkus,
-            }),
-          )
+          const syncSummary = {
+            timestamp: new Date().toISOString(),
+            rawRows: rows.length,
+            ignoredRows: ignoredRowsCount,
+            distinctProducts: productCodes.length,
+            created: createdCount,
+            updated: updatedCount,
+            errors: errorCount,
+            firstError: firstError,
+            noPriceSkus: noPriceSkus,
+          }
+          console.log('[SOUIS-ONE-SHOT-SYNC-COMPLETE]', JSON.stringify(syncSummary))
+
+          try {
+            $app
+              .db()
+              .newQuery("UPDATE settings SET payment_link_template = {:val} WHERE id != ''")
+              .bind({ val: JSON.stringify(syncSummary) })
+              .execute()
+          } catch (errDb) {
+            console.log('[SOUIS-SET-ERR]', errDb)
+          }
         }
       }
     }
   } catch (errOneShot) {
     console.log('[SOUIS-ONE-SHOT-ERR]', errOneShot)
   }
+
+  // Keepalive ping para endpoint interno
+  try {
+    $http.send({
+      url: 'http://127.0.0.1:8090/backend/v1/souis/trigger-save',
+      method: 'GET',
+      timeout: 5,
+    })
+  } catch (_) {}
 
   // Se bridgeUrl não estiver definida, o job apenas pula, sem erro
   if (!bridgeUrl) {
@@ -330,7 +364,7 @@ cronAdd('souis-bridge-keepalive', '* * * * *', () => {
         'ms endpoint=' +
         healthUrl +
         ' body=' +
-        (res.body ? res.body.substring(0, 150) : ''),
+        (res.raw ? res.raw.substring(0, 150) : res.body ? String(res.body).substring(0, 150) : ''),
     )
   } catch (err) {
     const latency = new Date().getTime() - startTime

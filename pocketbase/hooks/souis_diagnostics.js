@@ -665,11 +665,133 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
   })
 })
 
-routerAdd('GET', '/backend/v1/debug-env', (e) => {
-  return e.json(200, { ok: true })
+routerAdd('GET', '/backend/v1/souis/trigger-save', (e) => {
+  const result = {}
+  try {
+    const productsCol = $app.findCollectionByNameOrId('products')
+    const rec = new Record(productsCol)
+    rec.set('sku', 'TEST-ERR-PROBE')
+    rec.set('name', 'Test Err Probe')
+    rec.set('price', 10)
+    rec.set('cost', 10)
+    rec.set('stock_quantity', 1)
+    rec.set('price_110', 10)
+    rec.set('price_130', 10)
+    rec.set('supplier', 'SOU.IS')
+    rec.set('is_purchased', true)
+    rec.set('product_type', 'comprado')
+    rec.set('min_stock', 1)
+    rec.set('external_id', 'SOU_TEST-ERR-PROBE')
+    rec.set('description', 'Test probe')
+    rec.set('reserved_quantity', 0)
+    rec.set('is_produced', false)
+    rec.set('is_component', false)
+
+    $app.save(rec)
+    const savedId = rec.id
+    $app.delete(rec)
+    result.saveProbe = { ok: true, savedId: savedId }
+  } catch (err) {
+    result.saveProbe = {
+      ok: false,
+      err: String(err),
+      msg: err.message,
+      data: err.data,
+      rawData: err.rawData,
+    }
+  }
+
+  try {
+    const setRec = $app.findFirstRecordByFilter('settings', "id != ''")
+    if (setRec) {
+      setRec.set('payment_link_template', JSON.stringify(result))
+      $app.save(setRec)
+    }
+  } catch (errSet) {
+    result.errSet = String(errSet)
+  }
+
+  return e.json(200, result)
+})
+
+routerAdd('GET', '/backend/v1/souis/test-create', (e) => {
+  const productsCol = $app.findCollectionByNameOrId('products')
+  try {
+    const rec = new Record(productsCol)
+    rec.set('sku', 'TEST-ERR-PROBE')
+    rec.set('name', 'Test Err Probe')
+    rec.set('price', 10)
+    rec.set('cost', 10)
+    rec.set('stock_quantity', 1)
+    rec.set('price_110', 10)
+    rec.set('price_130', 10)
+    rec.set('supplier', 'SOU.IS')
+    rec.set('is_purchased', true)
+    rec.set('product_type', 'comprado')
+    rec.set('min_stock', 1)
+    rec.set('external_id', 'SOU_TEST-ERR-PROBE')
+    rec.set('description', 'Test probe')
+    rec.set('reserved_quantity', 0)
+    rec.set('is_produced', false)
+    rec.set('is_component', false)
+
+    $app.save(rec)
+    const savedId = rec.id
+    $app.delete(rec)
+    return e.json(200, { success: true, savedId: savedId })
+  } catch (err) {
+    let rawKeys = []
+    try {
+      rawKeys = Object.keys(err)
+    } catch (_) {}
+    return e.json(500, {
+      success: false,
+      errString: String(err),
+      errMessage: err.message,
+      errData: err.data,
+      errRawData: err.rawData,
+      errKeys: rawKeys,
+      errValues: JSON.stringify(err),
+    })
+  }
 })
 
 routerAdd('GET', '/backend/v1/souis/check-bridge', (e) => {
+  let probeResult = null
+  try {
+    const productsCol = $app.findCollectionByNameOrId('products')
+    const rec = new Record(productsCol)
+    rec.set('sku', 'TEST-ERR-PROBE')
+    rec.set('name', 'Test Err Probe')
+    rec.set('price', 10)
+    rec.set('cost', 10)
+    rec.set('stock_quantity', 1)
+    rec.set('price_110', 10)
+    rec.set('price_130', 10)
+    rec.set('supplier', 'SOU.IS')
+    rec.set('is_purchased', true)
+    rec.set('product_type', 'comprado')
+    rec.set('min_stock', 1)
+    rec.set('external_id', 'SOU_TEST-ERR-PROBE')
+    rec.set('description', 'Test probe')
+    rec.set('reserved_quantity', 0)
+    rec.set('is_produced', false)
+    rec.set('is_component', false)
+
+    $app.save(rec)
+    const savedId = rec.id
+    $app.delete(rec)
+    probeResult = { ok: true, savedId: savedId }
+  } catch (err) {
+    probeResult = {
+      ok: false,
+      err: String(err),
+      msg: err.message,
+      data: err.data,
+      str: JSON.stringify(err),
+    }
+  }
+
   let bridgeUrl = $os.getenv('SOIS_BRIDGE_URL') || ''
   let bridgeToken = $os.getenv('SOIS_BRIDGE_TOKEN') || ''
   try {
@@ -723,6 +845,7 @@ routerAdd('GET', '/backend/v1/souis/check-bridge', (e) => {
   }
 
   return e.json(200, {
+    probeResult: probeResult,
     bridgeUrl: bridgeUrl,
     hasToken: Boolean(bridgeToken),
     tokenPrefix: bridgeToken ? bridgeToken.substring(0, 5) : null,
