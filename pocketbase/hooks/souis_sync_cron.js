@@ -7,6 +7,168 @@
 // Expressão cron UTC: 0 12,15,18,21 * * 1-5
 
 cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
+  // Funções inline de mapeamento SOU.IS
+  function extractPrice(row) {
+    if (!row) return 0
+    const val =
+      row.PRECO !== undefined
+        ? row.PRECO
+        : row['preço'] !== undefined
+          ? row['preço']
+          : row.preco !== undefined
+            ? row.preco
+            : row.price
+    if (val !== null && val !== undefined && val !== '') {
+      const num = Number(val)
+      if (!isNaN(num) && num > 0) {
+        return num
+      }
+    }
+    return 0
+  }
+
+  function mapRowsToProducts(rows) {
+    const testKeywords = [
+      'duplicidade',
+      'não usar',
+      'nao usar',
+      'tabela simulação de preço',
+      'simulação de preço',
+      'simulacao de preco',
+      'teste',
+    ]
+
+    const productsMap = {}
+    let ignoredRowsCount = 0
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]
+      if (!r) {
+        ignoredRowsCount++
+        continue
+      }
+
+      const codProd = String(r.COD_PROD || r.cod_prod || r.sku || '').trim()
+      const nomeProd = String(r.NOME_PROD || r.nome_prod || r.name || '').trim()
+      const listaPreco = String(r.lista_preco || r.LISTA_PRECO || r.tabela || '').trim()
+      const preco = extractPrice(r)
+
+      const saldoRaw =
+        r.saldo_prod !== undefined
+          ? r.saldo_prod
+          : r.SALDO_PROD !== undefined
+            ? r.SALDO_PROD
+            : r.stock
+
+      if (!codProd || !nomeProd) {
+        ignoredRowsCount++
+        continue
+      }
+
+      const lowerNome = nomeProd.toLowerCase()
+      const lowerLista = listaPreco.toLowerCase()
+      let isTest = false
+      for (let k = 0; k < testKeywords.length; k++) {
+        if (
+          lowerNome.indexOf(testKeywords[k]) !== -1 ||
+          lowerLista.indexOf(testKeywords[k]) !== -1
+        ) {
+          isTest = true
+          break
+        }
+      }
+
+      if (isTest) {
+        ignoredRowsCount++
+        continue
+      }
+
+      let saldo = 0
+      if (saldoRaw !== null && saldoRaw !== undefined && saldoRaw !== '') {
+        const numSaldo = Number(saldoRaw)
+        if (!isNaN(numSaldo) && numSaldo > 0) {
+          saldo = numSaldo
+        }
+      }
+
+      if (!productsMap[codProd]) {
+        productsMap[codProd] = {
+          cod_prod: codProd,
+          nome_prod: nomeProd,
+          saldo_prod: saldo,
+          preco_110: null,
+          preco_130: null,
+          preco_outra: null,
+        }
+      }
+
+      if (saldo > productsMap[codProd].saldo_prod) {
+        productsMap[codProd].saldo_prod = saldo
+      }
+
+      if (listaPreco.indexOf('110') !== -1) {
+        productsMap[codProd].preco_110 = preco
+      } else if (listaPreco.indexOf('130') !== -1) {
+        productsMap[codProd].preco_130 = preco
+      } else {
+        productsMap[codProd].preco_outra = preco
+      }
+    }
+
+    const productCodes = Object.keys(productsMap)
+    const mappedProducts = {}
+    const noPriceSkus = []
+
+    for (let j = 0; j < productCodes.length; j++) {
+      const sku = productCodes[j]
+      const p = productsMap[sku]
+
+      let price110 = p.preco_110 !== null && p.preco_110 !== undefined ? p.preco_110 : 0
+      let price130 = p.preco_130 !== null && p.preco_130 !== undefined ? p.preco_130 : 0
+      let precoOutra = p.preco_outra !== null && p.preco_outra !== undefined ? p.preco_outra : 0
+      let basePrice = 0
+
+      if (price130 > 0 && price110 > 0) {
+        basePrice = price130
+      } else if (price130 > 0 && price110 <= 0) {
+        basePrice = price130
+        price110 = price130
+      } else if (price110 > 0 && price130 <= 0) {
+        basePrice = price110
+        price130 = price110
+      } else if (precoOutra > 0) {
+        basePrice = precoOutra
+        if (price130 <= 0) price130 = precoOutra
+        if (price110 <= 0) price110 = precoOutra
+      }
+
+      if (basePrice <= 0) {
+        noPriceSkus.push(sku)
+        price110 = 0
+        price130 = 0
+        basePrice = 0
+      }
+
+      mappedProducts[sku] = {
+        sku: sku,
+        name: p.nome_prod,
+        stockQty: p.saldo_prod,
+        price: basePrice,
+        price_110: price110,
+        price_130: price130,
+        cost: basePrice,
+      }
+    }
+
+    return {
+      rawRowsCount: rows.length,
+      ignoredRowsCount: ignoredRowsCount,
+      distinctProductsCount: Object.keys(productsMap).length,
+      mappedProducts: mappedProducts,
+      noPriceSkus: noPriceSkus,
+    }
+  }
+
   let bridgeToken = $os.getenv('SOIS_BRIDGE_TOKEN') || ''
   let bridgeUrl = $os.getenv('SOIS_BRIDGE_URL') || ''
 
@@ -110,97 +272,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
     }
   }
 
-  const testKeywords = [
-    'duplicidade',
-    'não usar',
-    'nao usar',
-    'tabela simulação de preço',
-    'simulação de preço',
-    'simulacao de preco',
-    'teste',
-  ]
-
-  const productsMap = {}
-  let ignoredRowsCount = 0
-
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]
-    if (!r) {
-      ignoredRowsCount++
-      continue
-    }
-
-    const codProd = String(r.COD_PROD || r.cod_prod || r.sku || '').trim()
-    const nomeProd = String(r.NOME_PROD || r.nome_prod || r.name || '').trim()
-    const listaPreco = String(r.lista_preco || r.LISTA_PRECO || r.tabela || '').trim()
-    const precoRaw =
-      r['preço'] !== undefined ? r['preço'] : r.preco !== undefined ? r.preco : r.price
-    const saldoRaw =
-      r.saldo_prod !== undefined
-        ? r.saldo_prod
-        : r.SALDO_PROD !== undefined
-          ? r.SALDO_PROD
-          : r.stock
-
-    if (!codProd || !nomeProd) {
-      ignoredRowsCount++
-      continue
-    }
-
-    const lowerNome = nomeProd.toLowerCase()
-    const lowerLista = listaPreco.toLowerCase()
-    let isTest = false
-    for (let k = 0; k < testKeywords.length; k++) {
-      if (lowerNome.indexOf(testKeywords[k]) !== -1 || lowerLista.indexOf(testKeywords[k]) !== -1) {
-        isTest = true
-        break
-      }
-    }
-
-    if (isTest) {
-      ignoredRowsCount++
-      continue
-    }
-
-    let saldo = 0
-    if (saldoRaw !== null && saldoRaw !== undefined && saldoRaw !== '') {
-      const numSaldo = Number(saldoRaw)
-      if (!isNaN(numSaldo) && numSaldo > 0) {
-        saldo = numSaldo
-      }
-    }
-
-    let preco = 0
-    if (precoRaw !== null && precoRaw !== undefined && precoRaw !== '') {
-      const numPreco = Number(precoRaw)
-      if (!isNaN(numPreco)) {
-        preco = numPreco
-      }
-    }
-
-    if (!productsMap[codProd]) {
-      productsMap[codProd] = {
-        cod_prod: codProd,
-        nome_prod: nomeProd,
-        saldo_prod: saldo,
-        preco_110: null,
-        preco_130: null,
-        preco_outra: null,
-      }
-    }
-
-    if (saldo > productsMap[codProd].saldo_prod) {
-      productsMap[codProd].saldo_prod = saldo
-    }
-
-    if (listaPreco.indexOf('110') !== -1) {
-      productsMap[codProd].preco_110 = preco
-    } else if (listaPreco.indexOf('130') !== -1) {
-      productsMap[codProd].preco_130 = preco
-    } else {
-      productsMap[codProd].preco_outra = preco
-    }
-  }
+  const mappedResult = mapRowsToProducts(rows)
+  const mappedProducts = mappedResult.mappedProducts
+  const productCodes = Object.keys(mappedProducts)
 
   // ADIÇÃO B (PROTEÇÃO SYNC): Whitelist estrita de campos gravados no sync.
   // souis_sync e qualquer sync NUNCA devem alterar products.reserved_quantity nem order_items.*.
@@ -222,39 +296,15 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
   const productsCol = $app.findCollectionByNameOrId('products')
   let createdCount = 0
   let updatedCount = 0
-  const noPriceSkus = []
-
-  const productCodes = Object.keys(productsMap)
 
   for (let j = 0; j < productCodes.length; j++) {
-    const p = productsMap[productCodes[j]]
-    const sku = p.cod_prod
-    const name = p.nome_prod
-    const stockQty = p.saldo_prod
-
-    let price110 = p.preco_110
-    let price130 = p.preco_130
-    let basePrice = 0
-
-    if (price130 !== null && price130 > 0 && price110 !== null && price110 > 0) {
-      basePrice = price130
-    } else if (price130 !== null && price130 > 0 && (price110 === null || price110 <= 0)) {
-      basePrice = price130
-      price110 = price130
-    } else if (price110 !== null && price110 > 0 && (price130 === null || price130 <= 0)) {
-      basePrice = price110
-      price130 = price110
-    } else if (p.preco_outra !== null && p.preco_outra > 0) {
-      basePrice = p.preco_outra
-      if (price130 === null || price130 <= 0) price130 = p.preco_outra
-      if (price110 === null || price110 <= 0) price110 = p.preco_outra
-    }
-
-    if (basePrice <= 0) {
-      noPriceSkus.push(sku)
-      price110 = price110 || 0
-      price130 = price130 || 0
-    }
+    const p = mappedProducts[productCodes[j]]
+    const sku = p.sku
+    const name = p.name
+    const stockQty = p.stockQty
+    const basePrice = p.price
+    const price110 = p.price_110
+    const price130 = p.price_130
 
     const fieldsToSet = {
       name: name,
@@ -303,12 +353,12 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
     '[SOUIS-SCHEDULED-SYNC-COMPLETE]',
     JSON.stringify({
       timestamp: new Date().toISOString(),
-      rawRows: rows.length,
-      ignoredRows: ignoredRowsCount,
-      distinctProducts: productCodes.length,
+      rawRows: mappedResult.rawRowsCount,
+      ignoredRows: mappedResult.ignoredRowsCount,
+      distinctProducts: mappedResult.distinctProductsCount,
       created: createdCount,
       updated: updatedCount,
-      noPriceSkus: noPriceSkus,
+      noPriceSkus: mappedResult.noPriceSkus,
     }),
   )
 })

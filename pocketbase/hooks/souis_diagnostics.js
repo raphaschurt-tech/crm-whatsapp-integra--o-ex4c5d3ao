@@ -133,97 +133,170 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
     }
   }
 
-  const testKeywords = [
-    'duplicidade',
-    'não usar',
-    'nao usar',
-    'tabela simulação de preço',
-    'simulação de preço',
-    'simulacao de preco',
-    'teste',
-  ]
-
-  const productsMap = {}
-  let ignoredRowsCount = 0
-
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]
-    if (!r) {
-      ignoredRowsCount++
-      continue
+  function extractPrice(row) {
+    if (!row) return 0
+    const val =
+      row.PRECO !== undefined
+        ? row.PRECO
+        : row['preço'] !== undefined
+          ? row['preço']
+          : row.preco !== undefined
+            ? row.preco
+            : row.price
+    if (val !== null && val !== undefined && val !== '') {
+      const num = Number(val)
+      if (!isNaN(num) && num > 0) {
+        return num
+      }
     }
+    return 0
+  }
 
-    const codProd = String(r.COD_PROD || r.cod_prod || r.sku || '').trim()
-    const nomeProd = String(r.NOME_PROD || r.nome_prod || r.name || '').trim()
-    const listaPreco = String(r.lista_preco || r.LISTA_PRECO || r.tabela || '').trim()
-    const precoRaw =
-      r['preço'] !== undefined ? r['preço'] : r.preco !== undefined ? r.preco : r.price
-    const saldoRaw =
-      r.saldo_prod !== undefined
-        ? r.saldo_prod
-        : r.SALDO_PROD !== undefined
-          ? r.SALDO_PROD
-          : r.stock
+  function mapRowsToProducts(rows) {
+    const testKeywords = [
+      'duplicidade',
+      'não usar',
+      'nao usar',
+      'tabela simulação de preço',
+      'simulação de preço',
+      'simulacao de preco',
+      'teste',
+    ]
 
-    if (!codProd || !nomeProd) {
-      ignoredRowsCount++
-      continue
-    }
+    const productsMap = {}
+    let ignoredRowsCount = 0
 
-    const lowerNome = nomeProd.toLowerCase()
-    const lowerLista = listaPreco.toLowerCase()
-    let isTest = false
-    for (let k = 0; k < testKeywords.length; k++) {
-      if (lowerNome.indexOf(testKeywords[k]) !== -1 || lowerLista.indexOf(testKeywords[k]) !== -1) {
-        isTest = true
-        break
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]
+      if (!r) {
+        ignoredRowsCount++
+        continue
+      }
+
+      const codProd = String(r.COD_PROD || r.cod_prod || r.sku || '').trim()
+      const nomeProd = String(r.NOME_PROD || r.nome_prod || r.name || '').trim()
+      const listaPreco = String(r.lista_preco || r.LISTA_PRECO || r.tabela || '').trim()
+      const preco = extractPrice(r)
+
+      const saldoRaw =
+        r.saldo_prod !== undefined
+          ? r.saldo_prod
+          : r.SALDO_PROD !== undefined
+            ? r.SALDO_PROD
+            : r.stock
+
+      if (!codProd || !nomeProd) {
+        ignoredRowsCount++
+        continue
+      }
+
+      const lowerNome = nomeProd.toLowerCase()
+      const lowerLista = listaPreco.toLowerCase()
+      let isTest = false
+      for (let k = 0; k < testKeywords.length; k++) {
+        if (
+          lowerNome.indexOf(testKeywords[k]) !== -1 ||
+          lowerLista.indexOf(testKeywords[k]) !== -1
+        ) {
+          isTest = true
+          break
+        }
+      }
+
+      if (isTest) {
+        ignoredRowsCount++
+        continue
+      }
+
+      let saldo = 0
+      if (saldoRaw !== null && saldoRaw !== undefined && saldoRaw !== '') {
+        const numSaldo = Number(saldoRaw)
+        if (!isNaN(numSaldo) && numSaldo > 0) {
+          saldo = numSaldo
+        }
+      }
+
+      if (!productsMap[codProd]) {
+        productsMap[codProd] = {
+          cod_prod: codProd,
+          nome_prod: nomeProd,
+          saldo_prod: saldo,
+          preco_110: null,
+          preco_130: null,
+          preco_outra: null,
+        }
+      }
+
+      if (saldo > productsMap[codProd].saldo_prod) {
+        productsMap[codProd].saldo_prod = saldo
+      }
+
+      if (listaPreco.indexOf('110') !== -1) {
+        productsMap[codProd].preco_110 = preco
+      } else if (listaPreco.indexOf('130') !== -1) {
+        productsMap[codProd].preco_130 = preco
+      } else {
+        productsMap[codProd].preco_outra = preco
       }
     }
 
-    if (isTest) {
-      ignoredRowsCount++
-      continue
-    }
+    const productCodes = Object.keys(productsMap)
+    const mappedProducts = {}
+    const noPriceSkus = []
 
-    let saldo = 0
-    if (saldoRaw !== null && saldoRaw !== undefined && saldoRaw !== '') {
-      const numSaldo = Number(saldoRaw)
-      if (!isNaN(numSaldo) && numSaldo > 0) {
-        saldo = numSaldo
+    for (let j = 0; j < productCodes.length; j++) {
+      const sku = productCodes[j]
+      const p = productsMap[sku]
+
+      let price110 = p.preco_110 !== null && p.preco_110 !== undefined ? p.preco_110 : 0
+      let price130 = p.preco_130 !== null && p.preco_130 !== undefined ? p.preco_130 : 0
+      let precoOutra = p.preco_outra !== null && p.preco_outra !== undefined ? p.preco_outra : 0
+      let basePrice = 0
+
+      if (price130 > 0 && price110 > 0) {
+        basePrice = price130
+      } else if (price130 > 0 && price110 <= 0) {
+        basePrice = price130
+        price110 = price130
+      } else if (price110 > 0 && price130 <= 0) {
+        basePrice = price110
+        price130 = price110
+      } else if (precoOutra > 0) {
+        basePrice = precoOutra
+        if (price130 <= 0) price130 = precoOutra
+        if (price110 <= 0) price110 = precoOutra
+      }
+
+      if (basePrice <= 0) {
+        noPriceSkus.push(sku)
+        price110 = 0
+        price130 = 0
+        basePrice = 0
+      }
+
+      mappedProducts[sku] = {
+        sku: sku,
+        name: p.nome_prod,
+        stockQty: p.saldo_prod,
+        price: basePrice,
+        price_110: price110,
+        price_130: price130,
+        cost: basePrice,
       }
     }
 
-    let preco = 0
-    if (precoRaw !== null && precoRaw !== undefined && precoRaw !== '') {
-      const numPreco = Number(precoRaw)
-      if (!isNaN(numPreco)) {
-        preco = numPreco
-      }
-    }
-
-    if (!productsMap[codProd]) {
-      productsMap[codProd] = {
-        cod_prod: codProd,
-        nome_prod: nomeProd,
-        saldo_prod: saldo,
-        preco_110: null,
-        preco_130: null,
-        preco_outra: null,
-      }
-    }
-
-    if (saldo > productsMap[codProd].saldo_prod) {
-      productsMap[codProd].saldo_prod = saldo
-    }
-
-    if (listaPreco.indexOf('110') !== -1) {
-      productsMap[codProd].preco_110 = preco
-    } else if (listaPreco.indexOf('130') !== -1) {
-      productsMap[codProd].preco_130 = preco
-    } else {
-      productsMap[codProd].preco_outra = preco
+    return {
+      rawRowsCount: rows.length,
+      ignoredRowsCount: ignoredRowsCount,
+      distinctProductsCount: Object.keys(productsMap).length,
+      mappedProducts: mappedProducts,
+      noPriceSkus: noPriceSkus,
     }
   }
+
+  const mappedResult = mapRowsToProducts(rows)
+  const mappedProducts = mappedResult.mappedProducts
+  const productCodes = Object.keys(mappedProducts)
 
   const ALLOWED_SYNC_FIELDS = [
     'name',
@@ -245,39 +318,15 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
   let updatedCount = 0
   let errorCount = 0
   let firstError = null
-  const noPriceSkus = []
-
-  const productCodes = Object.keys(productsMap)
 
   for (let j = 0; j < productCodes.length; j++) {
-    const p = productsMap[productCodes[j]]
-    const sku = p.cod_prod
-    const name = p.nome_prod
-    const stockQty = p.saldo_prod
-
-    let price110 = p.preco_110
-    let price130 = p.preco_130
-    let basePrice = 0
-
-    if (price130 !== null && price130 > 0 && price110 !== null && price110 > 0) {
-      basePrice = price130
-    } else if (price130 !== null && price130 > 0 && (price110 === null || price110 <= 0)) {
-      basePrice = price130
-      price110 = price130
-    } else if (price110 !== null && price110 > 0 && (price130 === null || price130 <= 0)) {
-      basePrice = price110
-      price130 = price110
-    } else if (p.preco_outra !== null && p.preco_outra > 0) {
-      basePrice = p.preco_outra
-      if (price130 === null || price130 <= 0) price130 = p.preco_outra
-      if (price110 === null || price110 <= 0) price110 = p.preco_outra
-    }
-
-    if (basePrice <= 0) {
-      noPriceSkus.push(sku)
-      price110 = price110 || 0
-      price130 = price130 || 0
-    }
+    const p = mappedProducts[productCodes[j]]
+    const sku = p.sku
+    const name = p.name
+    const stockQty = p.stockQty
+    const basePrice = p.price
+    const price110 = p.price_110
+    const price130 = p.price_130
 
     const fieldsToSet = {
       name: name,
@@ -357,17 +406,16 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
 
   return e.json(200, {
     success: true,
-    total_raw_rows: rows.length,
-    ignored_rows: ignoredRowsCount,
-    distinct_products: productCodes.length,
+    total_raw_rows: mappedResult.rawRowsCount,
+    ignored_rows: mappedResult.ignoredRowsCount,
+    distinct_products: mappedResult.distinctProductsCount,
     created: createdCount,
     updated: updatedCount,
     errors: errorCount,
     first_error: firstError,
-    no_price_skus: noPriceSkus,
+    no_price_skus: mappedResult.noPriceSkus,
   })
 })
-
 routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
   let bridgeUrl = $os.getenv('SOIS_BRIDGE_URL') || ''
   let bridgeToken = $os.getenv('SOIS_BRIDGE_TOKEN') || ''
@@ -425,97 +473,170 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
     return e.json(502, { success: false, error: String(err) })
   }
 
-  const testKeywords = [
-    'duplicidade',
-    'não usar',
-    'nao usar',
-    'tabela simulação de preço',
-    'simulação de preço',
-    'simulacao de preco',
-    'teste',
-  ]
-
-  const productsMap = {}
-  let ignoredRowsCount = 0
-
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]
-    if (!r) {
-      ignoredRowsCount++
-      continue
+  function extractPrice(row) {
+    if (!row) return 0
+    const val =
+      row.PRECO !== undefined
+        ? row.PRECO
+        : row['preço'] !== undefined
+          ? row['preço']
+          : row.preco !== undefined
+            ? row.preco
+            : row.price
+    if (val !== null && val !== undefined && val !== '') {
+      const num = Number(val)
+      if (!isNaN(num) && num > 0) {
+        return num
+      }
     }
+    return 0
+  }
 
-    const codProd = String(r.COD_PROD || r.cod_prod || r.sku || '').trim()
-    const nomeProd = String(r.NOME_PROD || r.nome_prod || r.name || '').trim()
-    const listaPreco = String(r.lista_preco || r.LISTA_PRECO || r.tabela || '').trim()
-    const precoRaw =
-      r['preço'] !== undefined ? r['preço'] : r.preco !== undefined ? r.preco : r.price
-    const saldoRaw =
-      r.saldo_prod !== undefined
-        ? r.saldo_prod
-        : r.SALDO_PROD !== undefined
-          ? r.SALDO_PROD
-          : r.stock
+  function mapRowsToProducts(rows) {
+    const testKeywords = [
+      'duplicidade',
+      'não usar',
+      'nao usar',
+      'tabela simulação de preço',
+      'simulação de preço',
+      'simulacao de preco',
+      'teste',
+    ]
 
-    if (!codProd || !nomeProd) {
-      ignoredRowsCount++
-      continue
-    }
+    const productsMap = {}
+    let ignoredRowsCount = 0
 
-    const lowerNome = nomeProd.toLowerCase()
-    const lowerLista = listaPreco.toLowerCase()
-    let isTest = false
-    for (let k = 0; k < testKeywords.length; k++) {
-      if (lowerNome.indexOf(testKeywords[k]) !== -1 || lowerLista.indexOf(testKeywords[k]) !== -1) {
-        isTest = true
-        break
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]
+      if (!r) {
+        ignoredRowsCount++
+        continue
+      }
+
+      const codProd = String(r.COD_PROD || r.cod_prod || r.sku || '').trim()
+      const nomeProd = String(r.NOME_PROD || r.nome_prod || r.name || '').trim()
+      const listaPreco = String(r.lista_preco || r.LISTA_PRECO || r.tabela || '').trim()
+      const preco = extractPrice(r)
+
+      const saldoRaw =
+        r.saldo_prod !== undefined
+          ? r.saldo_prod
+          : r.SALDO_PROD !== undefined
+            ? r.SALDO_PROD
+            : r.stock
+
+      if (!codProd || !nomeProd) {
+        ignoredRowsCount++
+        continue
+      }
+
+      const lowerNome = nomeProd.toLowerCase()
+      const lowerLista = listaPreco.toLowerCase()
+      let isTest = false
+      for (let k = 0; k < testKeywords.length; k++) {
+        if (
+          lowerNome.indexOf(testKeywords[k]) !== -1 ||
+          lowerLista.indexOf(testKeywords[k]) !== -1
+        ) {
+          isTest = true
+          break
+        }
+      }
+
+      if (isTest) {
+        ignoredRowsCount++
+        continue
+      }
+
+      let saldo = 0
+      if (saldoRaw !== null && saldoRaw !== undefined && saldoRaw !== '') {
+        const numSaldo = Number(saldoRaw)
+        if (!isNaN(numSaldo) && numSaldo > 0) {
+          saldo = numSaldo
+        }
+      }
+
+      if (!productsMap[codProd]) {
+        productsMap[codProd] = {
+          cod_prod: codProd,
+          nome_prod: nomeProd,
+          saldo_prod: saldo,
+          preco_110: null,
+          preco_130: null,
+          preco_outra: null,
+        }
+      }
+
+      if (saldo > productsMap[codProd].saldo_prod) {
+        productsMap[codProd].saldo_prod = saldo
+      }
+
+      if (listaPreco.indexOf('110') !== -1) {
+        productsMap[codProd].preco_110 = preco
+      } else if (listaPreco.indexOf('130') !== -1) {
+        productsMap[codProd].preco_130 = preco
+      } else {
+        productsMap[codProd].preco_outra = preco
       }
     }
 
-    if (isTest) {
-      ignoredRowsCount++
-      continue
-    }
+    const productCodes = Object.keys(productsMap)
+    const mappedProducts = {}
+    const noPriceSkus = []
 
-    let saldo = 0
-    if (saldoRaw !== null && saldoRaw !== undefined && saldoRaw !== '') {
-      const numSaldo = Number(saldoRaw)
-      if (!isNaN(numSaldo) && numSaldo > 0) {
-        saldo = numSaldo
+    for (let j = 0; j < productCodes.length; j++) {
+      const sku = productCodes[j]
+      const p = productsMap[sku]
+
+      let price110 = p.preco_110 !== null && p.preco_110 !== undefined ? p.preco_110 : 0
+      let price130 = p.preco_130 !== null && p.preco_130 !== undefined ? p.preco_130 : 0
+      let precoOutra = p.preco_outra !== null && p.preco_outra !== undefined ? p.preco_outra : 0
+      let basePrice = 0
+
+      if (price130 > 0 && price110 > 0) {
+        basePrice = price130
+      } else if (price130 > 0 && price110 <= 0) {
+        basePrice = price130
+        price110 = price130
+      } else if (price110 > 0 && price130 <= 0) {
+        basePrice = price110
+        price130 = price110
+      } else if (precoOutra > 0) {
+        basePrice = precoOutra
+        if (price130 <= 0) price130 = precoOutra
+        if (price110 <= 0) price110 = precoOutra
+      }
+
+      if (basePrice <= 0) {
+        noPriceSkus.push(sku)
+        price110 = 0
+        price130 = 0
+        basePrice = 0
+      }
+
+      mappedProducts[sku] = {
+        sku: sku,
+        name: p.nome_prod,
+        stockQty: p.saldo_prod,
+        price: basePrice,
+        price_110: price110,
+        price_130: price130,
+        cost: basePrice,
       }
     }
 
-    let preco = 0
-    if (precoRaw !== null && precoRaw !== undefined && precoRaw !== '') {
-      const numPreco = Number(precoRaw)
-      if (!isNaN(numPreco)) {
-        preco = numPreco
-      }
-    }
-
-    if (!productsMap[codProd]) {
-      productsMap[codProd] = {
-        cod_prod: codProd,
-        nome_prod: nomeProd,
-        saldo_prod: saldo,
-        preco_110: null,
-        preco_130: null,
-        preco_outra: null,
-      }
-    }
-
-    if (saldo > productsMap[codProd].saldo_prod) {
-      productsMap[codProd].saldo_prod = saldo
-    }
-
-    if (listaPreco.indexOf('110') !== -1) {
-      productsMap[codProd].preco_110 = preco
-    } else if (listaPreco.indexOf('130') !== -1) {
-      productsMap[codProd].preco_130 = preco
-    } else {
-      productsMap[codProd].preco_outra = preco
+    return {
+      rawRowsCount: rows.length,
+      ignoredRowsCount: ignoredRowsCount,
+      distinctProductsCount: Object.keys(productsMap).length,
+      mappedProducts: mappedProducts,
+      noPriceSkus: noPriceSkus,
     }
   }
+
+  const mappedResult = mapRowsToProducts(rows)
+  const mappedProducts = mappedResult.mappedProducts
+  const productCodes = Object.keys(mappedProducts)
 
   const ALLOWED_SYNC_FIELDS = [
     'name',
@@ -537,39 +658,15 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
   let updatedCount = 0
   let errorCount = 0
   let firstError = null
-  const noPriceSkus = []
-
-  const productCodes = Object.keys(productsMap)
 
   for (let j = 0; j < productCodes.length; j++) {
-    const p = productsMap[productCodes[j]]
-    const sku = p.cod_prod
-    const name = p.nome_prod
-    const stockQty = p.saldo_prod
-
-    let price110 = p.preco_110
-    let price130 = p.preco_130
-    let basePrice = 0
-
-    if (price130 !== null && price130 > 0 && price110 !== null && price110 > 0) {
-      basePrice = price130
-    } else if (price130 !== null && price130 > 0 && (price110 === null || price110 <= 0)) {
-      basePrice = price130
-      price110 = price130
-    } else if (price110 !== null && price110 > 0 && (price130 === null || price130 <= 0)) {
-      basePrice = price110
-      price130 = price110
-    } else if (p.preco_outra !== null && p.preco_outra > 0) {
-      basePrice = p.preco_outra
-      if (price130 === null || price130 <= 0) price130 = p.preco_outra
-      if (price110 === null || price110 <= 0) price110 = p.preco_outra
-    }
-
-    if (basePrice <= 0) {
-      noPriceSkus.push(sku)
-      price110 = price110 || 0
-      price130 = price130 || 0
-    }
+    const p = mappedProducts[productCodes[j]]
+    const sku = p.sku
+    const name = p.name
+    const stockQty = p.stockQty
+    const basePrice = p.price
+    const price110 = p.price_110
+    const price130 = p.price_130
 
     const fieldsToSet = {
       name: name,
@@ -649,22 +746,29 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
 
   const resultSummary = {
     timestamp: new Date().toISOString(),
-    rawRows: rows.length,
-    ignoredRows: ignoredRowsCount,
-    distinctProducts: productCodes.length,
+    rawRows: mappedResult.rawRowsCount,
+    ignoredRows: mappedResult.ignoredRowsCount,
+    distinctProducts: mappedResult.distinctProductsCount,
     created: createdCount,
     updated: updatedCount,
     errors: errorCount,
     firstError: firstError,
-    no_price_skus: noPriceSkus,
+    no_price_skus: mappedResult.noPriceSkus,
   }
+
+  try {
+    $app
+      .db()
+      .newQuery("UPDATE settings SET payment_link_template = {:val} WHERE id != ''")
+      .bind({ val: JSON.stringify(resultSummary) })
+      .execute()
+  } catch (_) {}
 
   return e.json(200, {
     success: true,
     summary: resultSummary,
   })
 })
-
 routerAdd('GET', '/backend/v1/souis/trigger-save', (e) => {
   const result = {}
   try {
@@ -816,6 +920,9 @@ routerAdd('GET', '/backend/v1/souis/check-bridge', (e) => {
     }
   } catch (_) {}
 
+  // Teste de status
+  let testFnResult = 'ok'
+
   // Tentar chamar a ponte /produtos/all diretamente aqui e retornar o status
   let bridgeCallStatus = null
   let bridgeCallError = null
@@ -846,6 +953,7 @@ routerAdd('GET', '/backend/v1/souis/check-bridge', (e) => {
 
   return e.json(200, {
     probeResult: probeResult,
+    testFnResult: testFnResult,
     bridgeUrl: bridgeUrl,
     hasToken: Boolean(bridgeToken),
     tokenPrefix: bridgeToken ? bridgeToken.substring(0, 5) : null,
@@ -854,7 +962,6 @@ routerAdd('GET', '/backend/v1/souis/check-bridge', (e) => {
     returnedRowsCount: returnedRowsCount,
   })
 })
-
 routerAdd('GET', '/backend/v1/souis/diagnostics', (e) => {
   let egressIp = null
   let egressError = null
