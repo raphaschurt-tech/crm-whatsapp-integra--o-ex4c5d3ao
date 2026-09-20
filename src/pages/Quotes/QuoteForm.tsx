@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Plus, Trash2, AlertCircle, Save, MessageCircle, RefreshCw, Send } from 'lucide-react'
-import { getCustomers, createCustomer } from '@/services/customers'
+import { getCustomers, createCustomer, updateCustomer } from '@/services/customers'
 import { getProducts } from '@/services/products'
 import {
   getQuote,
@@ -237,6 +237,20 @@ export default function QuoteForm() {
           },
           validItems,
         )
+      }
+
+      // Se o orçamento foi salvo com status 'enviado', garantir que o lead vá para a coluna 'orcamento_enviado' no Pipeline
+      if (statusToSet === 'enviado' && selectedCustomer) {
+        try {
+          await updateCustomer(selectedCustomer, {
+            pipeline_status: 'orcamento_enviado',
+          })
+        } catch (pipeErr) {
+          console.warn(
+            'Erro ao atualizar pipeline_status do cliente para orcamento_enviado:',
+            pipeErr,
+          )
+        }
       }
 
       toast({ title: 'Orçamento salvo com sucesso!' })

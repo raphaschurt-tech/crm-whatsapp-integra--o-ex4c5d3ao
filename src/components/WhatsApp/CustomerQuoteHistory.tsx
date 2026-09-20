@@ -25,6 +25,7 @@ interface CustomerQuoteHistoryProps {
   customerPhone?: string
   customerName?: string
   onOpenCreateQuote?: () => void
+  refreshTrigger?: number
 }
 
 export type DisplayQuoteStatus =
@@ -40,6 +41,7 @@ export function CustomerQuoteHistory({
   customerPhone,
   customerName,
   onOpenCreateQuote,
+  refreshTrigger,
 }: CustomerQuoteHistoryProps) {
   const navigate = useNavigate()
   const [quotes, setQuotes] = useState<Quote[]>([])
@@ -54,13 +56,50 @@ export function CustomerQuoteHistory({
 
     setLoading(true)
     try {
-      let filterExpr = ''
-      if (customerId) {
-        filterExpr = `customer = "${customerId}"`
+      let resolvedCustomerId = customerId
+
+      // Se não temos customerId direto, tentar localizar o cliente pelo telefone antes de buscar quotes
+      if (!resolvedCustomerId && customerPhone) {
+        const digits = customerPhone.replace(/\D/g, '')
+        if (digits.length >= 8) {
+          const variants = new Set<string>()
+          variants.add(digits)
+          if (digits.startsWith('55') && digits.length >= 12) {
+            variants.add(digits.slice(2))
+          } else if (!digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) {
+            variants.add(`55${digits}`)
+          }
+
+          const filterPhoneParts = Array.from(variants)
+            .map((v) => `phone ~ "${v}"`)
+            .join(' || ')
+
+          try {
+            const matchedCustomers = await pb.collection('customers').getList(1, 5, {
+              filter: filterPhoneParts,
+            })
+            // Encontrar cliente cujo número limpo case exatamente com uma das variantes
+            const matched = matchedCustomers.items.find((c: any) => {
+              const cDigits = (c.phone || '').replace(/\D/g, '')
+              return variants.has(cDigits)
+            })
+            if (matched) {
+              resolvedCustomerId = matched.id
+            }
+          } catch (cErr) {
+            console.warn('Erro ao buscar cliente por telefone no CustomerQuoteHistory:', cErr)
+          }
+        }
+      }
+
+      // Se mesmo após a tentativa de resolução não encontramos o customerId, NUNCA buscar quotes sem filtro
+      if (!resolvedCustomerId) {
+        setQuotes([])
+        return
       }
 
       const list = await pb.collection<Quote>('quotes').getFullList({
-        filter: filterExpr,
+        filter: `customer = "${resolvedCustomerId}"`,
         sort: '-created',
         expand: 'customer',
       })
@@ -76,7 +115,7 @@ export function CustomerQuoteHistory({
 
   useEffect(() => {
     loadCustomerQuotes()
-  }, [customerId, customerPhone])
+  }, [customerId, customerPhone, refreshTrigger])
 
   /**
    * Deriva o status exibido com suporte a "vencido"

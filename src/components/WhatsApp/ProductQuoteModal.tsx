@@ -20,6 +20,7 @@ import { Product, Customer } from '@/types/crm'
 import { matchProductSearch } from '@/lib/fuzzySearch'
 import { getProducts } from '@/services/products'
 import { createQuoteWithItems, sendWhatsAppMessage, sendQuoteEmail } from '@/services/quotes'
+import { updateCustomer } from '@/services/customers'
 import { createPurchaseFromQuoteItems } from '@/services/purchaseRequestsService'
 import { ShoppingBag } from 'lucide-react'
 import { lookupStock } from '@/services/stock'
@@ -339,6 +340,20 @@ export function ProductQuoteModal({
       },
       itemsPayload,
     )
+
+    // Se o orçamento foi gravado com status "enviado", atualizar pipeline_status do cliente para "orcamento_enviado"
+    if (status === 'enviado') {
+      try {
+        await updateCustomer(customer.id, {
+          pipeline_status: 'orcamento_enviado',
+        })
+      } catch (pipeErr) {
+        console.warn(
+          'Erro ao atualizar pipeline_status do cliente para orcamento_enviado:',
+          pipeErr,
+        )
+      }
+    }
 
     return quoteRec
   }

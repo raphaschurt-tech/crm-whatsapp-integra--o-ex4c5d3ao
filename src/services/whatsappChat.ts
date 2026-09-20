@@ -1,7 +1,8 @@
 import pb from '@/lib/pocketbase/client'
 import { withRetry } from '@/lib/retry'
-import { Customer } from '@/types/crm'
+import { Customer, Quote } from '@/types/crm'
 import { getCustomers } from '@/services/customers'
+import { getQuotes } from '@/services/quotes'
 import { RecordModel } from 'pocketbase'
 
 export type WhatsAppSender = 'client' | 'agent' | 'ai'
@@ -35,6 +36,7 @@ export interface WhatsAppCustomer {
   lastTimestamp: number
   lastReadAt?: number
   messages: WhatsAppMessage[]
+  quotes?: import('@/types/crm').Quote[]
 }
 
 export interface WhatsAppReadStateRecord extends RecordModel {
@@ -284,28 +286,41 @@ export async function markWhatsAppAsRead(rawPhone: string, readTimestamp: number
  */
 export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
   try {
-    const [webhookList, processingList, customersList, readStatesMap] = await Promise.all([
-      withRetry(
-        () =>
-          pb.collection<WebhookReceivedRecord>('webhook_received').getFullList({ sort: 'created' }),
-        { retries: 3, delayMs: 800 },
-      ).catch((err) => {
-        console.warn('Erro ao carregar webhook_received:', err)
-        return [] as WebhookReceivedRecord[]
-      }),
-      withRetry(
-        () =>
-          pb
-            .collection<MessageProcessingRecord>('message_processing')
-            .getFullList({ sort: 'created' }),
-        { retries: 3, delayMs: 800 },
-      ).catch((err) => {
-        console.warn('Erro ao carregar message_processing:', err)
-        return [] as MessageProcessingRecord[]
-      }),
-      getCustomers().catch(() => [] as Customer[]),
-      loadWhatsAppReadStates().catch(() => new Map<string, number>()),
-    ])
+    const [webhookList, processingList, customersList, readStatesMap, allQuotesList] =
+      await Promise.all([
+        withRetry(
+          () =>
+            pb
+              .collection<WebhookReceivedRecord>('webhook_received')
+              .getFullList({ sort: 'created' }),
+          { retries: 3, delayMs: 800 },
+        ).catch((err) => {
+          console.warn('Erro ao carregar webhook_received:', err)
+          return [] as WebhookReceivedRecord[]
+        }),
+        withRetry(
+          () =>
+            pb
+              .collection<MessageProcessingRecord>('message_processing')
+              .getFullList({ sort: 'created' }),
+          { retries: 3, delayMs: 800 },
+        ).catch((err) => {
+          console.warn('Erro ao carregar message_processing:', err)
+          return [] as MessageProcessingRecord[]
+        }),
+        getCustomers().catch(() => [] as Customer[]),
+        loadWhatsAppReadStates().catch(() => new Map<string, number>()),
+        getQuotes().catch(() => [] as Quote[]),
+      ])
+
+    // Mapa de quotes por customerId
+    const quotesByCustomerId = new Map<string, Quote[]>()
+    for (const q of allQuotesList) {
+      if (!q.customer) continue
+      const list = quotesByCustomerId.get(q.customer) || []
+      list.push(q)
+      quotesByCustomerId.set(q.customer, list)
+    }
 
     // Mapa de clientes para rápida associação por telefone normalizado
     // Um cliente pode ter telefone formatado "(11) 96397-0333" ou "11963970333" ou "5511963970333"
@@ -564,6 +579,11 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         ? matchedCustomer.type || (matchedCustomer.cnpj ? 'PJ' : 'PF')
         : 'PF'
 
+      // Orçamentos associados ao cliente (por customerId ou fallback de telefone via matchedCustomer)
+      const customerQuotes = matchedCustomer?.id
+        ? quotesByCustomerId.get(matchedCustomer.id) || []
+        : []
+
       result.push({
         id: matchedCustomer ? matchedCustomer.id : `conv-${conv.phoneKey}`,
         customerId: matchedCustomer?.id,
@@ -578,6 +598,7 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         lastActivity,
         lastTimestamp,
         messages: conv.messages,
+        quotes: customerQuotes,
       })
     }
 

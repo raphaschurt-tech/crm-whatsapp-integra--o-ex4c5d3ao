@@ -34,6 +34,7 @@ import {
   downloadQuotePdfAsync,
 } from '@/services/quotePdfService'
 import { sendWhatsAppMessage, updateQuoteStatus } from '@/services/quotes'
+import { updateCustomer } from '@/services/customers'
 import { toast } from '@/hooks/use-toast'
 
 interface SendQuoteDialogProps {
@@ -191,6 +192,18 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
           await updateQuoteStatus(quote.id, 'enviado')
         } catch (statusErr) {
           console.warn('Erro ao atualizar status do orçamento:', statusErr)
+        }
+      }
+
+      // Atualizar pipeline_status do cliente para "orcamento_enviado"
+      const targetCustId = resolvedCustomer?.id || quote.customer
+      if (targetCustId) {
+        try {
+          await updateCustomer(targetCustId, {
+            pipeline_status: 'orcamento_enviado',
+          })
+        } catch (pipeErr) {
+          console.warn('Erro ao atualizar pipeline_status do cliente no SendQuoteDialog:', pipeErr)
         }
       }
 

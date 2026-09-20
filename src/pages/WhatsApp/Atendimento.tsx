@@ -34,7 +34,9 @@ import pb from '@/lib/pocketbase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { openWhatsApp } from '@/lib/whatsapp'
+import { openWhatsApp, formatCurrency } from '@/lib/whatsapp'
+import { Quote } from '@/types/crm'
+import { AlertCircle, CheckCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import {
   WhatsAppCustomer,
@@ -67,6 +69,7 @@ export default function WhatsAppAtendimento() {
   // Estados dos novos recursos de Orçamentos e Histórico
   const [isProductModalOpen, setIsProductModalOpen] = useState(false)
   const [showHistoryPanel, setShowHistoryPanel] = useState(true)
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0)
 
   // Estados de envio de arquivos na conversa
   const [isWhatsAppConnected, setIsWhatsAppConnected] = useState<boolean | null>(null)
@@ -147,6 +150,10 @@ export default function WhatsAppAtendimento() {
   useRealtime('whatsapp_read_states', () => {
     fetchData(true)
   })
+  useRealtime('quotes', () => {
+    setHistoryRefreshKey((k) => k + 1)
+    fetchData(true)
+  })
 
   // Polling leve a cada 12 segundos para garantir sincronização caso realtime falhe
   useEffect(() => {
@@ -157,6 +164,30 @@ export default function WhatsAppAtendimento() {
   }, [fetchData])
 
   const activeCustomer = customers.find((c) => c.id === selectedCustomerId) || customers[0]
+
+  // Unifica mensagens e orçamentos em uma timeline cronológica única de eventos
+  type ChatTimelineItem =
+    | { kind: 'message'; data: WhatsAppMessage; timestamp: number }
+    | { kind: 'quote'; data: Quote; timestamp: number }
+
+  const timelineItems: ChatTimelineItem[] = activeCustomer
+    ? [
+        ...activeCustomer.messages.map(
+          (m): ChatTimelineItem => ({
+            kind: 'message',
+            data: m,
+            timestamp: m.timestamp,
+          }),
+        ),
+        ...(activeCustomer.quotes || []).map(
+          (q): ChatTimelineItem => ({
+            kind: 'quote',
+            data: q,
+            timestamp: new Date(q.created).getTime(),
+          }),
+        ),
+      ].sort((a, b) => a.timestamp - b.timestamp)
+    : []
 
   // Persistir leitura sempre que uma conversa for selecionada / aberta
   useEffect(() => {
@@ -220,15 +251,15 @@ export default function WhatsAppAtendimento() {
     if (!activeCustomer) return
 
     const currentCustId = activeCustomer.id
-    const currentMessagesCount = activeCustomer.messages.length
+    const currentItemsCount = timelineItems.length
     const isNewConversation = prevCustomerIdRef.current !== currentCustId
-    const hadMessages = prevMessagesCountRef.current
-    const messageAdded = currentMessagesCount > hadMessages
+    const hadItems = prevMessagesCountRef.current
+    const itemAdded = currentItemsCount > hadItems
 
     if (isNewConversation) {
       // (a) Ao abrir/selecionar conversa pela primeira vez: rolar direto para o fim
       prevCustomerIdRef.current = currentCustId
-      prevMessagesCountRef.current = currentMessagesCount
+      prevMessagesCountRef.current = currentItemsCount
       setHasUnreadBelow(false)
       // timeout pequeno para dar tempo do container medir layout se acabou de renderizar
       requestAnimationFrame(() => {
@@ -241,14 +272,14 @@ export default function WhatsAppAtendimento() {
     if (shouldScrollOnSendRef.current) {
       // (b) Envio do próprio usuário: sempre rolar para o fim
       shouldScrollOnSendRef.current = false
-      prevMessagesCountRef.current = currentMessagesCount
+      prevMessagesCountRef.current = currentItemsCount
       requestAnimationFrame(() => {
         scrollToBottom('smooth')
       })
       return
     }
 
-    if (messageAdded) {
+    if (itemAdded) {
       // Nova mensagem de terceiro ou atualização de dados
       if (isNearBottomRef.current) {
         // Usuário já está perto do fim: rolar suavemente
@@ -261,8 +292,8 @@ export default function WhatsAppAtendimento() {
       }
     }
 
-    prevMessagesCountRef.current = currentMessagesCount
-  }, [activeCustomer?.id, activeCustomer?.messages])
+    prevMessagesCountRef.current = currentItemsCount
+  }, [activeCustomer?.id, timelineItems.length])
 
   const filteredCustomers = customers.filter((c) => {
     if (statusFilter !== 'todos' && c.status !== statusFilter) return false
@@ -909,7 +940,120 @@ export default function WhatsAppAtendimento() {
                 </span>
               </div>
 
-              {activeCustomer.messages.map((msg) => {
+              {timelineItems.map((item) => {
+                if (item.kind === 'quote') {
+                  const q = item.data
+                  // Calcular status derivado para o badge do cartão
+                  const createdDate = new Date(q.created)
+                  const now = new Date()
+                  const diffDays = (now.getTime() - createdDate.getTime()) / (1000 * 3600 * 24)
+                  let displayStatus = q.status
+                  if (diffDays > 7 && (q.status === 'enviado' || q.status === 'rascunho')) {
+                    displayStatus = 'vencido' as any
+                  }
+
+                  const formattedDate = createdDate.toLocaleDateString('pt-BR', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                  })
+                  const timeFormatted = `${String(createdDate.getHours()).padStart(2, '0')}:${String(
+                    createdDate.getMinutes(),
+                  ).padStart(2, '0')}`
+
+                  const statusConfig = {
+                    pago: {
+                      badge: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                      label: 'Pago',
+                      icon: CheckCircle,
+                    },
+                    aprovado: {
+                      badge: 'bg-green-100 text-green-800 border-green-200',
+                      label: 'Aprovado',
+                      icon: CheckCircle,
+                    },
+                    enviado: {
+                      badge: 'bg-blue-100 text-blue-800 border-blue-200',
+                      label: 'Enviado',
+                      icon: Clock,
+                    },
+                    vencido: {
+                      badge: 'bg-amber-100 text-amber-800 border-amber-200',
+                      label: 'Vencido',
+                      icon: AlertCircle,
+                    },
+                    rejeitado: {
+                      badge: 'bg-rose-100 text-rose-800 border-rose-200',
+                      label: 'Rejeitado',
+                      icon: AlertCircle,
+                    },
+                    rascunho: {
+                      badge: 'bg-slate-100 text-slate-700 border-slate-200',
+                      label: 'Rascunho',
+                      icon: Clock,
+                    },
+                  }[displayStatus as string] || {
+                    badge: 'bg-blue-100 text-blue-800 border-blue-200',
+                    label: displayStatus,
+                    icon: Clock,
+                  }
+
+                  const StatusIcon = statusConfig.icon
+
+                  return (
+                    <div key={`timeline-quote-${q.id}`} className="flex justify-center my-3">
+                      <div className="w-full max-w-md bg-white border border-indigo-200 rounded-xl p-3.5 shadow-sm hover:border-indigo-400 transition-all bg-gradient-to-r from-indigo-50/40 via-white to-indigo-50/20">
+                        <div className="flex items-center justify-between gap-2 border-b border-indigo-100 pb-2 mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                              <FileText className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="font-bold text-slate-900 text-xs font-mono">
+                                Orçamento Nº {q.number}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block">
+                                {formattedDate} às {timeFormatted}
+                              </span>
+                            </div>
+                          </div>
+                          <Badge className={`${statusConfig.badge} text-[10px] font-bold`}>
+                            <StatusIcon className="w-3 h-3 mr-1 inline" />
+                            {statusConfig.label}
+                          </Badge>
+                        </div>
+
+                        <div className="flex items-center justify-between py-1">
+                          <span className="text-xs text-slate-600 font-medium">Valor Total:</span>
+                          <span className="text-base font-extrabold text-emerald-700">
+                            {formatCurrency(q.total)}
+                          </span>
+                        </div>
+
+                        {q.notes && (
+                          <p className="text-[11px] text-slate-500 italic bg-slate-50 p-1.5 rounded mt-1 border border-slate-100 line-clamp-2">
+                            "{q.notes}"
+                          </p>
+                        )}
+
+                        <div className="flex items-center justify-end gap-2 pt-2 mt-2 border-t border-indigo-100/60">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => navigate(`/orcamentos/${q.id}`)}
+                            className="h-7 text-xs text-indigo-700 hover:text-indigo-800 hover:bg-indigo-50 px-2 font-medium"
+                          >
+                            <Eye className="w-3.5 h-3.5 mr-1" />
+                            Ver Orçamento
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
+
+                const msg = item.data
                 const isClient = msg.sender === 'client'
                 const isAi = msg.sender === 'ai'
 
@@ -1161,6 +1305,7 @@ export default function WhatsAppAtendimento() {
             customerPhone={activeCustomer.rawPhone}
             customerName={activeCustomer.name}
             onOpenCreateQuote={handleOpenProductQuote}
+            refreshTrigger={historyRefreshKey}
           />
         )}
       </div>
@@ -1177,6 +1322,7 @@ export default function WhatsAppAtendimento() {
             company: activeCustomer.company,
           }}
           onQuoteSent={(quoteNumber) => {
+            setHistoryRefreshKey((k) => k + 1)
             fetchData(true)
           }}
         />
