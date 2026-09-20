@@ -35,11 +35,28 @@ export default function CustomerList() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
-  const [entityFilter, setEntityFilter] = useState<'ALL' | 'cliente' | 'fornecedor'>('ALL')
+  const [entityFilter, setEntityFilter] = useState<'ALL' | 'cliente' | 'fornecedor' | 'ambos'>(
+    'ALL',
+  )
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncSummary, setSyncSummary] = useState<SyncContactsResult | null>(null)
+
+  // Contadores no topo (Regra item 9: "X clientes · Y fornecedores")
+  const clientCount = useMemo(() => {
+    return customers.filter((c) => {
+      const t = (c.customer_type || '').toLowerCase()
+      return t === 'cliente' || t === 'ambos' || !t
+    }).length
+  }, [customers])
+
+  const supplierCount = useMemo(() => {
+    return customers.filter((c) => {
+      const t = (c.customer_type || '').toLowerCase()
+      return t === 'fornecedor' || t === 'ambos'
+    }).length
+  }, [customers])
 
   const loadData = async () => {
     setLoading(true)
@@ -64,10 +81,13 @@ export default function CustomerList() {
   })
 
   const filtered = customers.filter((c) => {
-    // Filtro por entidade: cliente ou fornecedor
-    const isSupplier = c.customer_type === 'fornecedor'
-    if (entityFilter === 'cliente' && isSupplier) return false
+    // Filtro por entidade: cliente, fornecedor ou ambos
+    const t = (c.customer_type || '').toLowerCase()
+    const isClient = t === 'cliente' || t === 'ambos' || !t
+    const isSupplier = t === 'fornecedor' || t === 'ambos'
+    if (entityFilter === 'cliente' && !isClient) return false
     if (entityFilter === 'fornecedor' && !isSupplier) return false
+    if (entityFilter === 'ambos' && t !== 'ambos') return false
 
     // Filtro por tipo: Se o registro não tiver type explicito, deduz por cnpj ou assume PF
     const cType = c.type || (c.cnpj ? 'PJ' : 'PF')
@@ -125,8 +145,18 @@ export default function CustomerList() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Clientes</h1>
-          <p className="text-sm text-slate-500">Base de contatos para envio de propostas</p>
+          <h1 className="text-2xl font-bold text-slate-900">Clientes & Fornecedores</h1>
+          <p className="text-sm text-slate-500 flex items-center gap-2 mt-0.5">
+            <span>Base unificada de contatos</span>
+            <span className="text-slate-300">•</span>
+            <strong className="text-emerald-700 font-semibold">
+              {clientCount} {clientCount === 1 ? 'cliente' : 'clientes'}
+            </strong>
+            <span className="text-slate-300">·</span>
+            <strong className="text-amber-700 font-semibold">
+              {supplierCount} {supplierCount === 1 ? 'fornecedor' : 'fornecedores'}
+            </strong>
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -246,6 +276,17 @@ export default function CustomerList() {
             >
               Fornecedores
             </button>
+            <button
+              type="button"
+              onClick={() => setEntityFilter('ambos')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                entityFilter === 'ambos'
+                  ? 'bg-white text-indigo-700 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Ambos
+            </button>
           </div>
 
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
@@ -329,15 +370,28 @@ export default function CustomerList() {
                     <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="p-4">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          {isSupplier ? (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-800">
-                              Fornecedor
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700">
-                              Cliente
-                            </span>
-                          )}
+                          {(() => {
+                            const raw = (c.customer_type || '').toLowerCase()
+                            if (raw === 'ambos') {
+                              return (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-indigo-100 text-indigo-800">
+                                  Ambos
+                                </span>
+                              )
+                            }
+                            if (raw === 'fornecedor') {
+                              return (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-800">
+                                  Fornecedor
+                                </span>
+                              )
+                            }
+                            return (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-700">
+                                Cliente
+                              </span>
+                            )
+                          })()}
                           <span
                             className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${
                               resolvedType === 'PJ'
@@ -347,6 +401,11 @@ export default function CustomerList() {
                           >
                             {resolvedType}
                           </span>
+                          {c.source === 'erp' && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                              ERP
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="p-4 font-bold text-slate-900">
@@ -414,15 +473,28 @@ export default function CustomerList() {
                   <div className="flex justify-between items-start">
                     <div>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {isSupplier ? (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
-                            Fornecedor
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                            Cliente
-                          </span>
-                        )}
+                        {(() => {
+                          const raw = (c.customer_type || '').toLowerCase()
+                          if (raw === 'ambos') {
+                            return (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800">
+                                Ambos
+                              </span>
+                            )
+                          }
+                          if (raw === 'fornecedor') {
+                            return (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                                Fornecedor
+                              </span>
+                            )
+                          }
+                          return (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                              Cliente
+                            </span>
+                          )
+                        })()}
                         <span
                           className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
                             resolvedType === 'PJ'
@@ -432,6 +504,11 @@ export default function CustomerList() {
                         >
                           {resolvedType}
                         </span>
+                        {c.source === 'erp' && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                            ERP
+                          </span>
+                        )}
                         <LeadSourceBadge source={c.lead_source} />
                         <p className="font-bold text-slate-900">{c.name}</p>
                       </div>

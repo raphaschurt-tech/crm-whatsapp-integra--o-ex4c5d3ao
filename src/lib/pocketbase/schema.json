@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-20T15:55:18.406Z",
+  "generatedAt": "2026-09-20T16:47:24.280Z",
   "collections": [
     {
       "name": "users",
@@ -185,6 +185,19 @@
           "type": "text",
           "required": false,
           "system": false
+        },
+        {
+          "name": "source",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "item_families",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "item_families"
         }
       ],
       "indexes": [

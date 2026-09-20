@@ -10,6 +10,7 @@ export const getCustomers = async (includeDeleted = false): Promise<Customer[]> 
         pb.collection<Customer>('customers').getFullList({
           sort: 'name',
           filter: filter || undefined,
+          expand: 'item_families',
         }),
       { retries: 3, delayMs: 800 },
     )
@@ -19,7 +20,8 @@ export const getCustomers = async (includeDeleted = false): Promise<Customer[]> 
   }
 }
 
-export const getCustomer = (id: string) => pb.collection<Customer>('customers').getOne(id)
+export const getCustomer = (id: string) =>
+  pb.collection<Customer>('customers').getOne(id, { expand: 'item_families' })
 
 /**
  * Normaliza documento removendo todos os caracteres não numéricos.

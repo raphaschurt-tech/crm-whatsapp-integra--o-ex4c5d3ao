@@ -11,7 +11,7 @@ export interface User extends RecordModel {
 
 export type CustomerType = 'PF' | 'PJ'
 
-export type EntityCustomerType = 'cliente' | 'fornecedor'
+export type EntityCustomerType = 'Cliente' | 'Fornecedor' | 'Ambos' | 'cliente' | 'fornecedor'
 
 export type LeadSource = 'whatsapp' | 'instagram' | 'google' | 'other'
 
@@ -32,6 +32,12 @@ export interface Customer extends RecordModel {
   deleted_at?: string
   lost_reason?: string
   lost_reason_detail?: string
+  source?: string
+  item_families?: string[]
+  expand?: {
+    item_families?: ItemFamily[]
+    [key: string]: any
+  }
 }
 
 export type ProductType = 'comprado' | 'produzido'

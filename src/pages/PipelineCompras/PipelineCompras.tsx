@@ -118,9 +118,12 @@ export default function PipelineCompras() {
   useRealtime('customers', () => loadData(true))
   useRealtime('products', () => loadData(true))
 
-  // Lista de fornecedores (clientes com customer_type === 'fornecedor')
+  // Lista de fornecedores (clientes com customer_type === 'Fornecedor' ou 'Ambos')
   const suppliers = useMemo(() => {
-    return customers.filter((c) => c.customer_type === 'fornecedor')
+    return customers.filter((c) => {
+      const t = (c.customer_type || '').toLowerCase()
+      return t === 'fornecedor' || t === 'ambos'
+    })
   }, [customers])
 
   // Mapa de fornecedores id -> nome

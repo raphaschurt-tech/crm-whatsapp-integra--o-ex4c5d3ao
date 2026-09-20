@@ -62,28 +62,24 @@ export function ProductSearchCombobox({
     function updateDropdownPosition() {
       if (!containerRef.current) return
 
-      // 1. Identifica se estamos dentro de um contêiner restrito (Modal Dialog ou Drawer lateral)
-      // - DialogContent do Radix possui role="dialog"
-      // - PurchaseDrawer possui um painel lateral .slide-in-from-right ou contêiner .fixed.inset-0
+      // Identifica se estamos dentro de um contêiner restrito (Modal Dialog ou Drawer lateral)
       const dialogContent = containerRef.current.closest<HTMLElement>('[role="dialog"]')
       const drawerPanel =
         containerRef.current.closest<HTMLElement>('.slide-in-from-right') ||
         containerRef.current.closest<HTMLElement>('.max-w-2xl')
       const dialogOrDrawerContainer = dialogContent || drawerPanel
 
-      // 2. Identifica o contêiner de linha do item imediato (card do item)
-      // No Novo Orçamento: <div className="p-4 border rounded-xl bg-slate-50/50 space-y-3">
-      // No Pipeline de Compras: <div className="p-3 bg-white rounded-lg border border-slate-200/90 shadow-2xs space-y-2.5">
-      const itemRowContainer =
-        containerRef.current.closest<HTMLElement>('.border.rounded-xl') ||
-        containerRef.current.closest<HTMLElement>('.border.rounded-lg') ||
-        containerRef.current.closest<HTMLElement>('.p-3.bg-white') ||
-        containerRef.current.closest<HTMLElement>('.p-4.border')
+      // Identifica o contêiner de seção "Itens da compra" ou card do item
+      // No modal: <div className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
+      // No drawer: <div className="space-y-3 bg-slate-50/70 p-3 rounded-xl border border-slate-200">
+      const itemsSectionContainer =
+        containerRef.current.closest<HTMLElement>('.bg-slate-50\\/80') ||
+        containerRef.current.closest<HTMLElement>('.bg-slate-50\\/70') ||
+        containerRef.current.closest<HTMLElement>('.border.rounded-xl')
 
       const inputRect = containerRef.current.getBoundingClientRect()
-      const rowRect = itemRowContainer ? itemRowContainer.getBoundingClientRect() : inputRect
       const viewportWidth = window.innerWidth
-      const paddingMargin = 12
+      const paddingMargin = 16
 
       // Limites horizontais válidos (viewport ou modal/drawer se existir)
       let minBoundaryLeft = paddingMargin
@@ -91,7 +87,7 @@ export function ProductSearchCombobox({
 
       if (dialogOrDrawerContainer) {
         const panelRect = dialogOrDrawerContainer.getBoundingClientRect()
-        // Considera padding de 16px para não colar nas bordas do modal/drawer
+        // Respiro de 16px de cada lado em relação ao modal/drawer
         const modalPadding = 16
         minBoundaryLeft = Math.max(paddingMargin, panelRect.left + modalPadding)
         maxBoundaryRight = Math.min(viewportWidth - paddingMargin, panelRect.right - modalPadding)
@@ -100,26 +96,35 @@ export function ProductSearchCombobox({
       const boundaryWidth = Math.max(280, maxBoundaryRight - minBoundaryLeft)
 
       let targetLeft = inputRect.left
-      let targetWidth = Math.max(inputRect.width, rowRect.right - inputRect.left)
+      let targetWidth = boundaryWidth
 
-      // No modal/drawer: alinhar exatamente às bordas do card da linha do item
-      // (do limite esquerdo do card até o limite direito do card)
-      // Isso dá a máxima largura disponível dentro do card, mostrando todas as informações
-      // com perfeição exatamente como o usuário pediu ("igual de novo orçamento")
-      if (dialogOrDrawerContainer && itemRowContainer) {
-        targetLeft = rowRect.left
-        targetWidth = rowRect.width
+      if (dialogOrDrawerContainer) {
+        // Regra A1: O painel deve ocupar a largura interna total do modal (~16px de respiro de cada lado),
+        // alinhado ao card "Itens da compra", sem nunca ultrapassá-lo
+        if (itemsSectionContainer) {
+          const sectionRect = itemsSectionContainer.getBoundingClientRect()
+          targetLeft = Math.max(minBoundaryLeft, sectionRect.left)
+          targetWidth = Math.min(boundaryWidth, sectionRect.width)
+        } else {
+          targetLeft = minBoundaryLeft
+          targetWidth = boundaryWidth
+        }
       } else {
         // No Novo Orçamento (página aberta normal):
         // Alinha à esquerda com o input e estende até a borda direita da linha do item
-        // com garantia de largura mínima generosa (até 680px)
+        const itemRowContainer =
+          containerRef.current.closest<HTMLElement>('.border.rounded-xl') ||
+          containerRef.current.closest<HTMLElement>('.p-4.border')
+        const rowRect = itemRowContainer ? itemRowContainer.getBoundingClientRect() : inputRect
+        targetLeft = inputRect.left
+        targetWidth = Math.max(inputRect.width, rowRect.right - inputRect.left)
         const minDesiredWidth = Math.min(680, viewportWidth - 2 * paddingMargin)
         if (targetWidth < minDesiredWidth) {
           targetWidth = minDesiredWidth
         }
       }
 
-      // Garante que não exceda o limite disponível do contêiner modal/drawer ou viewport
+      // Garante que não exceda o limite disponível
       if (targetWidth > boundaryWidth) {
         targetWidth = boundaryWidth
       }
@@ -322,7 +327,7 @@ export function ProductSearchCombobox({
                         <div className="min-w-0 flex-1 space-y-1">
                           {/* Linha 1: Nome do produto e Preço / Sob Consulta */}
                           <div className="flex items-baseline justify-between gap-3">
-                            <span className="font-semibold text-sm text-slate-900 leading-snug break-words">
+                            <span className="font-semibold text-sm text-slate-900 leading-snug whitespace-normal break-words">
                               {p.name}
                             </span>
                             <div className="text-right shrink-0">
@@ -383,12 +388,17 @@ export function ProductSearchCombobox({
                             )}
                           </div>
 
-                          {/* Linha 3: Descrição completa e legível sem truncar */}
-                          {p.description && (
-                            <p className="text-xs text-slate-600 leading-relaxed pt-0.5 whitespace-normal break-words">
-                              {p.description}
-                            </p>
-                          )}
+                          {/* Linha 3: Descrição específica (remover texto genérico SOU.IS) em até 2 linhas */}
+                          {p.description &&
+                            !p.description
+                              .toLowerCase()
+                              .includes(
+                                'produto sou.is sincronizado via view vw_produto_preco_estoque',
+                              ) && (
+                              <p className="text-xs text-slate-600 leading-relaxed pt-0.5 whitespace-normal break-words line-clamp-2">
+                                {p.description}
+                              </p>
+                            )}
                         </div>
                       </div>
 

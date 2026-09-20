@@ -70,15 +70,28 @@ export default function CustomerDetail() {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold text-slate-900">{customer.name}</h1>
-              <Badge
-                className={
-                  customer.customer_type === 'fornecedor'
-                    ? 'bg-amber-100 text-amber-800 hover:bg-amber-100 border-none font-bold'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-100 border-none'
+              {(() => {
+                const raw = (customer.customer_type || '').toLowerCase()
+                if (raw === 'ambos') {
+                  return (
+                    <Badge className="bg-indigo-100 text-indigo-800 hover:bg-indigo-100 border-none font-bold">
+                      Ambos
+                    </Badge>
+                  )
                 }
-              >
-                {customer.customer_type === 'fornecedor' ? 'Fornecedor' : 'Cliente'}
-              </Badge>
+                if (raw === 'fornecedor') {
+                  return (
+                    <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 border-none font-bold">
+                      Fornecedor
+                    </Badge>
+                  )
+                }
+                return (
+                  <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100 border-none font-bold">
+                    Cliente
+                  </Badge>
+                )
+              })()}
               <Badge
                 className={
                   (customer.type || (customer.cnpj ? 'PJ' : 'PF')) === 'PJ'
@@ -88,30 +101,59 @@ export default function CustomerDetail() {
               >
                 {customer.type || (customer.cnpj ? 'PJ' : 'PF')}
               </Badge>
+              {customer.source === 'erp' && (
+                <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100 border border-purple-200 font-bold">
+                  ERP SOU.IS
+                </Badge>
+              )}
               <LeadSourceBadge source={customer.lead_source} size="md" />
             </div>
           </div>
         </div>
-        <Button
-          onClick={() => navigate(`/orcamentos/novo?customerId=${customer.id}`)}
-          className="bg-emerald-500 hover:bg-emerald-600 text-white font-medium shadow"
-        >
-          <Plus className="mr-1.5 h-4 w-4" /> Novo Orçamento para Cliente
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => navigate(`/clientes/${customer.id}/editar`)}
+            className="border-slate-300"
+          >
+            Editar Cadastro
+          </Button>
+          <Button
+            onClick={() => navigate(`/orcamentos/novo?customerId=${customer.id}`)}
+            className="bg-emerald-500 hover:bg-emerald-600 text-white font-medium shadow"
+          >
+            <Plus className="mr-1.5 h-4 w-4" /> Novo Orçamento
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="border-slate-200">
           <CardHeader>
-            <CardTitle className="text-base font-bold">Perfil do Cliente</CardTitle>
+            <CardTitle className="text-base font-bold">Perfil do Contato</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div>
-              <p className="text-xs text-slate-400 uppercase font-semibold">Classificação</p>
-              <p className="font-semibold text-slate-800">
-                {customer.customer_type === 'fornecedor' ? 'Fornecedor' : 'Cliente'}
-              </p>
+              <p className="text-xs text-slate-400 uppercase font-semibold">Tipo (Classificação)</p>
+              <p className="font-semibold text-slate-800">{customer.customer_type || 'Cliente'}</p>
             </div>
+            {customer.expand?.item_families && customer.expand.item_families.length > 0 && (
+              <div>
+                <p className="text-xs text-slate-400 uppercase font-semibold mb-1">
+                  Famílias que Fornece
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {customer.expand.item_families.map((fam) => (
+                    <span
+                      key={fam.id}
+                      className="px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 text-xs font-semibold"
+                    >
+                      {fam.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <p className="text-xs text-slate-400 uppercase font-semibold">Tipo (Documento)</p>
               <p className="font-semibold text-slate-800">

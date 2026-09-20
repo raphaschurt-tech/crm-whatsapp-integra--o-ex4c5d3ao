@@ -69,7 +69,12 @@ export default function QuoteForm() {
     setLoading(true)
     setLoadError(null)
     try {
-      const [cList, pList] = await Promise.all([getCustomers(), getProducts()])
+      const [allCusts, pList] = await Promise.all([getCustomers(), getProducts()])
+      // Regra item 8: seleção de cliente lista APENAS Cliente/Ambos — "Ambos" deve aparecer nos DOIS filtros (Compras e Orçamento)
+      const cList = allCusts.filter((c) => {
+        const t = (c.customer_type || '').toLowerCase()
+        return t === 'cliente' || t === 'ambos' || !t
+      })
       setCustomers(cList)
       setProducts(pList)
 
