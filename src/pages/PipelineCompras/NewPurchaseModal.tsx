@@ -6,6 +6,7 @@ import {
   PurchaseItem,
   PurchaseRequest,
   PurchaseRequestStatus,
+  ItemFamily,
 } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/button'
@@ -24,7 +25,9 @@ import {
   calculateSellPriceFromMargin,
 } from '@/services/purchaseRequestsService'
 import { ProductSearchCombobox } from '@/components/Quotes/ProductSearchCombobox'
+import { SupplierSearchCombobox } from '@/components/Quotes/SupplierSearchCombobox'
 import { getProducts } from '@/services/products'
+import { getFamilies } from '@/services/families'
 
 interface NewPurchaseModalProps {
   isOpen: boolean
@@ -32,6 +35,7 @@ interface NewPurchaseModalProps {
   customers: Customer[]
   suppliers: Customer[]
   products?: Product[]
+  families?: ItemFamily[]
   onSubmit: (data: Partial<PurchaseRequest>) => Promise<void>
 }
 
@@ -63,9 +67,11 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
   customers,
   suppliers,
   products: initialProducts,
+  families: initialFamilies,
   onSubmit,
 }) => {
   const [catalogProducts, setCatalogProducts] = useState<Product[]>(initialProducts || [])
+  const [itemFamilies, setItemFamilies] = useState<ItemFamily[]>(initialFamilies || [])
   const [items, setItems] = useState<FormItemState[]>([{ ...emptyItem }])
   const [osNumber, setOsNumber] = useState('')
   const [customerId, setCustomerId] = useState('')
@@ -92,9 +98,54 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
     }
   }, [initialProducts])
 
+  React.useEffect(() => {
+    if (initialFamilies && initialFamilies.length > 0) {
+      setItemFamilies(initialFamilies)
+      return
+    }
+    let isMounted = true
+    getFamilies()
+      .then((fams) => {
+        if (isMounted) setItemFamilies(fams)
+      })
+      .catch((err) => {
+        console.warn('Erro ao carregar famílias no NewPurchaseModal:', err)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [initialFamilies])
+
   const formatPercentDisplay = (val: number): string => {
     const rounded = Math.round(val * 100) / 100
     return rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2).replace(/\.?0+$/, '')
+  }
+
+  // Retorna os IDs dos fornecedores que fornecem as famílias deste produto
+  const getSuggestedSupplierIdsForProduct = (product: Product | null | undefined): string[] => {
+    if (!product) return []
+    // 1. Encontra quais famílias contêm este produto
+    const productFamilyIds = new Set<string>()
+    for (const fam of itemFamilies) {
+      const pList = fam.products || []
+      if (pList.includes(product.id)) {
+        productFamilyIds.add(fam.id)
+      }
+    }
+
+    if (productFamilyIds.size === 0) return []
+
+    // 2. Encontra fornecedores cadastrados que têm alguma dessas famílias em item_families
+    const matchedSuppliers: Customer[] = []
+    for (const sup of suppliers) {
+      const supFams = sup.item_families || []
+      const hasMatch = supFams.some((fId) => productFamilyIds.has(fId))
+      if (hasMatch) {
+        matchedSuppliers.push(sup)
+      }
+    }
+
+    return matchedSuppliers.map((s) => s.id)
   }
 
   const handleSelectProductForItem = (index: number, product: Product | null) => {
@@ -141,8 +192,9 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
         }
       }
 
-      // Se o produto tiver fornecedor vinculado no cadastro de produtos e o item ainda não tiver fornecedor, tenta vincular
-      if (!currentItem.supplier_id && product.supplier) {
+      // Pré-preenchimento do fornecedor do item quando houver correspondência
+      // Prioridade 1: fornecedor do campo product.supplier (ex.: "SOU.IS" ou outro)
+      if (product.supplier) {
         const matchedSup = suppliers.find(
           (s) =>
             s.name.trim().toLowerCase() === product.supplier?.trim().toLowerCase() ||
@@ -151,6 +203,26 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
         )
         if (matchedSup) {
           currentItem.supplier_id = matchedSup.id
+        }
+      }
+
+      // Prioridade 2: se ainda não preencheu e houver fornecedores sugeridos pela família,
+      // se houver o fornecedor SOU.IS entre eles ou exatamente um fornecedor da família, pré-preenche
+      if (!currentItem.supplier_id) {
+        const suggestedIds = getSuggestedSupplierIdsForProduct(product)
+        if (suggestedIds.length > 0) {
+          const souisSup = suppliers.find(
+            (s) =>
+              suggestedIds.includes(s.id) &&
+              (s.name.trim().toUpperCase() === 'SOU.IS' ||
+                s.company?.trim().toUpperCase() === 'SOU.IS' ||
+                s.source === 'erp'),
+          )
+          if (souisSup) {
+            currentItem.supplier_id = souisSup.id
+          } else if (suggestedIds.length === 1) {
+            currentItem.supplier_id = suggestedIds[0]
+          }
         }
       }
 
@@ -495,18 +567,22 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5 flex items-center gap-1">
                           <Truck className="h-3 w-3 text-amber-600" /> Fornecedor do item
                         </label>
-                        <select
-                          value={item.supplier_id || ''}
-                          onChange={(e) => handleItemChange(index, 'supplier_id', e.target.value)}
-                          className="w-full h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                        >
-                          <option value="">Nenhum fornecedor</option>
-                          {suppliers.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name} {s.company ? `(${s.company})` : ''}
-                            </option>
-                          ))}
-                        </select>
+                        {(() => {
+                          const matchedProduct = catalogProducts.find(
+                            (p) =>
+                              p.name.trim().toLowerCase() === item.part_name.trim().toLowerCase(),
+                          )
+                          const suggestedIds = getSuggestedSupplierIdsForProduct(matchedProduct)
+                          return (
+                            <SupplierSearchCombobox
+                              suppliers={suppliers}
+                              value={item.supplier_id || ''}
+                              onChange={(supId) => handleItemChange(index, 'supplier_id', supId)}
+                              suggestedSupplierIds={suggestedIds}
+                              placeholder="Buscar fornecedor..."
+                            />
+                          )
+                        })()}
                       </div>
 
                       {/* Custo unitário */}

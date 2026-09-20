@@ -18,6 +18,7 @@ import {
   PurchaseItem,
   PurchaseRequest,
   PurchaseRequestStatus,
+  ItemFamily,
 } from '@/types/crm'
 import {
   PURCHASE_COLUMNS,
@@ -35,6 +36,8 @@ import { getProducts } from '@/services/products'
 import { SendQuoteDialog } from '@/components/Quotes/SendQuoteDialog'
 import { SendPaymentLinkDialog } from '@/components/Quotes/SendPaymentLinkDialog'
 import { ProductSearchCombobox } from '@/components/Quotes/ProductSearchCombobox'
+import { SupplierSearchCombobox } from '@/components/Quotes/SupplierSearchCombobox'
+import { getFamilies } from '@/services/families'
 import { Quote, QuoteItem } from '@/types/crm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -48,6 +51,7 @@ interface PurchaseDrawerProps {
   customers: Customer[]
   suppliers: Customer[]
   products?: Product[]
+  families?: ItemFamily[]
   onClose: () => void
   onUpdate: (id: string, data: Partial<PurchaseRequest>) => Promise<void>
   onDelete?: (id: string) => Promise<void>
@@ -72,6 +76,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   customers,
   suppliers,
   products: initialProducts,
+  families: initialFamilies,
   onClose,
   onUpdate,
   onDelete,
@@ -79,6 +84,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   onGenerateQuote,
 }) => {
   const [catalogProducts, setCatalogProducts] = useState<Product[]>(initialProducts || [])
+  const [itemFamilies, setItemFamilies] = useState<ItemFamily[]>(initialFamilies || [])
   const [items, setItems] = useState<FormItemState[]>([
     { part_name: '', vehicle: '', quantity: 1, supplier_id: '', cost_price: '', sell_price: '' },
   ])
@@ -110,6 +116,24 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
       isMounted = false
     }
   }, [initialProducts])
+
+  React.useEffect(() => {
+    if (initialFamilies && initialFamilies.length > 0) {
+      setItemFamilies(initialFamilies)
+      return
+    }
+    let isMounted = true
+    getFamilies()
+      .then((fams) => {
+        if (isMounted) setItemFamilies(fams)
+      })
+      .catch((err) => {
+        console.warn('Erro ao carregar famílias no PurchaseDrawer:', err)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [initialFamilies])
 
   // Enviar orçamento ao cliente a partir do drawer da compra
   const [isSendQuoteOpen, setIsSendQuoteOpen] = useState(false)
@@ -193,6 +217,33 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
   if (!card) return null
 
+  // Retorna os IDs dos fornecedores que fornecem as famílias deste produto
+  const getSuggestedSupplierIdsForProduct = (product: Product | null | undefined): string[] => {
+    if (!product) return []
+    // 1. Encontra quais famílias contêm este produto
+    const productFamilyIds = new Set<string>()
+    for (const fam of itemFamilies) {
+      const pList = fam.products || []
+      if (pList.includes(product.id)) {
+        productFamilyIds.add(fam.id)
+      }
+    }
+
+    if (productFamilyIds.size === 0) return []
+
+    // 2. Encontra fornecedores cadastrados que têm alguma dessas famílias em item_families
+    const matchedSuppliers: Customer[] = []
+    for (const sup of suppliers) {
+      const supFams = sup.item_families || []
+      const hasMatch = supFams.some((fId) => productFamilyIds.has(fId))
+      if (hasMatch) {
+        matchedSuppliers.push(sup)
+      }
+    }
+
+    return matchedSuppliers.map((s) => s.id)
+  }
+
   const handleSelectProductForItem = (index: number, product: Product | null) => {
     setItems((prev) => {
       const next = [...prev]
@@ -237,8 +288,9 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
         }
       }
 
-      // Se o produto tiver fornecedor vinculado no cadastro de produtos e o item ainda não tiver fornecedor, tenta vincular
-      if (!currentItem.supplier_id && product.supplier) {
+      // Pré-preenchimento do fornecedor do item quando houver correspondência
+      // Prioridade 1: fornecedor do campo product.supplier (ex.: "SOU.IS" ou outro)
+      if (product.supplier) {
         const matchedSup = suppliers.find(
           (s) =>
             s.name.trim().toLowerCase() === product.supplier?.trim().toLowerCase() ||
@@ -250,11 +302,30 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
         }
       }
 
+      // Prioridade 2: se ainda não preencheu e houver fornecedores sugeridos pela família,
+      // se houver o fornecedor SOU.IS entre eles ou exatamente um fornecedor da família, pré-preenche
+      if (!currentItem.supplier_id) {
+        const suggestedIds = getSuggestedSupplierIdsForProduct(product)
+        if (suggestedIds.length > 0) {
+          const souisSup = suppliers.find(
+            (s) =>
+              suggestedIds.includes(s.id) &&
+              (s.name.trim().toUpperCase() === 'SOU.IS' ||
+                s.company?.trim().toUpperCase() === 'SOU.IS' ||
+                s.source === 'erp'),
+          )
+          if (souisSup) {
+            currentItem.supplier_id = souisSup.id
+          } else if (suggestedIds.length === 1) {
+            currentItem.supplier_id = suggestedIds[0]
+          }
+        }
+      }
+
       next[index] = currentItem
       return next
     })
   }
-
   const handleItemChange = (index: number, field: keyof FormItemState, value: any) => {
     setItems((prev) => {
       const next = [...prev]
@@ -925,18 +996,22 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5 flex items-center gap-1">
                           <Truck className="h-3 w-3 text-amber-600" /> Fornecedor do item
                         </label>
-                        <select
-                          value={item.supplier_id || ''}
-                          onChange={(e) => handleItemChange(index, 'supplier_id', e.target.value)}
-                          className="w-full h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                        >
-                          <option value="">Nenhum fornecedor</option>
-                          {suppliers.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name} {s.company ? `(${s.company})` : ''}
-                            </option>
-                          ))}
-                        </select>
+                        {(() => {
+                          const matchedProduct = catalogProducts.find(
+                            (p) =>
+                              p.name.trim().toLowerCase() === item.part_name.trim().toLowerCase(),
+                          )
+                          const suggestedIds = getSuggestedSupplierIdsForProduct(matchedProduct)
+                          return (
+                            <SupplierSearchCombobox
+                              suppliers={suppliers}
+                              value={item.supplier_id || ''}
+                              onChange={(supId) => handleItemChange(index, 'supplier_id', supId)}
+                              suggestedSupplierIds={suggestedIds}
+                              placeholder="Buscar fornecedor..."
+                            />
+                          )
+                        })()}
                       </div>
 
                       {/* Custo unitário */}

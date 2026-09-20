@@ -27,6 +27,8 @@ import {
 } from '@/services/purchaseRequestsService'
 import { getCustomers } from '@/services/customers'
 import { getProducts } from '@/services/products'
+import { getFamilies } from '@/services/families'
+import { ItemFamily } from '@/types/crm'
 import { useRealtime } from '@/hooks/use-realtime'
 import { useToast } from '@/hooks/use-toast'
 import { formatCurrency } from '@/lib/whatsapp'
@@ -42,6 +44,7 @@ export default function PipelineCompras() {
   const [requests, setRequests] = useState<PurchaseRequest[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [families, setFamilies] = useState<ItemFamily[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -85,14 +88,16 @@ export default function PipelineCompras() {
   const loadData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsRefreshing(true)
     try {
-      const [reqList, custList, prodList] = await Promise.all([
+      const [reqList, custList, prodList, famList] = await Promise.all([
         getPurchaseRequests(),
         getCustomers(),
         getProducts(),
+        getFamilies(),
       ])
       setRequests(reqList)
       setCustomers(custList)
       setProducts(prodList)
+      setFamilies(famList)
       setLoadError(null)
 
       // Atualiza card selecionado se drawer estiver aberto
@@ -117,6 +122,7 @@ export default function PipelineCompras() {
   useRealtime('purchase_requests', () => loadData(true))
   useRealtime('customers', () => loadData(true))
   useRealtime('products', () => loadData(true))
+  useRealtime('item_families', () => loadData(true))
 
   // Lista de fornecedores (clientes com customer_type === 'Fornecedor' ou 'Ambos')
   const suppliers = useMemo(() => {
@@ -703,6 +709,7 @@ export default function PipelineCompras() {
           customers={customers}
           suppliers={suppliers}
           products={products}
+          families={families}
           onClose={() => setSelectedCard(null)}
           onUpdate={handleUpdatePurchase}
           onDelete={(id) =>
@@ -720,6 +727,7 @@ export default function PipelineCompras() {
         customers={customers}
         suppliers={suppliers}
         products={products}
+        families={families}
         onSubmit={handleCreatePurchase}
       />
     </div>
