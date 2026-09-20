@@ -345,77 +345,84 @@ export default function QuoteForm() {
 
               return (
                 <div key={index} className="p-4 border rounded-xl bg-slate-50/50 space-y-3">
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-                    <div className="md:col-span-5 space-y-1">
-                      <Label className="text-xs font-semibold">Produto</Label>
-                      <ProductSearchCombobox
-                        products={products}
-                        value={item.product}
-                        onChange={(val) => handleProductChange(index, val)}
-                        placeholder="Buscar por nome, descrição ou código/SKU..."
-                      />
-                    </div>
-
-                    <div className="md:col-span-2 space-y-1">
-                      <Label className="text-xs">Qtd.</Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        value={item.quantity}
-                        onChange={(e) => handleQuantityChange(index, parseInt(e.target.value) || 1)}
-                        className="bg-white"
-                      />
-                    </div>
-
-                    <div className="md:col-span-2 space-y-1">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs">Preço Unit. (R$)</Label>
-                        {selectedProd &&
-                          (!selectedProd.stock_quantity || selectedProd.stock_quantity <= 0) &&
-                          item.unit_price === 0 && (
-                            <span className="text-[10px] text-amber-700 font-bold bg-amber-50 px-1 rounded">
-                              Sob consulta
-                            </span>
-                          )}
+                  <div className="relative">
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                      <div className="md:col-span-5 space-y-1">
+                        <Label className="text-xs font-semibold">Produto</Label>
+                        <ProductSearchCombobox
+                          products={products}
+                          value={item.product}
+                          onChange={(val) => handleProductChange(index, val)}
+                          placeholder="Buscar por nome, descrição ou código/SKU..."
+                          className="static"
+                        />
                       </div>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        placeholder={
-                          selectedProd &&
-                          (!selectedProd.stock_quantity || selectedProd.stock_quantity <= 0)
-                            ? 'Sob consulta'
-                            : '0.00'
-                        }
-                        value={
-                          item.unit_price === 0 &&
-                          selectedProd &&
-                          (!selectedProd.stock_quantity || selectedProd.stock_quantity <= 0)
-                            ? ''
-                            : item.unit_price
-                        }
-                        onChange={(e) => handlePriceChange(index, parseFloat(e.target.value) || 0)}
-                        className="bg-white"
-                      />
-                    </div>
 
-                    <div className="md:col-span-2 space-y-1">
-                      <Label className="text-xs">Total</Label>
-                      <div className="h-10 px-3 flex items-center font-bold text-slate-900 bg-white border rounded-md">
-                        {formatCurrency(item.total)}
+                      <div className="md:col-span-2 space-y-1">
+                        <Label className="text-xs">Qtd.</Label>
+                        <Input
+                          type="number"
+                          min="1"
+                          value={item.quantity}
+                          onChange={(e) =>
+                            handleQuantityChange(index, parseInt(e.target.value) || 1)
+                          }
+                          className="bg-white"
+                        />
                       </div>
-                    </div>
 
-                    <div className="md:col-span-1 flex justify-end">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleRemoveItem(index)}
-                        disabled={items.length <= 1}
-                        className="text-slate-400 hover:text-red-600"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="md:col-span-2 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Preço Unit. (R$)</Label>
+                          {selectedProd &&
+                            (!selectedProd.stock_quantity || selectedProd.stock_quantity <= 0) &&
+                            item.unit_price === 0 && (
+                              <span className="text-[10px] text-amber-700 font-bold bg-amber-50 px-1 rounded">
+                                Sob consulta
+                              </span>
+                            )}
+                        </div>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder={
+                            selectedProd &&
+                            (!selectedProd.stock_quantity || selectedProd.stock_quantity <= 0)
+                              ? 'Sob consulta'
+                              : '0.00'
+                          }
+                          value={
+                            item.unit_price === 0 &&
+                            selectedProd &&
+                            (!selectedProd.stock_quantity || selectedProd.stock_quantity <= 0)
+                              ? ''
+                              : item.unit_price
+                          }
+                          onChange={(e) =>
+                            handlePriceChange(index, parseFloat(e.target.value) || 0)
+                          }
+                          className="bg-white"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2 space-y-1">
+                        <Label className="text-xs">Total</Label>
+                        <div className="h-10 px-3 flex items-center font-bold text-slate-900 bg-white border rounded-md">
+                          {formatCurrency(item.total)}
+                        </div>
+                      </div>
+
+                      <div className="md:col-span-1 flex justify-end">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRemoveItem(index)}
+                          disabled={items.length <= 1}
+                          className="text-slate-400 hover:text-red-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                   </div>{' '}
                   {selectedProd && (
