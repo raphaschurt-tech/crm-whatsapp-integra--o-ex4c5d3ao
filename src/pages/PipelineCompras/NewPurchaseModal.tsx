@@ -410,7 +410,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[96vw] max-w-6xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-slate-900">
             <span className="p-1.5 rounded-lg bg-amber-100 text-amber-700">
