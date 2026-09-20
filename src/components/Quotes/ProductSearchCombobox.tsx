@@ -62,37 +62,79 @@ export function ProductSearchCombobox({
     function updateDropdownPosition() {
       if (!containerRef.current) return
 
-      // Busca o contêiner de linha do item (.p-4.border.rounded-xl ou similar) para ancorar largura
-      const rowContainer =
+      // 1. Identifica se estamos dentro de um contêiner restrito (Modal Dialog ou Drawer lateral)
+      // - DialogContent do Radix possui role="dialog"
+      // - PurchaseDrawer possui um painel lateral .slide-in-from-right ou contêiner .fixed.inset-0
+      const dialogContent = containerRef.current.closest<HTMLElement>('[role="dialog"]')
+      const drawerPanel =
+        containerRef.current.closest<HTMLElement>('.slide-in-from-right') ||
+        containerRef.current.closest<HTMLElement>('.max-w-2xl')
+      const dialogOrDrawerContainer = dialogContent || drawerPanel
+
+      // 2. Identifica o contêiner de linha do item imediato (card do item)
+      // No Novo Orçamento: <div className="p-4 border rounded-xl bg-slate-50/50 space-y-3">
+      // No Pipeline de Compras: <div className="p-3 bg-white rounded-lg border border-slate-200/90 shadow-2xs space-y-2.5">
+      const itemRowContainer =
         containerRef.current.closest<HTMLElement>('.border.rounded-xl') ||
-        containerRef.current.closest<HTMLElement>('.grid') ||
-        containerRef.current.parentElement
+        containerRef.current.closest<HTMLElement>('.border.rounded-lg') ||
+        containerRef.current.closest<HTMLElement>('.p-3.bg-white') ||
+        containerRef.current.closest<HTMLElement>('.p-4.border')
 
       const inputRect = containerRef.current.getBoundingClientRect()
-      const rowRect = rowContainer ? rowContainer.getBoundingClientRect() : inputRect
+      const rowRect = itemRowContainer ? itemRowContainer.getBoundingClientRect() : inputRect
       const viewportWidth = window.innerWidth
       const paddingMargin = 12
 
-      // O dropdown alinha com o lado esquerdo do input e se estende até o lado direito da linha do item
-      const left = inputRect.left
-      // Largura da posição do input até a borda direita da linha do item
-      let width = Math.max(inputRect.width, rowRect.right - inputRect.left)
+      // Limites horizontais válidos (viewport ou modal/drawer se existir)
+      let minBoundaryLeft = paddingMargin
+      let maxBoundaryRight = viewportWidth - paddingMargin
 
-      // Garante largura mínima generosa (ex: 550px ou 600px se houver espaço no viewport)
-      const minDesiredWidth = Math.min(680, viewportWidth - 2 * paddingMargin)
-      if (width < minDesiredWidth) {
-        width = minDesiredWidth
+      if (dialogOrDrawerContainer) {
+        const panelRect = dialogOrDrawerContainer.getBoundingClientRect()
+        // Considera padding de 16px para não colar nas bordas do modal/drawer
+        const modalPadding = 16
+        minBoundaryLeft = Math.max(paddingMargin, panelRect.left + modalPadding)
+        maxBoundaryRight = Math.min(viewportWidth - paddingMargin, panelRect.right - modalPadding)
       }
 
-      // Evita estourar para fora da tela na direita
-      let adjustedLeft = left
-      if (adjustedLeft + width > viewportWidth - paddingMargin) {
-        const overflow = adjustedLeft + width - (viewportWidth - paddingMargin)
-        // Move para a esquerda se couber, mas sem passar da margem esquerda
-        adjustedLeft = Math.max(paddingMargin, adjustedLeft - overflow)
-        // Se ainda assim ultrapassar o viewport total
-        if (adjustedLeft + width > viewportWidth - paddingMargin) {
-          width = viewportWidth - adjustedLeft - paddingMargin
+      const boundaryWidth = Math.max(280, maxBoundaryRight - minBoundaryLeft)
+
+      let targetLeft = inputRect.left
+      let targetWidth = Math.max(inputRect.width, rowRect.right - inputRect.left)
+
+      // No modal/drawer: alinhar exatamente às bordas do card da linha do item
+      // (do limite esquerdo do card até o limite direito do card)
+      // Isso dá a máxima largura disponível dentro do card, mostrando todas as informações
+      // com perfeição exatamente como o usuário pediu ("igual de novo orçamento")
+      if (dialogOrDrawerContainer && itemRowContainer) {
+        targetLeft = rowRect.left
+        targetWidth = rowRect.width
+      } else {
+        // No Novo Orçamento (página aberta normal):
+        // Alinha à esquerda com o input e estende até a borda direita da linha do item
+        // com garantia de largura mínima generosa (até 680px)
+        const minDesiredWidth = Math.min(680, viewportWidth - 2 * paddingMargin)
+        if (targetWidth < minDesiredWidth) {
+          targetWidth = minDesiredWidth
+        }
+      }
+
+      // Garante que não exceda o limite disponível do contêiner modal/drawer ou viewport
+      if (targetWidth > boundaryWidth) {
+        targetWidth = boundaryWidth
+      }
+
+      // Ajusta posição horizontal para conter estritamente dentro de [minBoundaryLeft, maxBoundaryRight]
+      let adjustedLeft = targetLeft
+      if (adjustedLeft < minBoundaryLeft) {
+        adjustedLeft = minBoundaryLeft
+      }
+
+      if (adjustedLeft + targetWidth > maxBoundaryRight) {
+        const overflow = adjustedLeft + targetWidth - maxBoundaryRight
+        adjustedLeft = Math.max(minBoundaryLeft, adjustedLeft - overflow)
+        if (adjustedLeft + targetWidth > maxBoundaryRight) {
+          targetWidth = Math.max(280, maxBoundaryRight - adjustedLeft)
         }
       }
 
@@ -102,8 +144,8 @@ export function ProductSearchCombobox({
         position: 'fixed',
         top: `${top}px`,
         left: `${adjustedLeft}px`,
-        width: `${width}px`,
-        maxWidth: `calc(100vw - 24px)`,
+        width: `${targetWidth}px`,
+        maxWidth: `${boundaryWidth}px`,
       })
     }
 
