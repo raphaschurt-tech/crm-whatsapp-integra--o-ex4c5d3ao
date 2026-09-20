@@ -17,6 +17,7 @@ import {
 import { getProducts, deleteProduct } from '@/services/products'
 import { syncStock, lookupStock } from '@/services/stock'
 import { Product } from '@/types/crm'
+import { matchProductSearch } from '@/lib/fuzzySearch'
 import { formatCurrency } from '@/lib/whatsapp'
 import { useRealtime } from '@/hooks/use-realtime'
 import { Button } from '@/components/ui/button'
@@ -85,13 +86,8 @@ export default function ProductList() {
   })
 
   const filtered = products.filter((p) => {
-    const term = search.trim().toLowerCase()
-    const matchSearch =
-      !term ||
-      p.name.toLowerCase().includes(term) ||
-      p.sku.toLowerCase().includes(term) ||
-      (p.description && p.description.toLowerCase().includes(term)) ||
-      (p.supplier && p.supplier.toLowerCase().includes(term))
+    const term = search.trim()
+    const matchSearch = !term || matchProductSearch(p, term)
 
     const isPurchased =
       p.is_purchased !== undefined ? p.is_purchased : p.product_type !== 'produzido'

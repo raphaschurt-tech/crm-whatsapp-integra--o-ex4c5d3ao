@@ -17,6 +17,7 @@ import {
   FileCheck2,
 } from 'lucide-react'
 import { Product, Customer } from '@/types/crm'
+import { matchProductSearch } from '@/lib/fuzzySearch'
 import { getProducts } from '@/services/products'
 import { createQuoteWithItems, sendWhatsAppMessage, sendQuoteEmail } from '@/services/quotes'
 import { createPurchaseFromQuoteItems } from '@/services/purchaseRequestsService'
@@ -122,19 +123,16 @@ export function ProductQuoteModal({
     return Array.from(set)
   }, [products])
 
-  // Filtragem rápida
+  // Filtragem rápida com busca tolerante
   const filteredProducts = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim()
+    const q = searchQuery.trim()
     return products.filter((p) => {
       if (categoryFilter !== 'todas') {
         const prefix = p.sku.split('-')[0]?.toUpperCase()
         if (prefix !== categoryFilter) return false
       }
       if (!q) return true
-      const matchName = p.name.toLowerCase().includes(q)
-      const matchSku = p.sku.toLowerCase().includes(q)
-      const matchDesc = (p.description || '').toLowerCase().includes(q)
-      return matchName || matchSku || matchDesc
+      return matchProductSearch(p, q)
     })
   }, [products, searchQuery, categoryFilter])
 

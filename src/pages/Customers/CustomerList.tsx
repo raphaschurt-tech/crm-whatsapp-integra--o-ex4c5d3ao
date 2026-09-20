@@ -20,6 +20,7 @@ import {
   SyncContactsResult,
 } from '@/services/customers'
 import { Customer } from '@/types/crm'
+import { matchCustomerSearch } from '@/lib/fuzzySearch'
 import { openWhatsApp } from '@/lib/whatsapp'
 import { useAuth } from '@/hooks/use-auth'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -74,16 +75,8 @@ export default function CustomerList() {
       return false
     }
 
-    const term = search.trim().toLowerCase()
-    const matchSearch =
-      !term ||
-      c.name.toLowerCase().includes(term) ||
-      (c.contact_name || '').toLowerCase().includes(term) ||
-      c.phone.toLowerCase().includes(term) ||
-      (c.email || '').toLowerCase().includes(term) ||
-      (c.company || '').toLowerCase().includes(term) ||
-      (c.cpf || '').toLowerCase().includes(term) ||
-      (c.cnpj || '').toLowerCase().includes(term)
+    const term = search.trim()
+    const matchSearch = !term || matchCustomerSearch(c, term)
 
     return matchSearch
   })

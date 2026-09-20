@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { Search, X, ChevronsUpDown, Check, User as UserIcon } from 'lucide-react'
 import { Customer } from '@/types/crm'
+import { matchCustomerSearch } from '@/lib/fuzzySearch'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -29,30 +30,10 @@ export function CustomerSearchCombobox({
 
   // Quando o menu fecha e tem cliente selecionado, mantemos searchTerm vazio para o input poder atuar como busca ou mostrar selecionado
   const filteredCustomers = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase()
+    const term = searchTerm.trim()
     if (!term) return customers.slice(0, 50)
 
-    return customers
-      .filter((c) => {
-        const name = (c.name || '').toLowerCase()
-        const contact = (c.contact_name || '').toLowerCase()
-        const phone = (c.phone || '').toLowerCase()
-        const email = (c.email || '').toLowerCase()
-        const company = (c.company || '').toLowerCase()
-        const cpf = (c.cpf || '').toLowerCase()
-        const cnpj = (c.cnpj || '').toLowerCase()
-
-        return (
-          name.includes(term) ||
-          contact.includes(term) ||
-          phone.includes(term) ||
-          email.includes(term) ||
-          company.includes(term) ||
-          cpf.includes(term) ||
-          cnpj.includes(term)
-        )
-      })
-      .slice(0, 50)
+    return customers.filter((c) => matchCustomerSearch(c, term)).slice(0, 50)
   }, [customers, searchTerm])
 
   useEffect(() => {

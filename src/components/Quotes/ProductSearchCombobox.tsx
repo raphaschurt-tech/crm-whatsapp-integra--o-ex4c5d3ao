@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { Search, X, ChevronsUpDown, Check, Package, AlertCircle } from 'lucide-react'
 import { Product } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
+import { matchProductSearch } from '@/lib/fuzzySearch'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -32,21 +33,10 @@ export function ProductSearchCombobox({
   const selectedProduct = useMemo(() => products.find((p) => p.id === value), [products, value])
 
   const filteredProducts = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase()
+    const term = searchTerm.trim()
     if (!term) return products.slice(0, 50)
 
-    return products
-      .filter((p) => {
-        const name = (p.name || '').toLowerCase()
-        const sku = (p.sku || '').toLowerCase()
-        const desc = (p.description || '').toLowerCase()
-        const supp = (p.supplier || '').toLowerCase()
-
-        return (
-          name.includes(term) || sku.includes(term) || desc.includes(term) || supp.includes(term)
-        )
-      })
-      .slice(0, 50)
+    return products.filter((p) => matchProductSearch(p, term)).slice(0, 50)
   }, [products, searchTerm])
 
   // Atualiza posição e largura do painel suspenso para cobrir toda a largura da linha de itens
