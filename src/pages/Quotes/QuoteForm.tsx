@@ -8,6 +8,7 @@ import {
   getQuoteItems,
   createQuoteWithItems,
   updateQuoteWithItems,
+  findRecentDuplicateQuote,
 } from '@/services/quotes'
 import { lookupStock } from '@/services/stock'
 import { Customer, Product, Quote, QuoteItem } from '@/types/crm'
@@ -59,6 +60,12 @@ export default function QuoteForm() {
   const [sendDialogQuote, setSendDialogQuote] = useState<{
     quote: Quote
     items: QuoteItem[]
+  } | null>(null)
+
+  // Confirmação de duplicidade recente
+  const [duplicateWarningQuote, setDuplicateWarningQuote] = useState<{
+    quote: Quote
+    andSendWhatsApp: boolean
   } | null>(null)
 
   const isEditing = Boolean(id)
@@ -196,17 +203,8 @@ export default function QuoteForm() {
     }
   }
 
-  const handleSave = async (andSendWhatsApp = false) => {
-    if (!selectedCustomer) {
-      toast({ title: 'Selecione um cliente', variant: 'destructive' })
-      return
-    }
+  const executeSave = async (andSendWhatsApp: boolean) => {
     const validItems = items.filter((i) => i.product && i.quantity > 0)
-    if (validItems.length === 0) {
-      toast({ title: 'Adicione pelo menos um item válido', variant: 'destructive' })
-      return
-    }
-
     setSaving(true)
     try {
       let savedQuote
@@ -287,6 +285,44 @@ export default function QuoteForm() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleSave = async (andSendWhatsApp = false) => {
+    if (saving || sendDialogQuote) return
+
+    if (!selectedCustomer) {
+      toast({ title: 'Selecione um cliente', variant: 'destructive' })
+      return
+    }
+    const validItems = items.filter((i) => i.product && i.quantity > 0)
+    if (validItems.length === 0) {
+      toast({ title: 'Adicione pelo menos um item válido', variant: 'destructive' })
+      return
+    }
+
+    // Guarda de duplicidade: ao salvar, se já existir orçamento do mesmo cliente com o mesmo total criado nos últimos 2 minutos
+    setSaving(true)
+    try {
+      const duplicate = await findRecentDuplicateQuote(
+        selectedCustomer,
+        total,
+        isEditing ? id : undefined,
+        2,
+      )
+
+      if (duplicate) {
+        setSaving(false)
+        setDuplicateWarningQuote({
+          quote: duplicate,
+          andSendWhatsApp,
+        })
+        return
+      }
+    } catch (checkErr) {
+      console.warn('Erro na checagem de duplicidade preventiva:', checkErr)
+    }
+
+    await executeSave(andSendWhatsApp)
   }
 
   if (loading) return <div className="p-8 text-center text-slate-500">Carregando formulário...</div>
@@ -518,13 +554,17 @@ export default function QuoteForm() {
         </div>
 
         <div className="flex flex-col sm:flex-row justify-end gap-3 border-t pt-4">
-          <Button variant="outline" disabled={saving} onClick={() => handleSave(false)}>
+          <Button
+            variant="outline"
+            disabled={saving || Boolean(sendDialogQuote)}
+            onClick={() => handleSave(false)}
+          >
             <Save className="mr-1.5 h-4 w-4" /> Salvar Rascunho
           </Button>
           <Button
-            disabled={saving}
+            disabled={saving || Boolean(sendDialogQuote)}
             onClick={() => handleSave(true)}
-            className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold"
+            className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold disabled:opacity-50"
           >
             <MessageCircle className="mr-1.5 h-4 w-4" /> Salvar e Enviar WhatsApp
           </Button>
@@ -583,6 +623,61 @@ export default function QuoteForm() {
               className="bg-emerald-500 hover:bg-emerald-600 text-white"
             >
               Criar Cliente
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo de Guarda de Duplicidade Recente */}
+      <Dialog
+        open={Boolean(duplicateWarningQuote)}
+        onOpenChange={(open) => !open && setDuplicateWarningQuote(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600">
+              <AlertCircle className="h-5 w-5" />
+              Possível Orçamento Duplicado
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-sm text-slate-600">
+            <p>
+              Já existe um orçamento idêntico criado agora (
+              <strong className="text-slate-900 font-semibold">
+                Nº {duplicateWarningQuote?.quote.number}
+              </strong>
+              ) para este mesmo cliente no valor de{' '}
+              <strong className="text-emerald-700 font-semibold">
+                {formatCurrency(duplicateWarningQuote?.quote.total || 0)}
+              </strong>
+              .
+            </p>
+            <p className="text-xs text-slate-500">
+              Deseja criar outro orçamento mesmo assim ou prefere visualizar o já existente?
+            </p>
+          </div>
+          <DialogFooter className="flex flex-col sm:flex-row gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                const targetId = duplicateWarningQuote?.quote.id
+                setDuplicateWarningQuote(null)
+                if (targetId) {
+                  navigate(`/orcamentos/${targetId}`)
+                }
+              }}
+            >
+              Ver Orçamento Existente
+            </Button>
+            <Button
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={() => {
+                const sendWa = duplicateWarningQuote?.andSendWhatsApp || false
+                setDuplicateWarningQuote(null)
+                executeSave(sendWa)
+              }}
+            >
+              Criar Outro Mesmo Assim
             </Button>
           </DialogFooter>
         </DialogContent>

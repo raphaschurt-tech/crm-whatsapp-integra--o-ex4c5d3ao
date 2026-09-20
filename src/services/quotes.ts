@@ -30,6 +30,37 @@ export const getQuoteItems = (quoteId: string) =>
   })
 
 /**
+ * Verifica se já existe um orçamento recente (últimos X minutos) para o mesmo cliente com o mesmo valor total
+ */
+export const findRecentDuplicateQuote = async (
+  customerId: string,
+  total: number,
+  excludeQuoteId?: string,
+  windowMinutes = 2,
+): Promise<Quote | null> => {
+  if (!customerId) return null
+  try {
+    const cutoffDate = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString()
+    // Filtra pelo cliente e data de criação >= cutoffDate
+    let filter = `customer = "${customerId}" && created >= "${cutoffDate}"`
+    if (excludeQuoteId) {
+      filter += ` && id != "${excludeQuoteId}"`
+    }
+    const recentList = await pb.collection<Quote>('quotes').getList(1, 10, {
+      filter,
+      sort: '-created',
+    })
+
+    // Encontra aquele com o mesmo total (considerando arredondamento de centavos)
+    const match = recentList.items.find((q) => Math.abs((q.total || 0) - total) < 0.01)
+    return match || null
+  } catch (err) {
+    console.warn('Erro ao verificar orçamentos recentes duplicados:', err)
+    return null
+  }
+}
+
+/**
  * Busca produto por nome ou cria um produto novo no catálogo se não existir
  */
 export const findOrCreateProductForPart = async (
