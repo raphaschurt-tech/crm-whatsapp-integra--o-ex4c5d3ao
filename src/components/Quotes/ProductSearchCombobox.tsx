@@ -55,7 +55,7 @@ export function ProductSearchCombobox({
     return products.filter((p) => matchProductSearch(p, term)).slice(0, 50)
   }, [products, searchTerm])
 
-  // Atualiza posição e largura do painel suspenso para cobrir toda a largura da linha de itens
+  // Atualiza posição e largura do painel suspenso para cobrir a largura interna do modal/drawer ou linha do item
   useEffect(() => {
     if (!isOpen) return
 
@@ -63,19 +63,31 @@ export function ProductSearchCombobox({
       if (!containerRef.current) return
 
       // Identifica se estamos dentro de um contêiner restrito (Modal Dialog ou Drawer lateral)
-      const dialogContent = containerRef.current.closest<HTMLElement>('[role="dialog"]')
+      const dialogContent =
+        containerRef.current.closest<HTMLElement>('[role="dialog"]') ||
+        containerRef.current.closest<HTMLElement>('[data-state="open"][class*="fixed"]')
       const drawerPanel =
         containerRef.current.closest<HTMLElement>('.slide-in-from-right') ||
         containerRef.current.closest<HTMLElement>('.max-w-2xl')
       const dialogOrDrawerContainer = dialogContent || drawerPanel
 
-      // Identifica o contêiner de seção "Itens da compra" ou card do item
-      // No modal: <div className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
-      // No drawer: <div className="space-y-3 bg-slate-50/70 p-3 rounded-xl border border-slate-200">
-      const itemsSectionContainer =
-        containerRef.current.closest<HTMLElement>('.bg-slate-50\\/80') ||
-        containerRef.current.closest<HTMLElement>('.bg-slate-50\\/70') ||
-        containerRef.current.closest<HTMLElement>('.border.rounded-xl')
+      // Identifica o contêiner de seção "Itens da compra" ou card da seção
+      let itemsSectionContainer: HTMLElement | null = null
+      if (dialogOrDrawerContainer) {
+        let el: HTMLElement | null = containerRef.current.parentElement
+        while (el && el !== dialogOrDrawerContainer) {
+          const cls = el.className || ''
+          if (
+            cls.includes('bg-slate-50/80') ||
+            cls.includes('bg-slate-50/70') ||
+            el.dataset.itemsSection === 'true'
+          ) {
+            itemsSectionContainer = el
+            break
+          }
+          el = el.parentElement
+        }
+      }
 
       const inputRect = containerRef.current.getBoundingClientRect()
       const viewportWidth = window.innerWidth
@@ -87,7 +99,7 @@ export function ProductSearchCombobox({
 
       if (dialogOrDrawerContainer) {
         const panelRect = dialogOrDrawerContainer.getBoundingClientRect()
-        // Respiro de 16px de cada lado em relação ao modal/drawer
+        // Respiro de 16px de cada lado em relação à borda interna do modal/drawer
         const modalPadding = 16
         minBoundaryLeft = Math.max(paddingMargin, panelRect.left + modalPadding)
         maxBoundaryRight = Math.min(viewportWidth - paddingMargin, panelRect.right - modalPadding)
@@ -100,11 +112,12 @@ export function ProductSearchCombobox({
 
       if (dialogOrDrawerContainer) {
         // Regra A1: O painel deve ocupar a largura interna total do modal (~16px de respiro de cada lado),
-        // alinhado ao card "Itens da compra", sem nunca ultrapassá-lo
+        // alinhado ao card "Itens da compra", sem NUNCA ultrapassar o dialog do modal nem a viewport.
         if (itemsSectionContainer) {
           const sectionRect = itemsSectionContainer.getBoundingClientRect()
-          targetLeft = Math.max(minBoundaryLeft, sectionRect.left)
-          targetWidth = Math.min(boundaryWidth, sectionRect.width)
+          // Alinha exatamente às bordas do card da seção de itens da compra
+          targetLeft = sectionRect.left
+          targetWidth = sectionRect.width
         } else {
           targetLeft = minBoundaryLeft
           targetWidth = boundaryWidth
@@ -124,22 +137,23 @@ export function ProductSearchCombobox({
         }
       }
 
-      // Garante que não exceda o limite disponível
-      if (targetWidth > boundaryWidth) {
-        targetWidth = boundaryWidth
+      // Clamp estrito: NUNCA permitir que targetLeft seja menor que minBoundaryLeft
+      if (targetLeft < minBoundaryLeft) {
+        targetLeft = minBoundaryLeft
       }
 
-      // Ajusta posição horizontal para conter estritamente dentro de [minBoundaryLeft, maxBoundaryRight]
-      let adjustedLeft = targetLeft
-      if (adjustedLeft < minBoundaryLeft) {
-        adjustedLeft = minBoundaryLeft
+      // Clamp estrito de largura máxima disponível a partir de targetLeft
+      const maxAllowedWidthFromLeft = Math.max(280, maxBoundaryRight - targetLeft)
+      if (targetWidth > maxAllowedWidthFromLeft) {
+        targetWidth = maxAllowedWidthFromLeft
       }
 
-      if (adjustedLeft + targetWidth > maxBoundaryRight) {
-        const overflow = adjustedLeft + targetWidth - maxBoundaryRight
-        adjustedLeft = Math.max(minBoundaryLeft, adjustedLeft - overflow)
-        if (adjustedLeft + targetWidth > maxBoundaryRight) {
-          targetWidth = Math.max(280, maxBoundaryRight - adjustedLeft)
+      // Clamp final absoluto contra ultrapassar maxBoundaryRight
+      if (targetLeft + targetWidth > maxBoundaryRight) {
+        const overflow = targetLeft + targetWidth - maxBoundaryRight
+        targetLeft = Math.max(minBoundaryLeft, targetLeft - overflow)
+        if (targetLeft + targetWidth > maxBoundaryRight) {
+          targetWidth = Math.max(280, maxBoundaryRight - targetLeft)
         }
       }
 
@@ -148,9 +162,9 @@ export function ProductSearchCombobox({
       setDropdownStyle({
         position: 'fixed',
         top: `${top}px`,
-        left: `${adjustedLeft}px`,
+        left: `${targetLeft}px`,
         width: `${targetWidth}px`,
-        maxWidth: `${boundaryWidth}px`,
+        maxWidth: `${maxBoundaryRight - targetLeft}px`,
       })
     }
 

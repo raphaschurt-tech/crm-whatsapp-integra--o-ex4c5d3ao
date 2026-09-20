@@ -891,7 +891,10 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
           </div>
 
           {/* Lista de Itens (Até 20 itens, todos editáveis incluindo quantidade, fornecedor, custo e venda) */}
-          <div className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
+          <div
+            data-items-section="true"
+            className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200"
+          >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Layers className="h-4 w-4 text-amber-600" />

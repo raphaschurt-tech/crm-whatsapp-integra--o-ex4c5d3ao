@@ -462,7 +462,10 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
           </div>
 
           {/* Seção de Itens (Até 20 itens com Peça, Veículo, Qtd, Fornecedor, Custo, Venda e Margem do Item) */}
-          <div className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
+          <div
+            data-items-section="true"
+            className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200"
+          >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Layers className="h-4 w-4 text-amber-600" />
