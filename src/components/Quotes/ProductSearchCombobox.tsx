@@ -37,7 +37,6 @@ export function ProductSearchCombobox({
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
-  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
 
   // Encontra produto por id ou por nome exato (caso value seja o nome da peça)
   const selectedProduct = useMemo(() => {
@@ -54,129 +53,6 @@ export function ProductSearchCombobox({
 
     return products.filter((p) => matchProductSearch(p, term)).slice(0, 50)
   }, [products, searchTerm])
-
-  // Atualiza posição e largura do painel suspenso para cobrir a largura interna do modal/drawer ou linha do item
-  useEffect(() => {
-    if (!isOpen) return
-
-    function updateDropdownPosition() {
-      if (!containerRef.current) return
-
-      // Identifica se estamos dentro de um contêiner restrito (Modal Dialog ou Drawer lateral)
-      const dialogContent =
-        containerRef.current.closest<HTMLElement>('[role="dialog"]') ||
-        containerRef.current.closest<HTMLElement>('[data-state="open"][class*="fixed"]')
-      const drawerPanel =
-        containerRef.current.closest<HTMLElement>('.slide-in-from-right') ||
-        containerRef.current.closest<HTMLElement>('.max-w-2xl')
-      const dialogOrDrawerContainer = dialogContent || drawerPanel
-
-      // Identifica o contêiner de seção "Itens da compra" ou card da seção
-      let itemsSectionContainer: HTMLElement | null = null
-      if (dialogOrDrawerContainer) {
-        let el: HTMLElement | null = containerRef.current.parentElement
-        while (el && el !== dialogOrDrawerContainer) {
-          const cls = el.className || ''
-          if (
-            cls.includes('bg-slate-50/80') ||
-            cls.includes('bg-slate-50/70') ||
-            el.dataset.itemsSection === 'true'
-          ) {
-            itemsSectionContainer = el
-            break
-          }
-          el = el.parentElement
-        }
-      }
-
-      const inputRect = containerRef.current.getBoundingClientRect()
-      const viewportWidth = window.innerWidth
-      const paddingMargin = 16
-
-      // Limites horizontais válidos (viewport ou modal/drawer se existir)
-      let minBoundaryLeft = paddingMargin
-      let maxBoundaryRight = viewportWidth - paddingMargin
-
-      if (dialogOrDrawerContainer) {
-        const panelRect = dialogOrDrawerContainer.getBoundingClientRect()
-        // Respiro de 16px de cada lado em relação à borda interna do modal/drawer
-        const modalPadding = 16
-        minBoundaryLeft = Math.max(paddingMargin, panelRect.left + modalPadding)
-        maxBoundaryRight = Math.min(viewportWidth - paddingMargin, panelRect.right - modalPadding)
-      }
-
-      const boundaryWidth = Math.max(280, maxBoundaryRight - minBoundaryLeft)
-
-      let targetLeft = inputRect.left
-      let targetWidth = boundaryWidth
-
-      if (dialogOrDrawerContainer) {
-        // Regra A1: O painel deve ocupar a largura interna total do modal (~16px de respiro de cada lado),
-        // alinhado ao card "Itens da compra", sem NUNCA ultrapassar o dialog do modal nem a viewport.
-        if (itemsSectionContainer) {
-          const sectionRect = itemsSectionContainer.getBoundingClientRect()
-          // Alinha exatamente às bordas do card da seção de itens da compra
-          targetLeft = sectionRect.left
-          targetWidth = sectionRect.width
-        } else {
-          targetLeft = minBoundaryLeft
-          targetWidth = boundaryWidth
-        }
-      } else {
-        // No Novo Orçamento (página aberta normal):
-        // Alinha à esquerda com o input e estende até a borda direita da linha do item
-        const itemRowContainer =
-          containerRef.current.closest<HTMLElement>('.border.rounded-xl') ||
-          containerRef.current.closest<HTMLElement>('.p-4.border')
-        const rowRect = itemRowContainer ? itemRowContainer.getBoundingClientRect() : inputRect
-        targetLeft = inputRect.left
-        targetWidth = Math.max(inputRect.width, rowRect.right - inputRect.left)
-        const minDesiredWidth = Math.min(680, viewportWidth - 2 * paddingMargin)
-        if (targetWidth < minDesiredWidth) {
-          targetWidth = minDesiredWidth
-        }
-      }
-
-      // Clamp estrito: NUNCA permitir que targetLeft seja menor que minBoundaryLeft
-      if (targetLeft < minBoundaryLeft) {
-        targetLeft = minBoundaryLeft
-      }
-
-      // Clamp estrito de largura máxima disponível a partir de targetLeft
-      const maxAllowedWidthFromLeft = Math.max(280, maxBoundaryRight - targetLeft)
-      if (targetWidth > maxAllowedWidthFromLeft) {
-        targetWidth = maxAllowedWidthFromLeft
-      }
-
-      // Clamp final absoluto contra ultrapassar maxBoundaryRight
-      if (targetLeft + targetWidth > maxBoundaryRight) {
-        const overflow = targetLeft + targetWidth - maxBoundaryRight
-        targetLeft = Math.max(minBoundaryLeft, targetLeft - overflow)
-        if (targetLeft + targetWidth > maxBoundaryRight) {
-          targetWidth = Math.max(280, maxBoundaryRight - targetLeft)
-        }
-      }
-
-      const top = inputRect.bottom + 6
-
-      setDropdownStyle({
-        position: 'fixed',
-        top: `${top}px`,
-        left: `${targetLeft}px`,
-        width: `${targetWidth}px`,
-        maxWidth: `${maxBoundaryRight - targetLeft}px`,
-      })
-    }
-
-    updateDropdownPosition()
-    window.addEventListener('resize', updateDropdownPosition)
-    window.addEventListener('scroll', updateDropdownPosition, true)
-
-    return () => {
-      window.removeEventListener('resize', updateDropdownPosition)
-      window.removeEventListener('scroll', updateDropdownPosition, true)
-    }
-  }, [isOpen])
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -292,8 +168,7 @@ export function ProductSearchCombobox({
       {isOpen && !disabled && (
         <div
           ref={dropdownRef}
-          style={dropdownStyle}
-          className="z-50 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-96 overflow-y-auto animate-in fade-in-50 zoom-in-95"
+          className="absolute left-0 top-full mt-1.5 w-full z-50 bg-white border border-slate-200 rounded-xl shadow-2xl max-h-96 overflow-y-auto animate-in fade-in-50 zoom-in-95"
         >
           {filteredProducts.length === 0 ? (
             <div className="p-6 text-center text-sm text-slate-500 space-y-1">

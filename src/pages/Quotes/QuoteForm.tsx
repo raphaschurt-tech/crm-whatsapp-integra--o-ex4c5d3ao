@@ -403,7 +403,7 @@ export default function QuoteForm() {
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
-                  </div>
+                  </div>{' '}
                   {selectedProd && (
                     <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
                       <span className="flex items-center gap-1.5">

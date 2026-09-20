@@ -891,10 +891,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
           </div>
 
           {/* Lista de Itens (Até 20 itens, todos editáveis incluindo quantidade, fornecedor, custo e venda) */}
-          <div
-            data-items-section="true"
-            className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200"
-          >
+          <div className="space-y-3 bg-slate-50/80 p-3.5 rounded-xl border border-slate-200">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Layers className="h-4 w-4 text-amber-600" />
@@ -944,27 +941,28 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                       )}
                     </div>
 
-                    {/* Linha 1: Peça (Catálogo SOU.Is / Base), Veículo e Quantidade */}
-                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start">
-                      <div className="sm:col-span-6">
-                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                          Peça (Catálogo) <span className="text-red-500">*</span>
-                        </label>
-                        <ProductSearchCombobox
-                          products={catalogProducts}
-                          value={item.part_name}
-                          displayValue={item.part_name}
-                          onChange={(prodId) => {
-                            const found = catalogProducts.find((p) => p.id === prodId)
-                            handleSelectProductForItem(index, found || null)
-                          }}
-                          onSelectProduct={(p) => handleSelectProductForItem(index, p)}
-                          placeholder="Buscar peça no catálogo..."
-                          inputClassName="h-8 text-xs bg-white"
-                        />
-                      </div>
+                    {/* Linha 1: Peça (Catálogo SOU.Is / Base) - LARGURA TOTAL do card do item */}
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
+                        Peça (Catálogo) <span className="text-red-500">*</span>
+                      </label>
+                      <ProductSearchCombobox
+                        products={catalogProducts}
+                        value={item.part_name}
+                        displayValue={item.part_name}
+                        onChange={(prodId) => {
+                          const found = catalogProducts.find((p) => p.id === prodId)
+                          handleSelectProductForItem(index, found || null)
+                        }}
+                        onSelectProduct={(p) => handleSelectProductForItem(index, p)}
+                        placeholder="Buscar peça no catálogo..."
+                        inputClassName="h-9 text-xs bg-white"
+                      />
+                    </div>
 
-                      <div className="sm:col-span-4">
+                    {/* Linha 2: Veículo e Quantidade (lado a lado) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start">
+                      <div className="sm:col-span-9">
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
                           Veículo <span className="text-red-500">*</span>
                         </label>
@@ -977,7 +975,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                         />
                       </div>
 
-                      <div className="sm:col-span-2">
+                      <div className="sm:col-span-3">
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
                           Qtd <span className="text-red-500">*</span>
                         </label>
@@ -992,7 +990,8 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                         />
                       </div>
                     </div>
-                    {/* Linha 2: Fornecedor Próprio, Custo unitário, Margem %, Venda unitária e Margem do Item */}
+
+                    {/* Linha 3: Fornecedor Próprio, Custo unitário, Margem %, Venda unitária e Margem do Item */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1 border-t border-slate-100">
                       {/* Fornecedor Próprio */}
                       <div className="sm:col-span-3">
