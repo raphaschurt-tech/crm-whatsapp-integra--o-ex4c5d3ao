@@ -11,7 +11,7 @@ import {
   ArrowUpDown,
   Car,
 } from 'lucide-react'
-import { Customer, PurchaseRequest, PurchaseRequestStatus } from '@/types/crm'
+import { Customer, Product, PurchaseRequest, PurchaseRequestStatus } from '@/types/crm'
 import {
   PURCHASE_COLUMNS,
   getPurchaseRequests,
@@ -26,6 +26,7 @@ import {
   generateOrUpdateQuoteFromPurchase,
 } from '@/services/purchaseRequestsService'
 import { getCustomers } from '@/services/customers'
+import { getProducts } from '@/services/products'
 import { useRealtime } from '@/hooks/use-realtime'
 import { useToast } from '@/hooks/use-toast'
 import { formatCurrency } from '@/lib/whatsapp'
@@ -40,6 +41,7 @@ export default function PipelineCompras() {
 
   const [requests, setRequests] = useState<PurchaseRequest[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
+  const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -83,9 +85,14 @@ export default function PipelineCompras() {
   const loadData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsRefreshing(true)
     try {
-      const [reqList, custList] = await Promise.all([getPurchaseRequests(), getCustomers()])
+      const [reqList, custList, prodList] = await Promise.all([
+        getPurchaseRequests(),
+        getCustomers(),
+        getProducts(),
+      ])
       setRequests(reqList)
       setCustomers(custList)
+      setProducts(prodList)
       setLoadError(null)
 
       // Atualiza card selecionado se drawer estiver aberto
@@ -109,6 +116,7 @@ export default function PipelineCompras() {
   // Realtime updates
   useRealtime('purchase_requests', () => loadData(true))
   useRealtime('customers', () => loadData(true))
+  useRealtime('products', () => loadData(true))
 
   // Lista de fornecedores (clientes com customer_type === 'fornecedor')
   const suppliers = useMemo(() => {
@@ -691,6 +699,7 @@ export default function PipelineCompras() {
           card={selectedCard}
           customers={customers}
           suppliers={suppliers}
+          products={products}
           onClose={() => setSelectedCard(null)}
           onUpdate={handleUpdatePurchase}
           onDelete={(id) =>
@@ -707,6 +716,7 @@ export default function PipelineCompras() {
         onClose={() => setIsNewModalOpen(false)}
         customers={customers}
         suppliers={suppliers}
+        products={products}
         onSubmit={handleCreatePurchase}
       />
     </div>

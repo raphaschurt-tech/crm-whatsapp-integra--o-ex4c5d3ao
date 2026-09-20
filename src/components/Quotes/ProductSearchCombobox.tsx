@@ -12,16 +12,25 @@ interface ProductSearchComboboxProps {
   products: Product[]
   value: string
   onChange: (productId: string) => void
+  onSelectProduct?: (product: Product | null) => void
   disabled?: boolean
   placeholder?: string
+  className?: string
+  inputClassName?: string
+  /** Texto legado ou texto atual para exibir caso o valor não bata com nenhum produto por ID */
+  displayValue?: string
 }
 
 export function ProductSearchCombobox({
   products,
   value,
   onChange,
+  onSelectProduct,
   disabled = false,
   placeholder = 'Buscar por nome, descrição ou código/SKU...',
+  className,
+  inputClassName,
+  displayValue,
 }: ProductSearchComboboxProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -30,7 +39,14 @@ export function ProductSearchCombobox({
   const dropdownRef = useRef<HTMLDivElement>(null)
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
 
-  const selectedProduct = useMemo(() => products.find((p) => p.id === value), [products, value])
+  // Encontra produto por id ou por nome exato (caso value seja o nome da peça)
+  const selectedProduct = useMemo(() => {
+    if (!value) return undefined
+    return (
+      products.find((p) => p.id === value) ||
+      products.find((p) => p.name.trim().toLowerCase() === value.trim().toLowerCase())
+    )
+  }, [products, value])
 
   const filteredProducts = useMemo(() => {
     const term = searchTerm.trim()
@@ -119,6 +135,7 @@ export function ProductSearchCombobox({
 
   const handleSelect = (product: Product) => {
     onChange(product.id)
+    onSelectProduct?.(product)
     setSearchTerm('')
     setIsOpen(false)
   }
@@ -126,35 +143,48 @@ export function ProductSearchCombobox({
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation()
     onChange('')
+    onSelectProduct?.(null)
     setSearchTerm('')
     setIsOpen(true)
     inputRef.current?.focus()
   }
 
+  // Texto formatado de exibição quando o dropdown está fechado
+  const resolvedDisplayText = useMemo(() => {
+    if (selectedProduct) {
+      return `${selectedProduct.name}${selectedProduct.sku ? ` - SKU: ${selectedProduct.sku}` : ''}`
+    }
+    if (displayValue && displayValue.trim()) {
+      return displayValue.trim()
+    }
+    if (value && value.trim()) {
+      return value.trim()
+    }
+    return ''
+  }, [selectedProduct, displayValue, value])
+
+  const hasSelectionOrText = Boolean(value || displayValue || searchTerm)
+
   return (
-    <div ref={containerRef} className="relative w-full">
+    <div ref={containerRef} className={cn('relative w-full', className)}>
       <div
         className={cn(
           'relative flex items-center w-full rounded-md border border-input bg-white transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2',
           disabled && 'opacity-50 cursor-not-allowed',
         )}
       >
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
 
         <Input
           ref={inputRef}
           type="text"
           disabled={disabled}
           placeholder={
-            selectedProduct ? `${selectedProduct.name} (SKU: ${selectedProduct.sku})` : placeholder
+            selectedProduct
+              ? `${selectedProduct.name} (SKU: ${selectedProduct.sku})`
+              : displayValue || placeholder
           }
-          value={
-            isOpen
-              ? searchTerm
-              : selectedProduct
-                ? `${selectedProduct.name} - SKU: ${selectedProduct.sku}`
-                : searchTerm
-          }
+          value={isOpen ? searchTerm : resolvedDisplayText}
           onFocus={() => {
             setIsOpen(true)
             setSearchTerm('')
@@ -163,11 +193,14 @@ export function ProductSearchCombobox({
             setSearchTerm(e.target.value)
             if (!isOpen) setIsOpen(true)
           }}
-          className="pl-9 pr-16 h-10 border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm font-normal text-slate-800 placeholder:text-slate-400"
+          className={cn(
+            'pl-8 pr-16 h-10 border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm font-normal text-slate-800 placeholder:text-slate-400',
+            inputClassName,
+          )}
         />
 
         <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-          {(value || searchTerm) && !disabled && (
+          {hasSelectionOrText && !disabled && (
             <Button
               type="button"
               variant="ghost"
@@ -220,7 +253,8 @@ export function ProductSearchCombobox({
               </div>
               <div className="divide-y divide-slate-100">
                 {filteredProducts.map((p) => {
-                  const isSelected = p.id === value
+                  const isSelected =
+                    p.id === value || p.name.trim().toLowerCase() === value.trim().toLowerCase()
                   const isOutOfStock = !p.stock_quantity || p.stock_quantity <= 0
                   return (
                     <button

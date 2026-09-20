@@ -1,6 +1,12 @@
 import React, { useState } from 'react'
 import { Plus, Trash2, TrendingUp, Hash, Layers, DollarSign, Truck } from 'lucide-react'
-import { Customer, PurchaseItem, PurchaseRequest, PurchaseRequestStatus } from '@/types/crm'
+import {
+  Customer,
+  Product,
+  PurchaseItem,
+  PurchaseRequest,
+  PurchaseRequestStatus,
+} from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,12 +23,15 @@ import {
   calculateMarginPercent,
   calculateSellPriceFromMargin,
 } from '@/services/purchaseRequestsService'
+import { ProductSearchCombobox } from '@/components/Quotes/ProductSearchCombobox'
+import { getProducts } from '@/services/products'
 
 interface NewPurchaseModalProps {
   isOpen: boolean
   onClose: () => void
   customers: Customer[]
   suppliers: Customer[]
+  products?: Product[]
   onSubmit: (data: Partial<PurchaseRequest>) => Promise<void>
 }
 
@@ -53,8 +62,10 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
   onClose,
   customers,
   suppliers,
+  products: initialProducts,
   onSubmit,
 }) => {
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>(initialProducts || [])
   const [items, setItems] = useState<FormItemState[]>([{ ...emptyItem }])
   const [osNumber, setOsNumber] = useState('')
   const [customerId, setCustomerId] = useState('')
@@ -63,9 +74,89 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
   const [notes, setNotes] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
+  React.useEffect(() => {
+    if (initialProducts && initialProducts.length > 0) {
+      setCatalogProducts(initialProducts)
+      return
+    }
+    let isMounted = true
+    getProducts()
+      .then((prods) => {
+        if (isMounted) setCatalogProducts(prods)
+      })
+      .catch((err) => {
+        console.warn('Erro ao carregar catálogo no NewPurchaseModal:', err)
+      })
+    return () => {
+      isMounted = false
+    }
+  }, [initialProducts])
+
   const formatPercentDisplay = (val: number): string => {
     const rounded = Math.round(val * 100) / 100
     return rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2).replace(/\.?0+$/, '')
+  }
+
+  const handleSelectProductForItem = (index: number, product: Product | null) => {
+    setItems((prev) => {
+      const next = [...prev]
+      const currentItem = { ...next[index] }
+
+      if (!product) {
+        currentItem.part_name = ''
+        next[index] = currentItem
+        return next
+      }
+
+      currentItem.part_name = product.name
+
+      // Se o item ainda não tem custo unitário e o produto tem custo ou preço, sugere o custo
+      if (!currentItem.cost_price) {
+        const prodCost =
+          typeof product.cost === 'number' && product.cost > 0
+            ? product.cost
+            : typeof product.price === 'number' && product.price > 0
+              ? product.price
+              : undefined
+
+        if (prodCost !== undefined) {
+          currentItem.cost_price = String(prodCost)
+
+          // Se já tem margem % definida, recalcula venda
+          const marginNum = parseFloat(currentItem.margin_percent || '')
+          if (!isNaN(marginNum)) {
+            const calculatedSell = calculateSellPriceFromMargin(prodCost, marginNum)
+            if (calculatedSell !== null) {
+              currentItem.sell_price = calculatedSell.toFixed(2)
+            }
+          } else if (currentItem.sell_price) {
+            // Se já tem preço de venda, calcula margem
+            const sellNum = parseFloat(currentItem.sell_price)
+            if (!isNaN(sellNum)) {
+              const recalculatedMargin = calculateMarginPercent(prodCost, sellNum)
+              currentItem.margin_percent =
+                recalculatedMargin !== null ? formatPercentDisplay(recalculatedMargin) : ''
+            }
+          }
+        }
+      }
+
+      // Se o produto tiver fornecedor vinculado no cadastro de produtos e o item ainda não tiver fornecedor, tenta vincular
+      if (!currentItem.supplier_id && product.supplier) {
+        const matchedSup = suppliers.find(
+          (s) =>
+            s.name.trim().toLowerCase() === product.supplier?.trim().toLowerCase() ||
+            (s.company &&
+              s.company.trim().toLowerCase() === product.supplier?.trim().toLowerCase()),
+        )
+        if (matchedSup) {
+          currentItem.supplier_id = matchedSup.id
+        }
+      }
+
+      next[index] = currentItem
+      return next
+    })
   }
 
   const handleItemChange = (index: number, field: keyof FormItemState, value: any) => {
@@ -349,23 +440,27 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                       )}
                     </div>
 
-                    {/* Linha 1: Peça, Veículo e Quantidade */}
-                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
-                      <div className="sm:col-span-5">
+                    {/* Linha 1: Peça (Catálogo SOU.Is / Base), Veículo e Quantidade */}
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start">
+                      <div className="sm:col-span-6">
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                          Peça <span className="text-red-500">*</span>
+                          Peça (Catálogo) <span className="text-red-500">*</span>
                         </label>
-                        <Input
+                        <ProductSearchCombobox
+                          products={catalogProducts}
                           value={item.part_name}
-                          onChange={(e) => handleItemChange(index, 'part_name', e.target.value)}
-                          placeholder="Ex: Bucha da bandeja..."
-                          required
-                          className="h-8 text-xs"
-                          autoFocus={index === 0}
+                          displayValue={item.part_name}
+                          onChange={(prodId) => {
+                            const found = catalogProducts.find((p) => p.id === prodId)
+                            handleSelectProductForItem(index, found || null)
+                          }}
+                          onSelectProduct={(p) => handleSelectProductForItem(index, p)}
+                          placeholder="Buscar peça no catálogo..."
+                          inputClassName="h-8 text-xs bg-white"
                         />
                       </div>
 
-                      <div className="sm:col-span-5">
+                      <div className="sm:col-span-4">
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
                           Veículo <span className="text-red-500">*</span>
                         </label>
@@ -374,7 +469,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                           onChange={(e) => handleItemChange(index, 'vehicle', e.target.value)}
                           placeholder="Ex: Kicks 2016..."
                           required
-                          className="h-8 text-xs"
+                          className="h-8 text-xs bg-white"
                         />
                       </div>
 
@@ -389,11 +484,10 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                           value={item.quantity}
                           onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
                           required
-                          className="h-8 text-xs font-bold text-center"
+                          className="h-8 text-xs font-bold text-center bg-white"
                         />
                       </div>
                     </div>
-
                     {/* Linha 2: Fornecedor do Item, Preço de Custo, Margem %, Preço de Venda e Margem do Item */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1 border-t border-slate-100">
                       {/* Fornecedor Próprio */}
