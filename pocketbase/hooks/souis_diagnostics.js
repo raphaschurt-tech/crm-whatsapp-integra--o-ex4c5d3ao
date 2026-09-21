@@ -1115,6 +1115,62 @@ routerAdd('GET', '/backend/v1/souis/diagnostics', (e) => {
         token_configured: Boolean(bridgeToken),
       }
     }
+
+    // 4. Teste de contagem bruta de /produtos/all (somente leitura / contagem)
+    let produtosAllEndpoint = cleanUrl + '/produtos/all'
+    let produtosAllTest = {
+      endpoint: produtosAllEndpoint,
+      success: false,
+      status_code: null,
+      raw_rows_count: null,
+      sample_first_row: null,
+      latency_ms: 0,
+      error: null,
+    }
+
+    const pStartTime = new Date().getTime()
+    try {
+      const pHeaders = { 'Content-Type': 'application/json' }
+      if (bridgeToken) {
+        pHeaders['X-Bridge-Token'] = bridgeToken
+      }
+
+      const pRes = $http.send({
+        url: produtosAllEndpoint,
+        method: 'GET',
+        headers: pHeaders,
+        timeout: 65,
+      })
+      const pLatency = new Date().getTime() - pStartTime
+      produtosAllTest.status_code = pRes.statusCode
+      produtosAllTest.latency_ms = pLatency
+
+      if (pRes.statusCode === 200 && pRes.json) {
+        const rows = Array.isArray(pRes.json) ? pRes.json : pRes.json.rows || pRes.json.data || []
+        produtosAllTest.success = true
+        produtosAllTest.raw_rows_count = rows.length
+        if (rows.length > 0) {
+          produtosAllTest.sample_first_row = rows[0]
+        }
+      } else {
+        produtosAllTest.error =
+          'Status ' + pRes.statusCode + ': ' + (pRes.raw ? pRes.raw.substring(0, 200) : '')
+      }
+    } catch (pErr) {
+      const pLatency = new Date().getTime() - pStartTime
+      produtosAllTest.latency_ms = pLatency
+      produtosAllTest.error = String(pErr)
+    }
+
+    bridgeTest.produtos_all_test = produtosAllTest
+    console.log(
+      '[SOU.IS Diagnostics] /produtos/all rawRowsCount=' +
+        produtosAllTest.raw_rows_count +
+        ' success=' +
+        produtosAllTest.success +
+        ' error=' +
+        produtosAllTest.error,
+    )
   }
 
   return e.json(200, {
