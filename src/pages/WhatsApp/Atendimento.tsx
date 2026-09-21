@@ -542,7 +542,7 @@ export default function WhatsAppAtendimento() {
           }
         }
       } else if (statusFilter === 'novo') {
-        if (c.status !== 'novo') return false
+        // "Novos": todas as conversas sem filtro de status
       } else if (statusFilter === 'nao_lidos') {
         if (!(c.unreadCount && c.unreadCount > 0)) return false
       } else if (statusFilter === 'em_atendimento') {
