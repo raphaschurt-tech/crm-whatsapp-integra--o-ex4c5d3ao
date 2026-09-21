@@ -49,7 +49,8 @@ import { useRealtime } from '@/hooks/use-realtime'
 import { sendWhatsAppMessage } from '@/services/quotes'
 import { ProductQuoteModal } from '@/components/WhatsApp/ProductQuoteModal'
 import { CustomerQuoteHistory } from '@/components/WhatsApp/CustomerQuoteHistory'
-import { createCustomer } from '@/services/customers'
+import { createCustomer, getCustomers } from '@/services/customers'
+import { Customer } from '@/types/crm'
 import { toast } from '@/hooks/use-toast'
 
 export type { WhatsAppStatus, WhatsAppMessage, WhatsAppCustomer }
@@ -59,8 +60,11 @@ export default function WhatsAppAtendimento() {
   const [customers, setCustomers] = useState<WhatsAppCustomer[]>([])
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'todos' | WhatsAppStatus>('todos')
+  const [statusFilter, setStatusFilter] = useState<
+    'todos' | 'novo' | 'nao_lidos' | 'em_atendimento' | 'antigos' | 'inativos'
+  >('todos')
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
+  const [customersMap, setCustomersMap] = useState<Map<string, Customer>>(new Map())
   const [inputText, setInputText] = useState('')
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -94,7 +98,15 @@ export default function WhatsAppAtendimento() {
   const fetchData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsRefreshing(true)
     try {
-      const data = await loadWhatsAppConversations()
+      const [data, custList] = await Promise.all([
+        loadWhatsAppConversations(),
+        getCustomers().catch(() => [] as Customer[]),
+      ])
+      const map = new Map<string, Customer>()
+      for (const c of custList) {
+        map.set(c.id, c)
+      }
+      setCustomersMap(map)
       setCustomers(data)
       setSelectedCustomerId((prevId) => {
         if (!prevId && data.length > 0) {
@@ -296,19 +308,103 @@ export default function WhatsAppAtendimento() {
     prevMessagesCountRef.current = currentItemsCount
   }, [activeCustomer?.id, timelineItems.length])
 
-  const filteredCustomers = customers.filter((c) => {
-    if (statusFilter !== 'todos' && c.status !== statusFilter) return false
-    if (typeFilter !== 'ALL' && c.type !== typeFilter) return false
-    if (
-      search &&
-      !c.name.toLowerCase().includes(search.toLowerCase()) &&
-      !c.phone.includes(search) &&
-      !(c.company || '').toLowerCase().includes(search.toLowerCase())
-    ) {
-      return false
-    }
-    return true
-  })
+  const filteredCustomers = customers
+    .filter((c) => {
+      // Filtro de status customizado com 6 botões
+      if (statusFilter === 'todos') {
+        if (c.customerId) {
+          const linkedCust = customersMap.get(c.customerId)
+          if (linkedCust?.pipeline_status === 'perdido') {
+            return false
+          }
+        }
+      } else if (statusFilter === 'novo') {
+        if (c.status !== 'novo') return false
+      } else if (statusFilter === 'nao_lidos') {
+        if (!(c.unreadCount && c.unreadCount > 0)) return false
+      } else if (statusFilter === 'em_atendimento') {
+        if (c.status !== 'em_atendimento') return false
+      } else if (statusFilter === 'antigos') {
+        const lastMsgTime =
+          c.lastTimestamp ||
+          (c.messages.length > 0 ? c.messages[c.messages.length - 1].timestamp : 0)
+        const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000
+        if (!lastMsgTime || lastMsgTime > sevenDaysAgo) return false
+      } else if (statusFilter === 'inativos') {
+        if (c.status !== 'resolvido') return false
+      }
+
+      // Filtro PF / PJ
+      if (typeFilter !== 'ALL' && c.type !== typeFilter) return false
+
+      // Busca por texto
+      if (
+        search &&
+        !c.name.toLowerCase().includes(search.toLowerCase()) &&
+        !c.phone.includes(search) &&
+        !(c.company || '').toLowerCase().includes(search.toLowerCase())
+      ) {
+        return false
+      }
+      return true
+    })
+    .sort((a, b) => {
+      const getArrivalTimestamp = (conv: WhatsAppCustomer): number => {
+        if (conv.messages.length > 0) {
+          return conv.messages[0].timestamp
+        }
+        return conv.lastTimestamp || 0
+      }
+
+      const getLastTimestamp = (conv: WhatsAppCustomer): number => {
+        if (conv.messages.length > 0) {
+          return conv.messages[conv.messages.length - 1].timestamp
+        }
+        return conv.lastTimestamp || 0
+      }
+
+      switch (statusFilter) {
+        case 'todos':
+        case 'novo': {
+          // Ordenar por chegada: mais recente → mais antiga
+          const tA = getArrivalTimestamp(a)
+          const tB = getArrivalTimestamp(b)
+          return tB - tA
+        }
+        case 'nao_lidos': {
+          // Ordenar da mais antiga → mais recente
+          const tA = getLastTimestamp(a)
+          const tB = getLastTimestamp(b)
+          return tA - tB
+        }
+        case 'em_atendimento': {
+          // Ordenar mais recente → mais antiga
+          const tA = getLastTimestamp(a)
+          const tB = getLastTimestamp(b)
+          return tB - tA
+        }
+        case 'antigos': {
+          // Ordenar da mais antiga → mais nova
+          const tA = getLastTimestamp(a)
+          const tB = getLastTimestamp(b)
+          return tA - tB
+        }
+        case 'inativos': {
+          // Ordenar pela data de fechamento: mais recente → mais antiga (usar updated do registro da conversa; se não houver, a última atividade)
+          const convRecordA = a as any
+          const convRecordB = b as any
+          const tA = convRecordA.updated
+            ? new Date(convRecordA.updated).getTime()
+            : getLastTimestamp(a)
+          const tB = convRecordB.updated
+            ? new Date(convRecordB.updated).getTime()
+            : getLastTimestamp(b)
+          return tB - tA
+        }
+        default:
+          return b.lastTimestamp - a.lastTimestamp
+      }
+    })
 
   // Manipulação de seleção de arquivo
   const handleClipClick = async () => {
@@ -677,11 +773,11 @@ export default function WhatsAppAtendimento() {
                 </button>
               </div>
 
-              <div className="flex items-center gap-1 text-[11px]">
+              <div className="flex items-center gap-1 text-[11px] overflow-x-auto no-scrollbar py-0.5">
                 <button
                   type="button"
                   onClick={() => setStatusFilter('todos')}
-                  className={`px-2 py-1 rounded font-medium transition-colors ${
+                  className={`px-2 py-1 rounded font-medium whitespace-nowrap transition-colors ${
                     statusFilter === 'todos'
                       ? 'bg-emerald-50 text-emerald-700 font-semibold'
                       : 'text-slate-500 hover:text-slate-800'
@@ -692,7 +788,7 @@ export default function WhatsAppAtendimento() {
                 <button
                   type="button"
                   onClick={() => setStatusFilter('novo')}
-                  className={`px-2 py-1 rounded font-medium transition-colors ${
+                  className={`px-2 py-1 rounded font-medium whitespace-nowrap transition-colors ${
                     statusFilter === 'novo'
                       ? 'bg-amber-100 text-amber-800 font-semibold'
                       : 'text-slate-500 hover:text-slate-800'
@@ -702,14 +798,47 @@ export default function WhatsAppAtendimento() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setStatusFilter('nao_lidos')}
+                  className={`px-2 py-1 rounded font-medium whitespace-nowrap transition-colors ${
+                    statusFilter === 'nao_lidos'
+                      ? 'bg-emerald-500 text-white font-semibold'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Não lidos
+                </button>
+                <button
+                  type="button"
                   onClick={() => setStatusFilter('em_atendimento')}
-                  className={`px-2 py-1 rounded font-medium transition-colors ${
+                  className={`px-2 py-1 rounded font-medium whitespace-nowrap transition-colors ${
                     statusFilter === 'em_atendimento'
                       ? 'bg-emerald-100 text-emerald-800 font-semibold'
                       : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
                   Ativos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('antigos')}
+                  className={`px-2 py-1 rounded font-medium whitespace-nowrap transition-colors ${
+                    statusFilter === 'antigos'
+                      ? 'bg-slate-200 text-slate-800 font-semibold'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Antigos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('inativos')}
+                  className={`px-2 py-1 rounded font-medium whitespace-nowrap transition-colors ${
+                    statusFilter === 'inativos'
+                      ? 'bg-slate-100 text-slate-700 font-semibold'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Inativos
                 </button>
               </div>
             </div>
