@@ -228,6 +228,8 @@ export const sendWhatsAppMessage = async (
     fileName?: string
     isImage?: boolean
     caption?: string
+    audioBase64?: string
+    audioMimeType?: string
   },
 ): Promise<{
   ok: boolean
@@ -247,6 +249,8 @@ export const sendWhatsAppMessage = async (
       ...(documentOptions?.fileName ? { fileName: documentOptions.fileName } : {}),
       ...(documentOptions?.isImage !== undefined ? { isImage: documentOptions.isImage } : {}),
       ...(documentOptions?.caption ? { caption: documentOptions.caption } : {}),
+      ...(documentOptions?.audioBase64 ? { audioBase64: documentOptions.audioBase64 } : {}),
+      ...(documentOptions?.audioMimeType ? { audioMimeType: documentOptions.audioMimeType } : {}),
     },
   })
 }

@@ -20,10 +20,14 @@ routerAdd(
     const message = String(rawBody.message || rawBody.caption || '').trim()
     const documentBase64 = String(rawBody.document || rawBody.image || '').trim()
     const documentFileName = String(rawBody.fileName || '').trim()
+    const audioBase64 = String(rawBody.audioBase64 || rawBody.audio || '').trim()
+    const audioMimeType = String(rawBody.audioMimeType || '').trim()
+    const isAudio = Boolean(audioBase64)
     const isImage = Boolean(
-      rawBody.isImage ||
-      documentBase64.startsWith('data:image/') ||
-      /\.(jpg|jpeg|png|webp|gif)$/i.test(documentFileName),
+      !isAudio &&
+      (rawBody.isImage ||
+        documentBase64.startsWith('data:image/') ||
+        /\.(jpg|jpeg|png|webp|gif)$/i.test(documentFileName)),
     )
 
     if (!rawPhone) {
@@ -33,7 +37,7 @@ routerAdd(
       })
     }
 
-    if (!message && !documentBase64) {
+    if (!message && !documentBase64 && !audioBase64) {
       return e.json(400, {
         ok: false,
         error: 'Mensagem ou arquivo anexo é obrigatório',
@@ -104,8 +108,47 @@ routerAdd(
         'Client-Token': zapiClientToken,
       }
 
-      // Se temos um anexo (documento ou imagem)
-      if (documentBase64) {
+      // Se for envio de ÁUDIO (gravação de voz)
+      if (isAudio) {
+        try {
+          const zapiAudioUrl =
+            'https://api.z-api.io/instances/' +
+            encodeURIComponent(zapiInstance) +
+            '/token/' +
+            encodeURIComponent(zapiToken) +
+            '/send-audio'
+
+          const audioPayload = {
+            phone: cleanPhone,
+            audio: audioBase64,
+          }
+
+          const audioRes = $http.send({
+            url: zapiAudioUrl,
+            method: 'POST',
+            headers: zapiHeaders,
+            body: JSON.stringify(audioPayload),
+            timeout: 35,
+          })
+
+          zapiHttpStatus = audioRes.statusCode
+          if (audioRes.statusCode >= 200 && audioRes.statusCode < 300) {
+            zapiSuccess = true
+            zapiDocSuccess = true
+          } else {
+            const respData = audioRes.json || audioRes.body || {}
+            zapiErrorDetail =
+              'Z-API audio status ' +
+              audioRes.statusCode +
+              ': ' +
+              (respData.message || respData.error || String(audioRes.body || ''))
+            zapiDocErrorDetail = zapiErrorDetail
+          }
+        } catch (audioErr) {
+          zapiErrorDetail = audioErr.message || String(audioErr)
+          zapiDocErrorDetail = zapiErrorDetail
+        }
+      } else if (documentBase64) {
         if (isImage) {
           // ENVIO DE IMAGEM via /send-image
           try {
@@ -268,7 +311,9 @@ routerAdd(
       rec.set('phone', { phone: cleanPhone })
       rec.set('fromMe', true)
       rec.set('text', {
-        message: message || (documentFileName ? 'Arquivo: ' + documentFileName : ''),
+        message:
+          message ||
+          (isAudio ? 'Mensagem de voz' : documentFileName ? 'Arquivo: ' + documentFileName : ''),
       })
       rec.set('chat', { phone: cleanPhone })
       rec.set('sender', { role: 'agent' })
@@ -277,7 +322,13 @@ routerAdd(
       rec.set('instanceId', validConfigRec ? validConfigRec.getString('zapi_instance_id') : '')
       rec.set('moment', Math.floor(Date.now() / 1000))
 
-      if (documentBase64) {
+      if (isAudio) {
+        rec.set('attachment_url', audioBase64)
+        rec.set('attachment_name', 'Mensagem de voz')
+        rec.set('attachment_type', 'audio')
+        rec.set('is_audio', true)
+        rec.set('audio_url', audioBase64)
+      } else if (documentBase64) {
         rec.set('attachment_url', documentBase64)
         rec.set('attachment_name', documentFileName || (isImage ? 'imagem.png' : 'documento.pdf'))
         rec.set('attachment_type', isImage ? 'image' : 'document')
@@ -296,8 +347,9 @@ routerAdd(
         zapiSuccess: zapiSuccess,
         zapiHttpStatus: zapiHttpStatus,
         docSent: zapiDocSuccess,
+        isAudio: isAudio,
         isImage: isImage,
-        fileName: documentFileName || null,
+        fileName: isAudio ? 'Mensagem de voz' : documentFileName || null,
         error: zapiErrorDetail || null,
         docError: zapiDocErrorDetail || null,
       }),

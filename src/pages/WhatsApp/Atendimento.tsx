@@ -22,6 +22,8 @@ import {
   Eye,
   Download,
   AlertTriangle,
+  Square,
+  Trash2,
 } from 'lucide-react'
 import {
   Dialog,
@@ -84,6 +86,227 @@ export default function WhatsAppAtendimento() {
   const [fileCaption, setFileCaption] = useState('')
   const [isSendingAttachment, setIsSendingAttachment] = useState(false)
   const [previewMediaUrl, setPreviewMediaUrl] = useState<string | null>(null)
+
+  // Estados de gravação de áudio
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
+  const [isSendingAudio, setIsSendingAudio] = useState(false)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const audioStreamRef = useRef<MediaStream | null>(null)
+  const isDiscardingAudioRef = useRef<boolean>(false)
+
+  // Cleanup de gravação ao desmontar componente
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current)
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.stop()
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((track) => track.stop())
+      }
+    }
+  }, [])
+
+  const startAudioRecording = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast({
+        title: 'Microfone não suportado',
+        description: 'Seu navegador não possui suporte para gravação de áudio.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      audioStreamRef.current = stream
+
+      let mimeType = 'audio/webm'
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        mimeType = 'audio/webm;codecs=opus'
+      } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+        mimeType = 'audio/ogg;codecs=opus'
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        mimeType = 'audio/mp4'
+      }
+
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      mediaRecorderRef.current = recorder
+      audioChunksRef.current = []
+      isDiscardingAudioRef.current = false
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
+      }
+
+      recorder.onstop = async () => {
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach((track) => track.stop())
+          audioStreamRef.current = null
+        }
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current)
+          recordingTimerRef.current = null
+        }
+
+        const wasDiscarded = isDiscardingAudioRef.current
+        isDiscardingAudioRef.current = false
+        setIsRecordingAudio(false)
+        setRecordingSeconds(0)
+
+        if (wasDiscarded) {
+          audioChunksRef.current = []
+          return
+        }
+
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || 'audio/webm',
+        })
+        audioChunksRef.current = []
+
+        if (audioBlob.size === 0) {
+          return
+        }
+
+        await processAndSendAudio(audioBlob)
+      }
+
+      recorder.start(200)
+      setIsRecordingAudio(true)
+      setRecordingSeconds(0)
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((sec) => sec + 1)
+      }, 1000)
+    } catch (err: any) {
+      console.warn('Erro ao acessar microfone:', err)
+      const isDenied =
+        err?.name === 'NotAllowedError' ||
+        err?.name === 'PermissionDeniedError' ||
+        String(err).includes('Permission denied')
+      toast({
+        title: isDenied ? 'Permissão de microfone negada' : 'Erro no microfone',
+        description: isDenied
+          ? 'Por favor, libere o acesso ao microfone nas configurações do seu navegador para gravar áudios.'
+          : err?.message || 'Não foi possível iniciar a gravação de áudio.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const cancelAudioRecording = () => {
+    isDiscardingAudioRef.current = true
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop()
+      } catch {
+        /* intentionally ignored */
+      }
+    }
+  }
+
+  const stopAndSendAudioRecording = () => {
+    isDiscardingAudioRef.current = false
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop()
+      } catch {
+        /* intentionally ignored */
+      }
+    }
+  }
+
+  const processAndSendAudio = async (audioBlob: Blob) => {
+    if (!activeCustomer) return
+
+    setIsSendingAudio(true)
+    try {
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(audioBlob)
+      })
+
+      const now = new Date()
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(
+        now.getMinutes(),
+      ).padStart(2, '0')}`
+
+      const optimisticMsg: WhatsAppMessage = {
+        id: `agent-audio-${Date.now()}`,
+        text: '',
+        time: timeStr,
+        sender: 'agent',
+        timestamp: now.getTime(),
+        isAudio: true,
+        audioUrl: base64Data,
+        attachmentUrl: base64Data,
+        attachmentName: 'Mensagem de voz',
+        attachmentType: 'audio',
+      }
+
+      shouldScrollOnSendRef.current = true
+
+      setCustomers((prev) =>
+        prev.map((c) => {
+          if (c.id === activeCustomer.id) {
+            return {
+              ...c,
+              lastActivity: timeStr,
+              messages: [...c.messages, optimisticMsg],
+            }
+          }
+          return c
+        }),
+      )
+
+      const targetPhone = activeCustomer.rawPhone || activeCustomer.phone
+      const sendRes = await sendWhatsAppMessage(targetPhone, '', {
+        audioBase64: base64Data,
+        audioMimeType: audioBlob.type || 'audio/webm',
+      })
+
+      if (sendRes.ok && sendRes.zapiSuccess) {
+        toast({
+          title: 'Áudio Enviado!',
+          description: `Mensagem de voz enviada com sucesso para ${activeCustomer.name}.`,
+        })
+      } else {
+        toast({
+          title: 'Aviso de envio',
+          description: sendRes.zapiError || 'Não foi possível confirmar a entrega do áudio.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      console.error('Erro ao enviar áudio gravado:', err)
+      toast({
+        title: 'Falha no envio do áudio',
+        description: err?.message || 'Erro ao processar ou despachar o áudio gravado.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsSendingAudio(false)
+    }
+  }
+
+  const formatAudioTimer = (seconds: number) => {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  }
   const [previewMediaTitle, setPreviewMediaTitle] = useState('')
   const [previewMediaType, setPreviewMediaType] = useState<'image' | 'video'>('image')
 
@@ -1223,12 +1446,53 @@ export default function WhatsAppAtendimento() {
                         </div>
                       )}
 
-                      {/* Bloco de Anexo (Imagem, Vídeo ou Documento) se houver */}
-                      {msg.attachmentUrl && (
+                      {/* Bloco de Anexo (Áudio, Imagem, Vídeo ou Documento) se houver */}
+                      {(msg.attachmentUrl || (msg.isAudio && msg.audioUrl)) && (
                         <div className="mb-2">
-                          {msg.attachmentType === 'image' ||
-                          msg.attachmentUrl.startsWith('data:image/') ||
-                          /\.(jpg|jpeg|png|webp|gif)$/i.test(msg.attachmentName || '') ? (
+                          {msg.attachmentType === 'audio' ||
+                          msg.isAudio ||
+                          (msg.attachmentUrl &&
+                            (msg.attachmentUrl.startsWith('data:audio/') ||
+                              /\.(ogg|mp3|wav|m4a|aac|opus|weba)$/i.test(
+                                msg.attachmentName || '',
+                              ) ||
+                              /\.(ogg|mp3|wav|m4a|aac|opus|weba)(\?.*)?$/i.test(
+                                msg.attachmentUrl,
+                              ))) ? (
+                            <div className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/90 flex flex-col gap-1.5 min-w-[260px] max-w-sm">
+                              <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium">
+                                <span className="inline-flex items-center gap-1.5">
+                                  <Mic className="w-3.5 h-3.5 text-emerald-600" />
+                                  {msg.attachmentName || 'Mensagem de voz'}
+                                </span>
+                                {(msg.attachmentUrl || msg.audioUrl) && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleDownloadAttachment(
+                                        (msg.attachmentUrl || msg.audioUrl)!,
+                                        msg.attachmentName || 'audio.mp3',
+                                      )
+                                    }
+                                    className="text-slate-500 hover:text-emerald-700 p-0.5"
+                                    title="Baixar áudio"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                              <audio
+                                controls
+                                preload="metadata"
+                                src={msg.attachmentUrl || msg.audioUrl}
+                                className="w-full h-8"
+                              >
+                                Seu navegador não suporta a reprodução de áudio.
+                              </audio>
+                            </div>
+                          ) : msg.attachmentType === 'image' ||
+                            (msg.attachmentUrl && msg.attachmentUrl.startsWith('data:image/')) ||
+                            /\.(jpg|jpeg|png|webp|gif)$/i.test(msg.attachmentName || '') ? (
                             <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-50 relative group">
                               <img
                                 src={msg.attachmentUrl}
@@ -1269,7 +1533,7 @@ export default function WhatsAppAtendimento() {
                               </div>
                             </div>
                           ) : msg.attachmentType === 'video' ||
-                            msg.attachmentUrl.startsWith('data:video/') ||
+                            (msg.attachmentUrl && msg.attachmentUrl.startsWith('data:video/')) ||
                             /\.(mp4|webm|mov|m4v|3gp)$/i.test(msg.attachmentName || '') ? (
                             <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-900 relative group max-w-sm">
                               <video
@@ -1415,53 +1679,109 @@ export default function WhatsAppAtendimento() {
               </div>
             )}
 
-            {/* Barra inferior: Anexo (Clipe), Buscar Produtos, Campo de texto e Enviar */}
-            <form
-              onSubmit={handleSendMessage}
-              className="p-3 bg-white border-t border-slate-200 flex items-center gap-2"
-            >
-              {/* Botão de Anexo (ícone de clipe) */}
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleClipClick}
-                disabled={checkingConnection}
-                className="h-9 w-9 p-0 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 border-slate-200 shrink-0"
-                title={
-                  isWhatsAppConnected === false
-                    ? 'Anexo indisponível: WhatsApp desconectado'
-                    : 'Anexar arquivo (PDF, imagens, documentos até 15MB)'
-                }
-              >
-                <Paperclip className="w-4 h-4" />
-              </Button>
+            {/* Barra inferior: Modo de Gravação de Áudio OU Formulário de Envio (Anexo, Produtos, Input, Mic, Enviar) */}
+            {isRecordingAudio ? (
+              <div className="p-3 bg-rose-50/70 border-t border-rose-200 flex items-center justify-between gap-3 animate-in fade-in duration-150">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="relative flex h-3 w-3 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-600" />
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-rose-900">Gravando áudio...</span>
+                    <span className="font-mono text-xs font-bold text-rose-700 bg-white/80 px-2 py-0.5 rounded border border-rose-200">
+                      {formatAudioTimer(recordingSeconds)}
+                    </span>
+                  </div>
+                </div>
 
-              {/* Botão Buscar Produtos ao lado do campo de mensagem */}
-              <Button
-                type="button"
-                onClick={handleOpenProductQuote}
-                className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold px-2 text-xs shrink-0 transition-colors shadow-2xs h-9"
-                title="Buscar produtos no estoque e montar orçamento"
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={cancelAudioRecording}
+                    disabled={isSendingAudio}
+                    className="h-8 px-3 text-xs border-rose-300 text-rose-700 hover:bg-rose-100 hover:text-rose-800 font-medium"
+                    title="Descartar gravação"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1" />
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={stopAndSendAudioRecording}
+                    disabled={isSendingAudio}
+                    className="h-8 px-3.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs"
+                    title="Concluir gravação e enviar mensagem de voz"
+                  >
+                    <Send className="w-3.5 h-3.5 mr-1" />
+                    {isSendingAudio ? 'Enviando...' : 'Enviar'}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <form
+                onSubmit={handleSendMessage}
+                className="p-3 bg-white border-t border-slate-200 flex items-center gap-2"
               >
-                <PackageSearch className="w-3.5 h-3.5 mr-1 text-emerald-600" />
-                <span>Produtos</span>
-              </Button>
+                {/* Botão de Anexo (ícone de clipe) */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleClipClick}
+                  disabled={checkingConnection}
+                  className="h-9 w-9 p-0 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 border-slate-200 shrink-0"
+                  title={
+                    isWhatsAppConnected === false
+                      ? 'Anexo indisponível: WhatsApp desconectado'
+                      : 'Anexar arquivo (PDF, imagens, documentos até 15MB)'
+                  }
+                >
+                  <Paperclip className="w-4 h-4" />
+                </Button>
 
-              <Input
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder={`Responder a ${activeCustomer.name}...`}
-                className="flex-1 bg-slate-50 border-slate-200 focus:bg-white text-sm h-9"
-              />
-              <Button
-                type="submit"
-                disabled={!inputText.trim()}
-                className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold px-4 shrink-0 transition-colors shadow-sm h-9"
-              >
-                <Send className="w-4 h-4 mr-1.5" />
-                Enviar
-              </Button>
-            </form>
+                {/* Botão Buscar Produtos ao lado do campo de mensagem */}
+                <Button
+                  type="button"
+                  onClick={handleOpenProductQuote}
+                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-semibold px-2 text-xs shrink-0 transition-colors shadow-2xs h-9"
+                  title="Buscar produtos no estoque e montar orçamento"
+                >
+                  <PackageSearch className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                  <span>Produtos</span>
+                </Button>
+
+                <Input
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  placeholder={`Responder a ${activeCustomer.name}...`}
+                  className="flex-1 bg-slate-50 border-slate-200 focus:bg-white text-sm h-9"
+                />
+
+                {/* Botão de Microfone para gravar áudio */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={startAudioRecording}
+                  disabled={isSendingAudio || checkingConnection}
+                  className="h-9 w-9 p-0 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 border-slate-200 shrink-0"
+                  title="Gravar mensagem de voz"
+                >
+                  <Mic className="w-4 h-4" />
+                </Button>
+
+                <Button
+                  type="submit"
+                  disabled={!inputText.trim()}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold px-4 shrink-0 transition-colors shadow-sm h-9"
+                >
+                  <Send className="w-4 h-4 mr-1.5" />
+                  Enviar
+                </Button>
+              </form>
+            )}
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center p-8 text-center text-slate-400">
