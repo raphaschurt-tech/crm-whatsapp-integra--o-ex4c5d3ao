@@ -81,6 +81,7 @@ export default function WhatsAppAtendimento() {
   const [isSendingAttachment, setIsSendingAttachment] = useState(false)
   const [previewMediaUrl, setPreviewMediaUrl] = useState<string | null>(null)
   const [previewMediaTitle, setPreviewMediaTitle] = useState('')
+  const [previewMediaType, setPreviewMediaType] = useState<'image' | 'video'>('image')
 
   const chatContainerRef = useRef<HTMLDivElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
@@ -1093,7 +1094,7 @@ export default function WhatsAppAtendimento() {
                         </div>
                       )}
 
-                      {/* Bloco de Anexo (Imagem ou Documento) se houver */}
+                      {/* Bloco de Anexo (Imagem, Vídeo ou Documento) se houver */}
                       {msg.attachmentUrl && (
                         <div className="mb-2">
                           {msg.attachmentType === 'image' ||
@@ -1107,6 +1108,7 @@ export default function WhatsAppAtendimento() {
                                 onClick={() => {
                                   setPreviewMediaUrl(msg.attachmentUrl!)
                                   setPreviewMediaTitle(msg.attachmentName || 'Visualizar Imagem')
+                                  setPreviewMediaType('image')
                                 }}
                               />
                               <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-md p-1">
@@ -1115,6 +1117,7 @@ export default function WhatsAppAtendimento() {
                                   onClick={() => {
                                     setPreviewMediaUrl(msg.attachmentUrl!)
                                     setPreviewMediaTitle(msg.attachmentName || 'Visualizar Imagem')
+                                    setPreviewMediaType('image')
                                   }}
                                   className="text-white hover:text-emerald-300 p-1"
                                   title="Expandir"
@@ -1134,6 +1137,51 @@ export default function WhatsAppAtendimento() {
                                 >
                                   <Download className="w-3.5 h-3.5" />
                                 </button>
+                              </div>
+                            </div>
+                          ) : msg.attachmentType === 'video' ||
+                            msg.attachmentUrl.startsWith('data:video/') ||
+                            /\.(mp4|webm|mov|m4v|3gp)$/i.test(msg.attachmentName || '') ? (
+                            <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-900 relative group max-w-sm">
+                              <video
+                                controls
+                                preload="metadata"
+                                src={msg.attachmentUrl}
+                                className="max-h-64 w-full object-cover rounded-lg bg-black"
+                              >
+                                Seu navegador não suporta a reprodução de vídeo.
+                              </video>
+                              <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-900/90 text-white text-[11px]">
+                                <span className="truncate font-medium text-slate-300 max-w-[200px]">
+                                  {msg.attachmentName || 'Vídeo'}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPreviewMediaUrl(msg.attachmentUrl!)
+                                      setPreviewMediaTitle(msg.attachmentName || 'Visualizar Vídeo')
+                                      setPreviewMediaType('video')
+                                    }}
+                                    className="p-1 text-slate-300 hover:text-white"
+                                    title="Ampliar vídeo"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleDownloadAttachment(
+                                        msg.attachmentUrl!,
+                                        msg.attachmentName || 'video.mp4',
+                                      )
+                                    }
+                                    className="p-1 text-slate-300 hover:text-white"
+                                    title="Baixar vídeo"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           ) : (
@@ -1423,20 +1471,22 @@ export default function WhatsAppAtendimento() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal de Prévia Ampliada de Imagens */}
+      {/* Modal de Prévia Ampliada de Imagens ou Vídeos */}
       <Dialog
         open={!!previewMediaUrl}
         onOpenChange={(open) => {
           if (!open) {
             setPreviewMediaUrl(null)
             setPreviewMediaTitle('')
+            setPreviewMediaType('image')
           }
         }}
       >
         <DialogContent className="max-w-3xl p-4 bg-black/90 border-slate-800 text-white">
           <div className="flex items-center justify-between pb-2 border-b border-slate-700">
             <span className="text-sm font-semibold truncate text-slate-200">
-              {previewMediaTitle || 'Visualização da Imagem'}
+              {previewMediaTitle ||
+                (previewMediaType === 'video' ? 'Visualização do Vídeo' : 'Visualização da Imagem')}
             </span>
             <div className="flex items-center gap-2">
               {previewMediaUrl && (
@@ -1445,7 +1495,11 @@ export default function WhatsAppAtendimento() {
                   size="sm"
                   variant="outline"
                   onClick={() =>
-                    handleDownloadAttachment(previewMediaUrl, previewMediaTitle || 'imagem.png')
+                    handleDownloadAttachment(
+                      previewMediaUrl,
+                      previewMediaTitle ||
+                        (previewMediaType === 'video' ? 'video.mp4' : 'imagem.png'),
+                    )
                   }
                   className="h-7 text-xs bg-slate-800 text-slate-200 border-slate-600 hover:bg-slate-700 hover:text-white"
                 >
@@ -1455,13 +1509,22 @@ export default function WhatsAppAtendimento() {
             </div>
           </div>
           <div className="flex items-center justify-center p-2 max-h-[75vh] overflow-auto">
-            {previewMediaUrl && (
+            {previewMediaUrl && previewMediaType === 'video' ? (
+              <video
+                controls
+                autoPlay
+                src={previewMediaUrl}
+                className="max-h-[70vh] max-w-full object-contain rounded"
+              >
+                Seu navegador não suporta o formato de vídeo.
+              </video>
+            ) : previewMediaUrl ? (
               <img
                 src={previewMediaUrl}
                 alt={previewMediaTitle || 'Imagem'}
                 className="max-h-[70vh] max-w-full object-contain rounded"
               />
-            )}
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>

@@ -457,6 +457,190 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     }
   }
 
+  // ==========================================
+  // DETECÇÃO DE MÍDIA (IMAGEM, VÍDEO, DOCUMENTO)
+  // ==========================================
+  let attachmentUrl = ''
+  let attachmentType = '' // 'image' | 'video' | 'document'
+  let attachmentName = ''
+  let mediaCaption = ''
+
+  // 1. Imagem
+  if (body.image) {
+    attachmentType = 'image'
+    if (typeof body.image === 'object' && body.image !== null) {
+      attachmentUrl = String(
+        body.image.imageUrl || body.image.url || body.image.fileUrl || body.image.link || '',
+      )
+      if (body.image.caption) mediaCaption = String(body.image.caption)
+      if (body.image.fileName) attachmentName = String(body.image.fileName)
+    } else if (typeof body.image === 'string') {
+      attachmentUrl = body.image
+    }
+  } else if (body.imageMessage) {
+    attachmentType = 'image'
+    if (typeof body.imageMessage === 'object' && body.imageMessage !== null) {
+      attachmentUrl = String(
+        body.imageMessage.imageUrl || body.imageMessage.url || body.imageMessage.fileUrl || '',
+      )
+      if (body.imageMessage.caption) mediaCaption = String(body.imageMessage.caption)
+      if (body.imageMessage.fileName) attachmentName = String(body.imageMessage.fileName)
+    } else if (typeof body.imageMessage === 'string') {
+      attachmentUrl = body.imageMessage
+    }
+  } else if (body.imageUrl) {
+    attachmentType = 'image'
+    attachmentUrl = String(body.imageUrl)
+    if (body.caption) mediaCaption = String(body.caption)
+  }
+
+  // 2. Vídeo
+  if (!attachmentUrl) {
+    if (body.video) {
+      attachmentType = 'video'
+      if (typeof body.video === 'object' && body.video !== null) {
+        attachmentUrl = String(
+          body.video.videoUrl || body.video.url || body.video.fileUrl || body.video.link || '',
+        )
+        if (body.video.caption) mediaCaption = String(body.video.caption)
+        if (body.video.fileName) attachmentName = String(body.video.fileName)
+      } else if (typeof body.video === 'string') {
+        attachmentUrl = body.video
+      }
+    } else if (body.videoMessage) {
+      attachmentType = 'video'
+      if (typeof body.videoMessage === 'object' && body.videoMessage !== null) {
+        attachmentUrl = String(
+          body.videoMessage.videoUrl || body.videoMessage.url || body.videoMessage.fileUrl || '',
+        )
+        if (body.videoMessage.caption) mediaCaption = String(body.videoMessage.caption)
+        if (body.videoMessage.fileName) attachmentName = String(body.videoMessage.fileName)
+      } else if (typeof body.videoMessage === 'string') {
+        attachmentUrl = body.videoMessage
+      }
+    } else if (body.videoUrl) {
+      attachmentType = 'video'
+      attachmentUrl = String(body.videoUrl)
+      if (body.caption) mediaCaption = String(body.caption)
+    }
+  }
+
+  // 3. Documento
+  if (!attachmentUrl) {
+    if (body.document) {
+      attachmentType = 'document'
+      if (typeof body.document === 'object' && body.document !== null) {
+        attachmentUrl = String(
+          body.document.documentUrl ||
+            body.document.url ||
+            body.document.fileUrl ||
+            body.document.link ||
+            '',
+        )
+        if (body.document.caption) mediaCaption = String(body.document.caption)
+        if (body.document.fileName) attachmentName = String(body.document.fileName)
+      } else if (typeof body.document === 'string') {
+        attachmentUrl = body.document
+      }
+    } else if (body.documentMessage) {
+      attachmentType = 'document'
+      if (typeof body.documentMessage === 'object' && body.documentMessage !== null) {
+        attachmentUrl = String(
+          body.documentMessage.documentUrl ||
+            body.documentMessage.url ||
+            body.documentMessage.fileUrl ||
+            '',
+        )
+        if (body.documentMessage.caption) mediaCaption = String(body.documentMessage.caption)
+        if (body.documentMessage.fileName) attachmentName = String(body.documentMessage.fileName)
+      } else if (typeof body.documentMessage === 'string') {
+        attachmentUrl = body.documentMessage
+      }
+    } else if (body.documentUrl) {
+      attachmentType = 'document'
+      attachmentUrl = String(body.documentUrl)
+      if (body.fileName) attachmentName = String(body.fileName)
+      if (body.caption) mediaCaption = String(body.caption)
+    }
+  }
+
+  // 4. Variantes de type / messageType / mediaType = image/photo/video/document com fileUrl/mediaUrl
+  if (!attachmentUrl) {
+    const rawMediaType = String(body.type || body.messageType || body.mediaType || '').toLowerCase()
+    if (rawMediaType === 'image' || rawMediaType === 'photo') {
+      attachmentType = 'image'
+      attachmentUrl = String(body.fileUrl || body.mediaUrl || body.url || '')
+      if (body.caption) mediaCaption = String(body.caption)
+      if (body.fileName) attachmentName = String(body.fileName)
+    } else if (rawMediaType === 'video') {
+      attachmentType = 'video'
+      attachmentUrl = String(body.fileUrl || body.mediaUrl || body.url || '')
+      if (body.caption) mediaCaption = String(body.caption)
+      if (body.fileName) attachmentName = String(body.fileName)
+    } else if (rawMediaType === 'document') {
+      attachmentType = 'document'
+      attachmentUrl = String(body.fileUrl || body.mediaUrl || body.url || '')
+      if (body.caption) mediaCaption = String(body.caption)
+      if (body.fileName) attachmentName = String(body.fileName)
+    }
+  }
+
+  // 5. Versões aninhadas em body.data (padrão Baileys / Z-API data.message)
+  if (!attachmentUrl && body.data && typeof body.data === 'object') {
+    const dataMsg = body.data.message || body.data
+    if (dataMsg.imageMessage) {
+      attachmentType = 'image'
+      if (typeof dataMsg.imageMessage === 'object') {
+        attachmentUrl = String(
+          dataMsg.imageMessage.imageUrl ||
+            dataMsg.imageMessage.url ||
+            dataMsg.imageMessage.fileUrl ||
+            '',
+        )
+        if (dataMsg.imageMessage.caption) mediaCaption = String(dataMsg.imageMessage.caption)
+        if (dataMsg.imageMessage.fileName) attachmentName = String(dataMsg.imageMessage.fileName)
+      } else if (typeof dataMsg.imageMessage === 'string') {
+        attachmentUrl = dataMsg.imageMessage
+      }
+    } else if (dataMsg.videoMessage) {
+      attachmentType = 'video'
+      if (typeof dataMsg.videoMessage === 'object') {
+        attachmentUrl = String(
+          dataMsg.videoMessage.videoUrl ||
+            dataMsg.videoMessage.url ||
+            dataMsg.videoMessage.fileUrl ||
+            '',
+        )
+        if (dataMsg.videoMessage.caption) mediaCaption = String(dataMsg.videoMessage.caption)
+        if (dataMsg.videoMessage.fileName) attachmentName = String(dataMsg.videoMessage.fileName)
+      } else if (typeof dataMsg.videoMessage === 'string') {
+        attachmentUrl = dataMsg.videoMessage
+      }
+    } else if (dataMsg.documentMessage) {
+      attachmentType = 'document'
+      if (typeof dataMsg.documentMessage === 'object') {
+        attachmentUrl = String(
+          dataMsg.documentMessage.documentUrl ||
+            dataMsg.documentMessage.url ||
+            dataMsg.documentMessage.fileUrl ||
+            '',
+        )
+        if (dataMsg.documentMessage.caption) mediaCaption = String(dataMsg.documentMessage.caption)
+        if (dataMsg.documentMessage.fileName)
+          attachmentName = String(dataMsg.documentMessage.fileName)
+      } else if (typeof dataMsg.documentMessage === 'string') {
+        attachmentUrl = dataMsg.documentMessage
+      }
+    }
+  }
+
+  // Definir nome padrão amigável caso não tenha vindo fileName
+  if (attachmentUrl && !attachmentName) {
+    if (attachmentType === 'image') attachmentName = 'Imagem'
+    else if (attachmentType === 'video') attachmentName = 'Vídeo'
+    else if (attachmentType === 'document') attachmentName = 'Documento'
+  }
+
   // Extrair texto da mensagem (caso venha preenchido ou seja mensagem de texto)
   let incomingText = ''
   if (body.text) {
@@ -473,6 +657,11 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     } else {
       incomingText = String(body.message)
     }
+  }
+
+  // Se veio mídia com caption e incomingText estiver vazio, usar caption como incomingText
+  if (!incomingText && mediaCaption) {
+    incomingText = mediaCaption
   }
 
   // Log sanitizado de recepção do webhook (sem expor credenciais nem telefones completos)
@@ -851,6 +1040,11 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       if (rawAudioUrl) {
         rec.set('audio_url', rawAudioUrl)
       }
+      if (attachmentUrl) {
+        rec.set('attachment_url', attachmentUrl)
+        rec.set('attachment_type', attachmentType)
+        rec.set('attachment_name', attachmentName)
+      }
       $app.save(rec)
     } else {
       // PLANO B: Se não foi possível resolver o telefone real (ex: LID ainda não mapeado),
@@ -890,6 +1084,11 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       rec.set('is_audio', isAudio)
       if (rawAudioUrl) {
         rec.set('audio_url', rawAudioUrl)
+      }
+      if (attachmentUrl) {
+        rec.set('attachment_url', attachmentUrl)
+        rec.set('attachment_type', attachmentType)
+        rec.set('attachment_name', attachmentName)
       }
       $app.save(rec)
     }

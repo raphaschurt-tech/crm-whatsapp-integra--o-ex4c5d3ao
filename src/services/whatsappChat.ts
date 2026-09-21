@@ -19,7 +19,7 @@ export interface WhatsAppMessage {
   audioUrl?: string
   attachmentUrl?: string
   attachmentName?: string
-  attachmentType?: 'image' | 'document'
+  attachmentType?: 'image' | 'video' | 'document'
 }
 
 export interface WhatsAppCustomer {
@@ -490,8 +490,10 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         attachmentUrl: rec.attachment_url || undefined,
         attachmentName: rec.attachment_name || undefined,
         attachmentType:
-          rec.attachment_type === 'image' || rec.attachment_type === 'document'
-            ? rec.attachment_type
+          rec.attachment_type === 'image' ||
+          rec.attachment_type === 'video' ||
+          rec.attachment_type === 'document'
+            ? (rec.attachment_type as 'image' | 'video' | 'document')
             : undefined,
       })
 
