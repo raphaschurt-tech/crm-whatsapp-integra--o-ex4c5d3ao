@@ -187,6 +187,46 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
       const loc2 = loc2Raw !== null && loc2Raw !== undefined ? String(loc2Raw).trim() : ''
       const loc3 = loc3Raw !== null && loc3Raw !== undefined ? String(loc3Raw).trim() : ''
 
+      const brandRaw =
+        r.MARCA !== undefined
+          ? r.MARCA
+          : r.marca !== undefined
+            ? r.marca
+            : r.brand !== undefined
+              ? r.brand
+              : r.BRAND
+      const brandVal = brandRaw !== null && brandRaw !== undefined ? String(brandRaw).trim() : ''
+
+      const barcodeRaw =
+        r.CODIGOBARRAS !== undefined
+          ? r.CODIGOBARRAS
+          : r.codigobarras !== undefined
+            ? r.codigobarras
+            : r.codigo_barras !== undefined
+              ? r.codigo_barras
+              : r.CODIGO_BARRAS !== undefined
+                ? r.CODIGO_BARRAS
+                : r.barcode !== undefined
+                  ? r.barcode
+                  : r.BARCODE
+      const barcodeVal =
+        barcodeRaw !== null && barcodeRaw !== undefined ? String(barcodeRaw).trim() : ''
+
+      const reducedCodeRaw =
+        r.CODREDUZIDO !== undefined
+          ? r.CODREDUZIDO
+          : r.codreduzido !== undefined
+            ? r.codreduzido
+            : r.cod_reduzido !== undefined
+              ? r.cod_reduzido
+              : r.COD_REDUZIDO !== undefined
+                ? r.COD_REDUZIDO
+                : r.reduced_code !== undefined
+                  ? r.reduced_code
+                  : r.REDUCED_CODE
+      const reducedCodeVal =
+        reducedCodeRaw !== null && reducedCodeRaw !== undefined ? String(reducedCodeRaw).trim() : ''
+
       const saldoRaw =
         r.saldo_prod !== undefined
           ? r.saldo_prod
@@ -231,6 +271,9 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
           location_1: loc1,
           location_2: loc2,
           location_3: loc3,
+          brand: brandVal,
+          barcode: barcodeVal,
+          reduced_code: reducedCodeVal,
         }
       }
 
@@ -246,6 +289,16 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
       }
       if (!productsMap[codProd].location_3 && loc3) {
         productsMap[codProd].location_3 = loc3
+      }
+
+      if (!productsMap[codProd].brand && brandVal) {
+        productsMap[codProd].brand = brandVal
+      }
+      if (!productsMap[codProd].barcode && barcodeVal) {
+        productsMap[codProd].barcode = barcodeVal
+      }
+      if (!productsMap[codProd].reduced_code && reducedCodeVal) {
+        productsMap[codProd].reduced_code = reducedCodeVal
       }
 
       if (listaPreco.indexOf('110') !== -1) {
@@ -302,6 +355,9 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
         location_1: p.location_1 || '',
         location_2: p.location_2 || '',
         location_3: p.location_3 || '',
+        brand: p.brand || '',
+        barcode: p.barcode || '',
+        reduced_code: p.reduced_code || '',
       }
     }
 
@@ -334,6 +390,9 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
     'location_1',
     'location_2',
     'location_3',
+    'brand',
+    'barcode',
+    'reduced_code',
   ]
 
   const productsCol = $app.findCollectionByNameOrId('products')
@@ -364,6 +423,9 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
       location_1: p.location_1 || '',
       location_2: p.location_2 || '',
       location_3: p.location_3 || '',
+      brand: p.brand || '',
+      barcode: p.barcode || '',
+      reduced_code: p.reduced_code || '',
     }
 
     let existingRecord = null
@@ -553,6 +615,46 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
       const loc2 = loc2Raw !== null && loc2Raw !== undefined ? String(loc2Raw).trim() : ''
       const loc3 = loc3Raw !== null && loc3Raw !== undefined ? String(loc3Raw).trim() : ''
 
+      const brandRaw =
+        r.MARCA !== undefined
+          ? r.MARCA
+          : r.marca !== undefined
+            ? r.marca
+            : r.brand !== undefined
+              ? r.brand
+              : r.BRAND
+      const brandVal = brandRaw !== null && brandRaw !== undefined ? String(brandRaw).trim() : ''
+
+      const barcodeRaw =
+        r.CODIGOBARRAS !== undefined
+          ? r.CODIGOBARRAS
+          : r.codigobarras !== undefined
+            ? r.codigobarras
+            : r.codigo_barras !== undefined
+              ? r.codigo_barras
+              : r.CODIGO_BARRAS !== undefined
+                ? r.CODIGO_BARRAS
+                : r.barcode !== undefined
+                  ? r.barcode
+                  : r.BARCODE
+      const barcodeVal =
+        barcodeRaw !== null && barcodeRaw !== undefined ? String(barcodeRaw).trim() : ''
+
+      const reducedCodeRaw =
+        r.CODREDUZIDO !== undefined
+          ? r.CODREDUZIDO
+          : r.codreduzido !== undefined
+            ? r.codreduzido
+            : r.cod_reduzido !== undefined
+              ? r.cod_reduzido
+              : r.COD_REDUZIDO !== undefined
+                ? r.COD_REDUZIDO
+                : r.reduced_code !== undefined
+                  ? r.reduced_code
+                  : r.REDUCED_CODE
+      const reducedCodeVal =
+        reducedCodeRaw !== null && reducedCodeRaw !== undefined ? String(reducedCodeRaw).trim() : ''
+
       const saldoRaw =
         r.saldo_prod !== undefined
           ? r.saldo_prod
@@ -597,6 +699,9 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
           location_1: loc1,
           location_2: loc2,
           location_3: loc3,
+          brand: brandVal,
+          barcode: barcodeVal,
+          reduced_code: reducedCodeVal,
         }
       }
 
@@ -612,6 +717,16 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
       }
       if (!productsMap[codProd].location_3 && loc3) {
         productsMap[codProd].location_3 = loc3
+      }
+
+      if (!productsMap[codProd].brand && brandVal) {
+        productsMap[codProd].brand = brandVal
+      }
+      if (!productsMap[codProd].barcode && barcodeVal) {
+        productsMap[codProd].barcode = barcodeVal
+      }
+      if (!productsMap[codProd].reduced_code && reducedCodeVal) {
+        productsMap[codProd].reduced_code = reducedCodeVal
       }
 
       if (listaPreco.indexOf('110') !== -1) {
@@ -668,6 +783,9 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
         location_1: p.location_1 || '',
         location_2: p.location_2 || '',
         location_3: p.location_3 || '',
+        brand: p.brand || '',
+        barcode: p.barcode || '',
+        reduced_code: p.reduced_code || '',
       }
     }
 
@@ -697,6 +815,12 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
     'min_stock',
     'external_id',
     'description',
+    'location_1',
+    'location_2',
+    'location_3',
+    'brand',
+    'barcode',
+    'reduced_code',
   ]
 
   const productsCol = $app.findCollectionByNameOrId('products')
@@ -724,6 +848,12 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
       supplier: 'SOU.IS',
       is_purchased: true,
       product_type: 'comprado',
+      location_1: p.location_1 || '',
+      location_2: p.location_2 || '',
+      location_3: p.location_3 || '',
+      brand: p.brand || '',
+      barcode: p.barcode || '',
+      reduced_code: p.reduced_code || '',
     }
 
     let existingRecord = null

@@ -62,6 +62,46 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
       const loc2 = loc2Raw !== null && loc2Raw !== undefined ? String(loc2Raw).trim() : ''
       const loc3 = loc3Raw !== null && loc3Raw !== undefined ? String(loc3Raw).trim() : ''
 
+      const brandRaw =
+        r.MARCA !== undefined
+          ? r.MARCA
+          : r.marca !== undefined
+            ? r.marca
+            : r.brand !== undefined
+              ? r.brand
+              : r.BRAND
+      const brandVal = brandRaw !== null && brandRaw !== undefined ? String(brandRaw).trim() : ''
+
+      const barcodeRaw =
+        r.CODIGOBARRAS !== undefined
+          ? r.CODIGOBARRAS
+          : r.codigobarras !== undefined
+            ? r.codigobarras
+            : r.codigo_barras !== undefined
+              ? r.codigo_barras
+              : r.CODIGO_BARRAS !== undefined
+                ? r.CODIGO_BARRAS
+                : r.barcode !== undefined
+                  ? r.barcode
+                  : r.BARCODE
+      const barcodeVal =
+        barcodeRaw !== null && barcodeRaw !== undefined ? String(barcodeRaw).trim() : ''
+
+      const reducedCodeRaw =
+        r.CODREDUZIDO !== undefined
+          ? r.CODREDUZIDO
+          : r.codreduzido !== undefined
+            ? r.codreduzido
+            : r.cod_reduzido !== undefined
+              ? r.cod_reduzido
+              : r.COD_REDUZIDO !== undefined
+                ? r.COD_REDUZIDO
+                : r.reduced_code !== undefined
+                  ? r.reduced_code
+                  : r.REDUCED_CODE
+      const reducedCodeVal =
+        reducedCodeRaw !== null && reducedCodeRaw !== undefined ? String(reducedCodeRaw).trim() : ''
+
       const saldoRaw =
         r.saldo_prod !== undefined
           ? r.saldo_prod
@@ -106,6 +146,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
           location_1: loc1,
           location_2: loc2,
           location_3: loc3,
+          brand: brandVal,
+          barcode: barcodeVal,
+          reduced_code: reducedCodeVal,
         }
       }
 
@@ -122,6 +165,17 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
       }
       if (!productsMap[codProd].location_3 && loc3) {
         productsMap[codProd].location_3 = loc3
+      }
+
+      // Consolidação de marca, código de barras e código reduzido: primeira não vazia
+      if (!productsMap[codProd].brand && brandVal) {
+        productsMap[codProd].brand = brandVal
+      }
+      if (!productsMap[codProd].barcode && barcodeVal) {
+        productsMap[codProd].barcode = barcodeVal
+      }
+      if (!productsMap[codProd].reduced_code && reducedCodeVal) {
+        productsMap[codProd].reduced_code = reducedCodeVal
       }
 
       if (listaPreco.indexOf('110') !== -1) {
@@ -178,6 +232,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
         location_1: p.location_1 || '',
         location_2: p.location_2 || '',
         location_3: p.location_3 || '',
+        brand: p.brand || '',
+        barcode: p.barcode || '',
+        reduced_code: p.reduced_code || '',
       }
     }
 
@@ -315,6 +372,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
     'location_1',
     'location_2',
     'location_3',
+    'brand',
+    'barcode',
+    'reduced_code',
   ]
 
   const productsCol = $app.findCollectionByNameOrId('products')
@@ -343,6 +403,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
       location_1: p.location_1 || '',
       location_2: p.location_2 || '',
       location_3: p.location_3 || '',
+      brand: p.brand || '',
+      barcode: p.barcode || '',
+      reduced_code: p.reduced_code || '',
     }
 
     try {

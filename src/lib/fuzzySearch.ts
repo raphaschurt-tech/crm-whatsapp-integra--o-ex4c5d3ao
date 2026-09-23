@@ -73,7 +73,7 @@ export function matchesSearchTokens(
 
 /**
  * Helper de matching de produtos para combobox e listagens.
- * Campos pesquisados: nome, sku, descrição, fornecedor.
+ * Campos pesquisados: nome, sku, descrição, fornecedor, marca, código de barras e código reduzido.
  */
 export function matchProductSearch(
   product: {
@@ -81,11 +81,22 @@ export function matchProductSearch(
     sku?: string | null
     description?: string | null
     supplier?: string | null
+    brand?: string | null
+    barcode?: string | null
+    reduced_code?: string | null
   },
   rawQuery: string | null | undefined,
 ): boolean {
   return matchesSearchTokens(
-    [product.name, product.sku, product.description, product.supplier],
+    [
+      product.name,
+      product.sku,
+      product.description,
+      product.supplier,
+      product.brand,
+      product.barcode,
+      product.reduced_code,
+    ],
     rawQuery,
   )
 }

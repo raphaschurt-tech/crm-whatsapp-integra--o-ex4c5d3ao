@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-23T20:29:58.311Z",
+  "generatedAt": "2026-09-23T21:11:31.403Z",
   "collections": [
     {
       "name": "users",
@@ -342,6 +342,24 @@
         },
         {
           "name": "location_3",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "brand",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "barcode",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "reduced_code",
           "type": "text",
           "required": false,
           "system": false

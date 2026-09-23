@@ -62,6 +62,9 @@ export interface Product extends RecordModel {
   location_1?: string
   location_2?: string
   location_3?: string
+  brand?: string
+  barcode?: string
+  reduced_code?: string
 }
 
 export interface ItemFamily extends RecordModel {

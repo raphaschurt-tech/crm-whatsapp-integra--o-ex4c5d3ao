@@ -236,6 +236,11 @@ export function ProductSearchCombobox({
                           <div className="flex items-baseline justify-between gap-3">
                             <span className="font-semibold text-sm text-slate-900 leading-snug whitespace-normal break-words">
                               {p.name}
+                              {p.brand && (
+                                <span className="ml-1.5 text-xs font-normal text-slate-500">
+                                  ({p.brand})
+                                </span>
+                              )}
                             </span>
                             <div className="text-right shrink-0">
                               {isPriceZeroOrNull ? (
@@ -254,6 +259,11 @@ export function ProductSearchCombobox({
                           <div className="flex items-center gap-2 text-xs text-slate-600 flex-wrap pt-0.5">
                             <span className="font-mono text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-[11px] font-medium">
                               SKU: {p.sku}
+                              {p.reduced_code && (
+                                <span className="text-slate-500 font-normal ml-1">
+                                  · Red: {p.reduced_code}
+                                </span>
+                              )}
                             </span>
                             <span className="text-slate-300">•</span>
                             <span className="flex items-center gap-1 text-[11px]">

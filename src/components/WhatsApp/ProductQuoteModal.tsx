@@ -694,12 +694,22 @@ export function ProductQuoteModal({
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-bold text-slate-900 text-sm truncate">
                               {prod.name}
+                              {prod.brand && (
+                                <span className="ml-1.5 text-xs font-normal text-slate-500">
+                                  ({prod.brand})
+                                </span>
+                              )}
                             </span>
                             <Badge
                               variant="outline"
                               className="font-mono text-[10px] px-1.5 py-0 bg-slate-100 text-slate-700 border-slate-200"
                             >
                               SKU: {prod.sku}
+                              {prod.reduced_code && (
+                                <span className="text-slate-500 font-normal ml-1">
+                                  · Red: {prod.reduced_code}
+                                </span>
+                              )}
                             </Badge>
                           </div>
 
@@ -848,9 +858,19 @@ export function ProductQuoteModal({
                         <div className="min-w-0">
                           <p className="font-bold text-slate-900 text-xs truncate">
                             {item.product.name}
+                            {item.product.brand && (
+                              <span className="ml-1 text-[11px] font-normal text-slate-500">
+                                ({item.product.brand})
+                              </span>
+                            )}
                           </p>
                           <p className="text-[10px] text-slate-400 font-mono">
                             SKU: {item.product.sku}
+                            {item.product.reduced_code && (
+                              <span className="text-slate-400 font-normal ml-1">
+                                · Red: {item.product.reduced_code}
+                              </span>
+                            )}
                           </p>
                         </div>
                         <button
