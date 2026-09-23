@@ -36,7 +36,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (pb.authStore.isValid) {
       pb.collection('users')
         .authRefresh()
-        .catch(() => pb.authStore.clear())
+        .catch((error: unknown) => {
+          // Só desloga se o erro for definitivamente de autenticação (400, 401, 403 ou token expirado/inválido)
+          // Em erros transitórios (429 rate limit, 5xx, falha de rede/sem resposta), preserva a sessão local
+          const status =
+            (error as { status?: number })?.status ??
+            (error as { response?: { status?: number } })?.response?.status
+          const isExplicitAuthFailure = status === 400 || status === 401 || status === 403
+
+          if (isExplicitAuthFailure) {
+            pb.authStore.clear()
+          } else {
+            console.warn(
+              '[AuthProvider] authRefresh falhou por erro transitório; mantendo sessão local:',
+              error,
+            )
+          }
+        })
         .finally(() => setLoading(false))
     } else {
       if (pb.authStore.record) pb.authStore.clear()
