@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-21T20:37:14.861Z",
+  "generatedAt": "2026-09-23T14:40:08.736Z",
   "collections": [
     {
       "name": "users",
@@ -325,6 +325,24 @@
         {
           "name": "reserved_quantity",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "location_1",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "location_2",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "location_3",
+          "type": "text",
           "required": false,
           "system": false
         }

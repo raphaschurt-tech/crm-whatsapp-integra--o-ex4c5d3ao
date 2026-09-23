@@ -28,14 +28,12 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
   }
 
   function mapRowsToProducts(rows) {
-    const testKeywords = [
-      'duplicidade',
-      'não usar',
-      'nao usar',
-      'tabela simulação de preço',
-      'simulação de preço',
-      'simulacao de preco',
-      'teste',
+    const testWordRegexes = [
+      /\bduplicidade\b/i,
+      /\bn[ãa]o\s+usar\b/i,
+      /\btabela\s+simula[çc][ãa]o\s+de\s+pre[çc]o\b/i,
+      /\bsimula[çc][ãa]o\s+de\s+pre[çc]o\b/i,
+      /\bteste\b/i,
     ]
 
     const productsMap = {}
@@ -53,6 +51,17 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
       const listaPreco = String(r.lista_preco || r.LISTA_PRECO || r.tabela || '').trim()
       const preco = extractPrice(r)
 
+      const loc1Raw =
+        r.LOCAL_1 !== undefined ? r.LOCAL_1 : r.local_1 !== undefined ? r.local_1 : r.location_1
+      const loc2Raw =
+        r.LOCAL_2 !== undefined ? r.LOCAL_2 : r.local_2 !== undefined ? r.local_2 : r.location_2
+      const loc3Raw =
+        r.LOCAL_3 !== undefined ? r.LOCAL_3 : r.local_3 !== undefined ? r.local_3 : r.location_3
+
+      const loc1 = loc1Raw !== null && loc1Raw !== undefined ? String(loc1Raw).trim() : ''
+      const loc2 = loc2Raw !== null && loc2Raw !== undefined ? String(loc2Raw).trim() : ''
+      const loc3 = loc3Raw !== null && loc3Raw !== undefined ? String(loc3Raw).trim() : ''
+
       const saldoRaw =
         r.saldo_prod !== undefined
           ? r.saldo_prod
@@ -65,14 +74,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
         continue
       }
 
-      const lowerNome = nomeProd.toLowerCase()
-      const lowerLista = listaPreco.toLowerCase()
       let isTest = false
-      for (let k = 0; k < testKeywords.length; k++) {
-        if (
-          lowerNome.indexOf(testKeywords[k]) !== -1 ||
-          lowerLista.indexOf(testKeywords[k]) !== -1
-        ) {
+      for (let k = 0; k < testWordRegexes.length; k++) {
+        if (testWordRegexes[k].test(nomeProd) || testWordRegexes[k].test(listaPreco)) {
           isTest = true
           break
         }
@@ -99,11 +103,25 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
           preco_110: null,
           preco_130: null,
           preco_outra: null,
+          location_1: loc1,
+          location_2: loc2,
+          location_3: loc3,
         }
       }
 
       if (saldo > productsMap[codProd].saldo_prod) {
         productsMap[codProd].saldo_prod = saldo
+      }
+
+      // Consolidação da localização: manter a primeira não vazia
+      if (!productsMap[codProd].location_1 && loc1) {
+        productsMap[codProd].location_1 = loc1
+      }
+      if (!productsMap[codProd].location_2 && loc2) {
+        productsMap[codProd].location_2 = loc2
+      }
+      if (!productsMap[codProd].location_3 && loc3) {
+        productsMap[codProd].location_3 = loc3
       }
 
       if (listaPreco.indexOf('110') !== -1) {
@@ -157,6 +175,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
         price_110: price110,
         price_130: price130,
         cost: basePrice,
+        location_1: p.location_1 || '',
+        location_2: p.location_2 || '',
+        location_3: p.location_3 || '',
       }
     }
 
@@ -291,6 +312,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
     'min_stock',
     'external_id',
     'description',
+    'location_1',
+    'location_2',
+    'location_3',
   ]
 
   const productsCol = $app.findCollectionByNameOrId('products')
@@ -316,6 +340,9 @@ cronAdd('souis-view-sync-scheduled', '0 12,15,18,21 * * 1-5', () => {
       supplier: 'SOU.IS',
       is_purchased: true,
       product_type: 'comprado',
+      location_1: p.location_1 || '',
+      location_2: p.location_2 || '',
+      location_3: p.location_3 || '',
     }
 
     try {

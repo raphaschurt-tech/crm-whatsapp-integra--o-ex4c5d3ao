@@ -59,6 +59,9 @@ export interface Product extends RecordModel {
   price_110?: number
   price_130?: number
   reserved_quantity?: number
+  location_1?: string
+  location_2?: string
+  location_3?: string
 }
 
 export interface ItemFamily extends RecordModel {

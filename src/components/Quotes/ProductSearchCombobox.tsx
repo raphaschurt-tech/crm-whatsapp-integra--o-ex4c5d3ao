@@ -49,9 +49,9 @@ export function ProductSearchCombobox({
 
   const filteredProducts = useMemo(() => {
     const term = searchTerm.trim()
-    if (!term) return products.slice(0, 50)
+    if (!term) return products.slice(0, 60)
 
-    return products.filter((p) => matchProductSearch(p, term)).slice(0, 50)
+    return products.filter((p) => matchProductSearch(p, term)).slice(0, 100)
   }, [products, searchTerm])
 
   useEffect(() => {
@@ -192,6 +192,15 @@ export function ProductSearchCombobox({
                   const isSelected =
                     p.id === value || p.name.trim().toLowerCase() === value.trim().toLowerCase()
                   const isOutOfStock = !p.stock_quantity || p.stock_quantity <= 0
+                  const isPriceZeroOrNull =
+                    p.price === null || p.price === undefined || p.price <= 0
+
+                  // Formata localização física
+                  const locationParts = [p.location_1, p.location_2, p.location_3]
+                    .map((s) => (s || '').trim())
+                    .filter(Boolean)
+                  const locationDisplay = locationParts.join(' · ')
+
                   return (
                     <button
                       key={p.id}
@@ -220,7 +229,7 @@ export function ProductSearchCombobox({
                               {p.name}
                             </span>
                             <div className="text-right shrink-0">
-                              {isOutOfStock ? (
+                              {isPriceZeroOrNull ? (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200/80">
                                   Sob consulta
                                 </span>
@@ -276,6 +285,14 @@ export function ProductSearchCombobox({
                               </>
                             )}
                           </div>
+
+                          {/* Linha Localização Física */}
+                          {locationDisplay && (
+                            <div className="flex items-center gap-1 text-[11px] text-slate-600 font-medium pt-0.5">
+                              <span>📍</span>
+                              <span className="text-slate-700">{locationDisplay}</span>
+                            </div>
+                          )}
 
                           {/* Linha 3: Descrição específica (remover texto genérico SOU.IS) em até 2 linhas */}
                           {p.description &&
