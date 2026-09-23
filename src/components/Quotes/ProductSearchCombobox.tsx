@@ -34,6 +34,7 @@ export function ProductSearchCombobox({
 }: ProductSearchComboboxProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
+  const [visibleCount, setVisibleCount] = useState(60)
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -47,12 +48,20 @@ export function ProductSearchCombobox({
     )
   }, [products, value])
 
-  const filteredProducts = useMemo(() => {
-    const term = searchTerm.trim()
-    if (!term) return products.slice(0, 60)
+  // Resetar paginação ao alterar termo de busca
+  useEffect(() => {
+    setVisibleCount(60)
+  }, [searchTerm])
 
-    return products.filter((p) => matchProductSearch(p, term)).slice(0, 100)
+  const matchingProducts = useMemo(() => {
+    const term = searchTerm.trim()
+    if (!term) return products
+    return products.filter((p) => matchProductSearch(p, term))
   }, [products, searchTerm])
+
+  const filteredProducts = useMemo(() => {
+    return matchingProducts.slice(0, visibleCount)
+  }, [matchingProducts, visibleCount])
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -182,8 +191,8 @@ export function ProductSearchCombobox({
             <div>
               <div className="px-3.5 py-2 bg-slate-50/80 border-b border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
                 <span>
-                  Resultados ({filteredProducts.length}
-                  {products.length > filteredProducts.length ? ` de ${products.length}` : ''})
+                  Resultados ({matchingProducts.length}
+                  {matchingProducts.length !== products.length ? ` de ${products.length}` : ''})
                 </span>
                 <span className="text-[10px] text-slate-400">Selecione com um clique</span>
               </div>
@@ -319,6 +328,23 @@ export function ProductSearchCombobox({
                   )
                 })}
               </div>
+
+              {matchingProducts.length > visibleCount && (
+                <div className="p-2 border-t border-slate-100 bg-slate-50/60 text-center">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setVisibleCount((prev) => prev + 60)
+                    }}
+                    className="text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 h-8 font-medium w-full"
+                  >
+                    Carregar mais ({matchingProducts.length - visibleCount} restantes)
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </div>

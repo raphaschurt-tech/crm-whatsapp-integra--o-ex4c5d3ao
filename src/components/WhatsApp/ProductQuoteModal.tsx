@@ -139,8 +139,8 @@ export function ProductQuoteModal({
 
   // Adicionar produto ao orçamento
   const handleAddProduct = (prod: Product) => {
-    const hasStock = Boolean(prod.stock_quantity && prod.stock_quantity > 0)
-    const initialUnitPrice = hasStock ? prod.price : 0
+    const hasPrice = prod.price !== null && prod.price !== undefined && prod.price > 0
+    const initialUnitPrice = hasPrice ? prod.price : 0
 
     setSelectedItems((prev) => {
       const existing = prev.find((item) => item.product.id === prod.id)
@@ -673,9 +673,17 @@ export function ProductQuoteModal({
                   </div>
                 ) : (
                   filteredProducts.map((prod) => {
-                    const isOutOfStock = prod.stock_quantity <= 0
+                    const isOutOfStock = !prod.stock_quantity || prod.stock_quantity <= 0
                     const isLowStock = !isOutOfStock && prod.stock_quantity <= (prod.min_stock || 2)
+                    const isPriceZeroOrNull =
+                      prod.price === null || prod.price === undefined || prod.price <= 0
                     const isAlreadySelected = selectedItems.some((i) => i.product.id === prod.id)
+
+                    // Formatar localização física
+                    const locationParts = [prod.location_1, prod.location_2, prod.location_3]
+                      .map((s) => (s || '').trim())
+                      .filter(Boolean)
+                    const locationDisplay = locationParts.join(' · ')
 
                     return (
                       <div
@@ -701,9 +709,9 @@ export function ProductQuoteModal({
                             </p>
                           )}
 
-                          <div className="flex items-center gap-3 mt-1 text-xs">
-                            {isOutOfStock ? (
-                              <span className="font-bold text-amber-700 text-xs bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                          <div className="flex items-center gap-3 mt-1 text-xs flex-wrap">
+                            {isPriceZeroOrNull ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200/80">
                                 Sob consulta
                               </span>
                             ) : (
@@ -713,7 +721,7 @@ export function ProductQuoteModal({
                             )}
 
                             <span
-                              className={`text-[11px] font-medium px-1.5 py-0.2 rounded ${
+                              className={`text-[11px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1 ${
                                 isOutOfStock
                                   ? 'bg-rose-100 text-rose-700'
                                   : isLowStock
@@ -721,8 +729,22 @@ export function ProductQuoteModal({
                                     : 'bg-emerald-50 text-emerald-700'
                               }`}
                             >
-                              Estoque: {prod.stock_quantity} un.
+                              Estoque: {prod.stock_quantity || 0} un.
+                              {isOutOfStock && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] py-0 px-1.5 bg-rose-50 text-rose-700 border-rose-200 font-medium ml-0.5"
+                                >
+                                  Sem estoque
+                                </Badge>
+                              )}
                             </span>
+
+                            {locationDisplay && (
+                              <span className="text-[11px] text-slate-600 font-medium flex items-center gap-1">
+                                📍 {locationDisplay}
+                              </span>
+                            )}
 
                             <button
                               type="button"
@@ -881,27 +903,17 @@ export function ProductQuoteModal({
                         <div className="col-span-4">
                           <div className="flex items-center justify-between">
                             <Label className="text-[10px] text-slate-500">Unitário (R$)</Label>
-                            {(!item.product.stock_quantity || item.product.stock_quantity <= 0) &&
-                              item.unitPrice === 0 && (
-                                <span className="text-[9px] text-amber-700 font-bold bg-amber-50 px-1 rounded">
-                                  Sob consulta
-                                </span>
-                              )}
+                            {item.unitPrice === 0 && (
+                              <span className="text-[9px] text-amber-700 font-bold bg-amber-50 px-1 rounded border border-amber-200/80">
+                                Sob consulta
+                              </span>
+                            )}
                           </div>
                           <Input
                             type="number"
                             step="0.01"
-                            placeholder={
-                              !item.product.stock_quantity || item.product.stock_quantity <= 0
-                                ? 'Sob consulta'
-                                : '0.00'
-                            }
-                            value={
-                              item.unitPrice === 0 &&
-                              (!item.product.stock_quantity || item.product.stock_quantity <= 0)
-                                ? ''
-                                : item.unitPrice
-                            }
+                            placeholder="0,00"
+                            value={item.unitPrice === 0 ? '' : item.unitPrice}
                             onChange={(e) =>
                               handleUpdatePrice(item.product.id, parseFloat(e.target.value) || 0)
                             }
