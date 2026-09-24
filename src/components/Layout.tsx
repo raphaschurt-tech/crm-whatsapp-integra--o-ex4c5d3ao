@@ -34,7 +34,7 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
 
-  const hasWhatsAppTab = tabs.some((t) => t.routeKey === 'whatsapp')
+  const hasWhatsAppTab = tabs.some((t) => t.routeKey === 'whatsapp' || t.routeKey === '/whatsapp')
   const isAtendimentoRoute =
     location.pathname.startsWith('/whatsapp') || location.pathname.startsWith('/atendimento')
 

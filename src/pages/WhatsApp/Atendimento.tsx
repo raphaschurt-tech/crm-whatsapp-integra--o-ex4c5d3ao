@@ -77,7 +77,7 @@ export default function WhatsAppAtendimento() {
           saved &&
           ['todos', 'novo', 'nao_lidos', 'em_atendimento', 'antigos', 'inativos'].includes(saved)
         ) {
-          return saved as any
+          return saved as 'todos' | 'novo' | 'nao_lidos' | 'em_atendimento' | 'antigos' | 'inativos'
         }
       }
     } catch {
@@ -500,18 +500,18 @@ export default function WhatsAppAtendimento() {
 
   const timelineItems: ChatTimelineItem[] = activeCustomer
     ? [
-        ...activeCustomer.messages.map(
+        ...(activeCustomer.messages || []).map(
           (m): ChatTimelineItem => ({
             kind: 'message',
             data: m,
-            timestamp: m.timestamp,
+            timestamp: m?.timestamp || 0,
           }),
         ),
         ...(activeCustomer.quotes || []).map(
           (q): ChatTimelineItem => ({
             kind: 'quote',
             data: q,
-            timestamp: new Date(q.created).getTime(),
+            timestamp: q?.created ? new Date(q.created).getTime() : 0,
           }),
         ),
       ].sort((a, b) => a.timestamp - b.timestamp)
@@ -520,7 +520,7 @@ export default function WhatsAppAtendimento() {
   // Persistir leitura sempre que uma conversa for selecionada / aberta
   useEffect(() => {
     if (!activeCustomer) return
-    const msgs = activeCustomer.messages
+    const msgs = activeCustomer.messages || []
     if (msgs.length === 0) return
 
     const lastMsg = msgs[msgs.length - 1]
@@ -640,9 +640,9 @@ export default function WhatsAppAtendimento() {
       } else if (statusFilter === 'em_atendimento') {
         if (c.status !== 'em_atendimento') return false
       } else if (statusFilter === 'antigos') {
+        const msgs = c.messages || []
         const lastMsgTime =
-          c.lastTimestamp ||
-          (c.messages.length > 0 ? c.messages[c.messages.length - 1].timestamp : 0)
+          c.lastTimestamp || (msgs.length > 0 ? msgs[msgs.length - 1]?.timestamp || 0 : 0)
         const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000
         if (!lastMsgTime || lastMsgTime > sevenDaysAgo) return false
       } else if (statusFilter === 'inativos') {
@@ -655,8 +655,8 @@ export default function WhatsAppAtendimento() {
       // Busca por texto
       if (
         search &&
-        !c.name.toLowerCase().includes(search.toLowerCase()) &&
-        !c.phone.includes(search) &&
+        !(c.name || '').toLowerCase().includes(search.toLowerCase()) &&
+        !(c.phone || '').includes(search) &&
         !(c.company || '').toLowerCase().includes(search.toLowerCase())
       ) {
         return false
@@ -665,15 +665,17 @@ export default function WhatsAppAtendimento() {
     })
     .sort((a, b) => {
       const getArrivalTimestamp = (conv: WhatsAppCustomer): number => {
-        if (conv.messages.length > 0) {
-          return conv.messages[0].timestamp
+        const msgs = conv.messages || []
+        if (msgs.length > 0 && msgs[0]) {
+          return msgs[0].timestamp || 0
         }
         return conv.lastTimestamp || 0
       }
 
       const getLastTimestamp = (conv: WhatsAppCustomer): number => {
-        if (conv.messages.length > 0) {
-          return conv.messages[conv.messages.length - 1].timestamp
+        const msgs = conv.messages || []
+        if (msgs.length > 0 && msgs[msgs.length - 1]) {
+          return msgs[msgs.length - 1].timestamp || 0
         }
         return conv.lastTimestamp || 0
       }
@@ -825,7 +827,7 @@ export default function WhatsAppAtendimento() {
           return {
             ...c,
             lastActivity: timeStr,
-            messages: [...c.messages, optimisticMsg],
+            messages: [...(c.messages || []), optimisticMsg],
           }
         }
         return c
@@ -914,7 +916,7 @@ export default function WhatsAppAtendimento() {
           return {
             ...c,
             lastActivity: timeStr,
-            messages: [...c.messages, newMsg],
+            messages: [...(c.messages || []), newMsg],
           }
         }
         return c
@@ -1220,15 +1222,17 @@ export default function WhatsAppAtendimento() {
             ) : (
               filteredCustomers.map((customer) => {
                 const isSelected = customer.id === activeCustomer?.id
-                const lastMsg = customer.messages[customer.messages.length - 1]
+                const custMsgs = customer.messages || []
+                const lastMsg = custMsgs.length > 0 ? custMsgs[custMsgs.length - 1] : undefined
 
                 return (
                   <div
                     key={customer.id}
                     onClick={() => {
                       setSelectedCustomerId(customer.id)
-                      const lastMsg = customer.messages[customer.messages.length - 1]
-                      if (lastMsg) {
+                      const cMsgs = customer.messages || []
+                      const clickedLastMsg = cMsgs.length > 0 ? cMsgs[cMsgs.length - 1] : undefined
+                      if (clickedLastMsg) {
                         const targetPhone = customer.rawPhone || customer.phone
                         setCustomers((prev) =>
                           prev.map((c) =>
@@ -1236,13 +1240,13 @@ export default function WhatsAppAtendimento() {
                               ? {
                                   ...c,
                                   unreadCount: 0,
-                                  lastReadAt: lastMsg.timestamp,
+                                  lastReadAt: clickedLastMsg.timestamp,
                                   status: 'em_atendimento',
                                 }
                               : c,
                           ),
                         )
-                        markWhatsAppAsRead(targetPhone, lastMsg.timestamp)
+                        markWhatsAppAsRead(targetPhone, clickedLastMsg.timestamp)
                       }
                     }}
                     className={`p-3.5 flex items-start gap-3 cursor-pointer transition-colors border-l-4 ${

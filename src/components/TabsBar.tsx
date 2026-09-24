@@ -126,7 +126,7 @@ export function TabsBar() {
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId
             const Icon = getTabIcon(tab)
-            const isWhatsApp = tab.routeKey === 'whatsapp'
+            const isWhatsApp = tab.routeKey === 'whatsapp' || tab.routeKey === '/whatsapp'
 
             return (
               <div

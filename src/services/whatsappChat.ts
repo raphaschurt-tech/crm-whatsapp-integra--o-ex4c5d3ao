@@ -326,7 +326,7 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
     // Um cliente pode ter telefone formatado "(11) 96397-0333" ou "11963970333" ou "5511963970333"
     const customerMap = new Map<string, Customer>()
     for (const c of customersList) {
-      const clean = c.phone.replace(/\D/g, '')
+      const clean = (c.phone || '').replace(/\D/g, '')
       if (clean) {
         customerMap.set(clean, c)
         // Mapear também sem o prefixo 55 ou com prefixo 55

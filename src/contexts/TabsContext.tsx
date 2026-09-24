@@ -96,7 +96,9 @@ export function getRouteKey(pathname: string): {
     return { routeKey: 'dashboard', isEntity: false, isForm: false }
   }
 
-  return { routeKey: clean, isEntity: false, isForm: false }
+  // Normalizar rota estática removendo barra inicial (chave canônica sem '/', ex: 'whatsapp')
+  const canonicalKey = clean.replace(/^\//, '')
+  return { routeKey: canonicalKey, isEntity: false, isForm: false }
 }
 
 export function getDefaultTab(): TabItem {
@@ -242,7 +244,9 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
         // Não duplica nem abre além do limite; se já tem uma aba ativa, mantemos
         // Mas se a navegação direta ocorreu, substituímos a aba ativa atual se não for formulário ou WhatsApp
         const activeIdx = prevTabs.findIndex((t) => t.id === activeTabId)
-        if (activeIdx !== -1 && prevTabs[activeIdx].routeKey !== 'whatsapp') {
+        const activeRouteKey = prevTabs[activeIdx]?.routeKey
+        const isActiveWhatsApp = activeRouteKey === 'whatsapp' || activeRouteKey === '/whatsapp'
+        if (activeIdx !== -1 && !isActiveWhatsApp) {
           const updated = [...prevTabs]
           const tabId = `${routeKey}_${Date.now()}`
           updated[activeIdx] = {
