@@ -1,6 +1,14 @@
 // Rotina programada de sincronização de contatos do WhatsApp (Z-API) no CRM
-// Executa automaticamente a cada 1 hora: cronAdd('whatsapp-contacts-hourly-sync', '0 * * * *', ...)
-// Regra: cria apenas contatos novos — sem spam de atualizações, sem atualizar existentes
+// ATENÇÃO: TODOS os agendamentos cronAdd do PocketBase são interpretados estritamente em UTC.
+//
+// Frequência: de hora em hora (no minuto 0 de cada hora).
+// Análise de fuso horário:
+//   - A expressão '0 * * * *' dispara a cada hora cheia, todos os dias (24 vezes ao dia).
+//   - Sendo uma frequência periódica a cada 60 minutos, ela é idêntica tanto em UTC quanto no Horário de Brasília (UTC-3).
+//   - Dispara às 00:00, 01:00, 02:00, ..., 23:00 UTC (correspondendo a 21:00, 22:00, 23:00, ..., 20:00 BRT).
+//   - Portanto, nenhuma alteração na expressão cron é necessária.
+//
+// Regra de negócio: cria apenas contatos novos — sem spam de atualizações, sem atualizar existentes
 
 cronAdd('whatsapp-contacts-hourly-sync', '0 * * * *', () => {
   console.log('[SYNC-CONTACTS-CRON-START]', new Date().toISOString())

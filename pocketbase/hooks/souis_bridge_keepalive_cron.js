@@ -1,9 +1,15 @@
 // Job agendado de keep-alive da ponte SOU.IS (Render Free)
-// Frequência: a cada 14 minutos, de segunda a sexta-feira, das 09:00 às 18:00 (America/Sao_Paulo).
-// Conversão de fuso para o scheduler PocketBase (UTC):
-// Janela SP: 09:00 - 18:00 (UTC-3) -> Janela UTC: 12:00 - 21:00 (12, 13, 14, 15, 16, 17, 18, 19, 20, 21)
-// Segunda a sexta: 1-5
-// Expressão cron UTC: */14 12-21 * * 1-5
+// ATENÇÃO: TODOS os agendamentos cronAdd do PocketBase são interpretados estritamente em UTC.
+//
+// Frequência desejada: a cada 14 minutos, de segunda a sexta-feira, das 09:00 às 18:00 de Brasília (UTC-3).
+// Conversão detalhada de fuso horário para UTC:
+//   - Horário comercial de Brasília: 09:00 às 18:00 (UTC-3)
+//   - Horário correspondente em UTC: 12:00 às 21:00 (UTC = Brasília + 3h)
+//   - Intervalo de horas UTC: 12-21 (ou seja, 12:00, 13:00, ..., 21:00 UTC)
+//   - Dias da semana: Segunda a Sexta (1-5 tanto em Brasília quanto em UTC nessa faixa diurna)
+// Expressão cron UTC: '*/14 12-21 * * 1-5'
+// Confirmação: A expressão atual '*/14 12-21 * * 1-5' já é 100% equivalente a 09:00 às 18:00 no horário de Brasília (UTC-3).
+//
 // Endpoint chamado: GET {SOIS_BRIDGE_URL}/health (público, sem token)
 
 cronAdd('souis-bridge-keepalive', '*/14 12-21 * * 1-5', () => {
