@@ -72,6 +72,26 @@ export default function WhatsAppAtendimento() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [hasUnreadBelow, setHasUnreadBelow] = useState(false)
 
+  // Divisor arrastável (redimensionamento da lista de conversas)
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem('rpa_whatsapp_sidebar_width')
+        if (saved) {
+          const parsed = Number(saved)
+          if (!isNaN(parsed) && parsed >= 240 && parsed <= 1200) {
+            return parsed
+          }
+        }
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return 400
+  })
+  const [isResizing, setIsResizing] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
   // Estados dos novos recursos de Orçamentos e Histórico
   const [isProductModalOpen, setIsProductModalOpen] = useState(false)
   const [showHistoryPanel, setShowHistoryPanel] = useState(true)
@@ -347,6 +367,49 @@ export default function WhatsAppAtendimento() {
       setIsRefreshing(false)
     }
   }, [])
+
+  // Controle de arrasto (drag-to-resize) do divisor horizontal
+  useEffect(() => {
+    if (!isResizing) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return
+      const containerRect = containerRef.current.getBoundingClientRect()
+      const newWidth = e.clientX - containerRect.left
+      const minWidth = 240
+      const maxWidth = Math.max(minWidth, Math.floor(containerRect.width * 0.5))
+
+      const clamped = Math.min(Math.max(newWidth, minWidth), maxWidth)
+      setSidebarWidth(clamped)
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+    }
+  }, [isResizing])
+
+  // Persistir largura no localStorage quando ela mudar
+  useEffect(() => {
+    try {
+      localStorage.setItem('rpa_whatsapp_sidebar_width', String(Math.round(sidebarWidth)))
+    } catch (e) {
+      /* ignore */
+    }
+  }, [sidebarWidth])
 
   // Checagem de status de conexão do WhatsApp (Z-API)
   const checkConnectionStatus = useCallback(async (): Promise<boolean> => {
@@ -943,9 +1006,19 @@ export default function WhatsAppAtendimento() {
       </div>
 
       {/* Container principal no estilo WhatsApp Web */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col md:flex-row h-[calc(100vh-210px)] min-h-[580px]">
+      <div
+        ref={containerRef}
+        className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col md:flex-row h-[calc(100vh-210px)] min-h-[580px]"
+      >
         {/* LADO ESQUERDO: Lista de conversas */}
-        <div className="w-full md:w-[380px] lg:w-[420px] border-r border-slate-200 flex flex-col bg-slate-50/50">
+        <div
+          style={
+            {
+              '--sidebar-width': `${sidebarWidth}px`,
+            } as React.CSSProperties
+          }
+          className="w-full md:w-[var(--sidebar-width)] border-r border-slate-200 flex flex-col bg-slate-50/50 shrink-0 md:border-r-0"
+        >
           {/* Barra de busca e filtros */}
           <div className="p-3 bg-white border-b border-slate-200 space-y-2.5">
             <div className="relative">
@@ -1186,6 +1259,31 @@ export default function WhatsAppAtendimento() {
               })
             )}
           </div>
+        </div>
+
+        {/* Divisor arrastável (apenas md+) */}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Redimensionar lista de conversas"
+          tabIndex={0}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            setIsResizing(true)
+          }}
+          className={`hidden md:flex w-2 shrink-0 relative cursor-col-resize select-none items-center justify-center transition-colors border-l border-r border-slate-200 hover:border-emerald-400 group z-20 ${
+            isResizing
+              ? 'bg-emerald-500/15 border-emerald-500 shadow-inner'
+              : 'bg-slate-50 hover:bg-emerald-50/60'
+          }`}
+          title="Clique e arraste para ajustar a largura da lista de conversas"
+        >
+          {/* Linha vertical central e pequenas ranhuras de pegada/grip */}
+          <div
+            className={`w-[2px] h-8 rounded-full transition-colors ${
+              isResizing ? 'bg-emerald-600' : 'bg-slate-300 group-hover:bg-emerald-500'
+            }`}
+          />
         </div>
 
         {/* LADO DIREITO: Área do Chat WhatsApp */}
