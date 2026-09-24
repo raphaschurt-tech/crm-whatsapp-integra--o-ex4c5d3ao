@@ -161,6 +161,13 @@ export default function ProductList() {
     return <Badge className="bg-emerald-500 text-white">OK ({quantity})</Badge>
   }
 
+  const formatProductLocation = (p: Product) => {
+    return [p.location_1, p.location_2, p.location_3]
+      .map((s) => (s || '').trim())
+      .filter(Boolean)
+      .join(' · ')
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -288,14 +295,38 @@ export default function ProductList() {
                         <button
                           type="button"
                           onClick={() => navigate(`/produtos/${p.id}`)}
-                          className="text-left group cursor-pointer"
+                          className="text-left group cursor-pointer block max-w-md"
                         >
-                          <p className="font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">
+                          <p className="font-bold text-slate-900 group-hover:text-emerald-700 transition-colors leading-snug">
                             {p.name}
+                            {p.brand && (
+                              <span className="ml-1.5 text-xs font-normal text-slate-500">
+                                ({p.brand})
+                              </span>
+                            )}
                           </p>
-                          <p className="text-xs text-slate-400 font-mono">SKU: {p.sku}</p>
+
+                          <div className="flex items-center gap-1.5 flex-wrap text-xs text-slate-500 font-mono mt-0.5">
+                            <span className="text-slate-400">SKU: {p.sku}</span>
+                            {p.reduced_code && (
+                              <span className="text-slate-500 font-normal">
+                                · Red: {p.reduced_code}
+                              </span>
+                            )}
+                            {p.barcode && (
+                              <span className="text-slate-500 font-normal">· EAN: {p.barcode}</span>
+                            )}
+                          </div>
+
+                          {formatProductLocation(p) && (
+                            <div className="flex items-center gap-1 text-[11px] text-slate-600 font-medium mt-0.5">
+                              <span>📍</span>
+                              <span className="text-slate-700">{formatProductLocation(p)}</span>
+                            </div>
+                          )}
+
                           {p.supplier && (
-                            <p className="text-[11px] text-slate-500 truncate max-w-xs">
+                            <p className="text-[11px] text-slate-400 truncate mt-0.5">
                               {p.supplier}
                             </p>
                           )}

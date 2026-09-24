@@ -12,6 +12,10 @@ import {
   ShoppingCart,
   Factory,
   Boxes,
+  Barcode,
+  MapPin,
+  Tag,
+  Hash,
 } from 'lucide-react'
 import { getProduct, deleteProduct } from '@/services/products'
 import { lookupStock } from '@/services/stock'
@@ -109,6 +113,11 @@ export default function ProductDetail() {
       : product.product_type === 'produzido'
   const isComp = Boolean(product.is_component)
 
+  const locationParts = [product.location_1, product.location_2, product.location_3]
+    .map((s) => (s || '').trim())
+    .filter(Boolean)
+  const locationDisplay = locationParts.join(' · ')
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -119,6 +128,11 @@ export default function ProductDetail() {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold text-slate-900">{product.name}</h1>
+              {product.brand && (
+                <Badge variant="outline" className="text-xs font-normal text-slate-600 bg-slate-50">
+                  {product.brand}
+                </Badge>
+              )}
               {isLowStock ? (
                 <Badge variant="destructive" className="flex items-center gap-1">
                   <AlertTriangle className="h-3 w-3" /> Estoque Baixo
@@ -129,7 +143,7 @@ export default function ProductDetail() {
             </div>
             <div className="flex items-center gap-2 flex-wrap mt-1">
               <p className="text-xs text-slate-400 font-mono">
-                SKU: {product.sku}{' '}
+                SKU: {product.sku} {product.reduced_code ? `• Red: ${product.reduced_code} ` : ''}
                 {product.supplier ? `• Fornecedor/Origem: ${product.supplier}` : ''}
               </p>
               <div className="flex items-center gap-1.5">
@@ -258,29 +272,69 @@ export default function ProductDetail() {
         </Card>
       </div>
 
-      <Card className="border-slate-200">
-        <CardHeader>
-          <CardTitle className="text-base font-bold">Informações Detalhadas</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <h4 className="text-xs font-semibold text-slate-400 uppercase">Descrição</h4>
-            <p className="text-sm text-slate-700 mt-1 whitespace-pre-line">
-              {product.description || 'Nenhuma descrição detalhada informada.'}
-            </p>
-          </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle className="text-base font-bold">Identificação e Códigos</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-xs">
+            <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+              <span className="text-slate-500 flex items-center gap-1.5">
+                <Tag className="h-3.5 w-3.5 text-slate-400" /> Marca do Fabricante
+              </span>
+              <span className="font-semibold text-slate-900">{product.brand || '—'}</span>
+            </div>
+            <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+              <span className="text-slate-500 flex items-center gap-1.5">
+                <Hash className="h-3.5 w-3.5 text-slate-400" /> Código Reduzido
+              </span>
+              <span className="font-mono font-semibold text-slate-900">
+                {product.reduced_code || '—'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+              <span className="text-slate-500 flex items-center gap-1.5">
+                <Barcode className="h-3.5 w-3.5 text-slate-400" /> Código de Barras (EAN)
+              </span>
+              <span className="font-mono font-semibold text-slate-900">
+                {product.barcode || '—'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between py-1.5">
+              <span className="text-slate-500 flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 text-slate-400" /> Localização Física
+              </span>
+              <span className="font-medium text-slate-900">
+                {locationDisplay ? `📍 ${locationDisplay}` : '—'}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
 
-          <div className="pt-4 border-t flex items-center justify-between">
-            <span className="text-xs text-slate-400">ID no Sistema: {product.id}</span>
-            <Link
-              to="/orcamentos/novo"
-              className="text-xs text-emerald-600 font-semibold hover:underline"
-            >
-              Criar Orçamento com este Produto &rarr;
-            </Link>
-          </div>
-        </CardContent>
-      </Card>
+        <Card className="border-slate-200">
+          <CardHeader>
+            <CardTitle className="text-base font-bold">Informações Detalhadas</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <h4 className="text-xs font-semibold text-slate-400 uppercase">Descrição</h4>
+              <p className="text-sm text-slate-700 mt-1 whitespace-pre-line">
+                {product.description || 'Nenhuma descrição detalhada informada.'}
+              </p>
+            </div>
+
+            <div className="pt-4 border-t flex items-center justify-between">
+              <span className="text-xs text-slate-400">ID no Sistema: {product.id}</span>
+              <Link
+                to="/orcamentos/novo"
+                className="text-xs text-emerald-600 font-semibold hover:underline"
+              >
+                Criar Orçamento com este Produto &rarr;
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

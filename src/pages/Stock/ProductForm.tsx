@@ -35,6 +35,12 @@ export default function ProductForm() {
   const [minStock, setMinStock] = useState<number>(5)
   const [description, setDescription] = useState('')
   const [supplier, setSupplier] = useState('')
+  const [brand, setBrand] = useState('')
+  const [barcode, setBarcode] = useState('')
+  const [reducedCode, setReducedCode] = useState('')
+  const [location1, setLocation1] = useState('')
+  const [location2, setLocation2] = useState('')
+  const [location3, setLocation3] = useState('')
   const [loading, setLoading] = useState(false)
 
   // Três flags independentes de comportamento do produto
@@ -76,6 +82,12 @@ export default function ProductForm() {
           setMinStock(p.min_stock || 0)
           setDescription(p.description || '')
           setSupplier(p.supplier || '')
+          setBrand(p.brand || '')
+          setBarcode(p.barcode || '')
+          setReducedCode(p.reduced_code || '')
+          setLocation1(p.location_1 || '')
+          setLocation2(p.location_2 || '')
+          setLocation3(p.location_3 || '')
 
           // Inicializar flags booleanas (compatibilidade com registros antigos)
           const prodFlag =
@@ -211,6 +223,12 @@ export default function ProductForm() {
         min_stock: minStock,
         description,
         supplier,
+        brand,
+        barcode,
+        reduced_code: reducedCode,
+        location_1: location1,
+        location_2: location2,
+        location_3: location3,
         is_purchased: isPurchased,
         is_produced: isProduced,
         is_component: isComponent,
@@ -458,6 +476,76 @@ export default function ProductForm() {
               rows={3}
               placeholder="Especificações técnicas, aplicação automotiva..."
             />
+          </div>
+        </div>
+
+        {/* Informações de Fabricante, Códigos e Localização (SOU.IS / Estoque) */}
+        <div className="bg-white p-6 rounded-xl border border-slate-200 space-y-4">
+          <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide border-b pb-2">
+            Códigos, Fabricante e Localização Física
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <Label>Marca do Fabricante</Label>
+              <Input
+                value={brand}
+                onChange={(e) => setBrand(e.target.value)}
+                placeholder="Ex: JAHU, COFAP, NAKATA, RPA..."
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Código Reduzido</Label>
+              <Input
+                value={reducedCode}
+                onChange={(e) => setReducedCode(e.target.value)}
+                placeholder="Ex: 3148"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Código de Barras (EAN)</Label>
+              <Input
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value)}
+                placeholder="Ex: 7893732134999"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2 pt-2">
+            <Label className="text-xs font-semibold text-slate-700">
+              Localização Física no Estoque (Ex: Corredor / Prateleira / Gaveta)
+            </Label>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-500 font-normal">Local 1 (Corredor/Rua)</Label>
+                <Input
+                  value={location1}
+                  onChange={(e) => setLocation1(e.target.value)}
+                  placeholder="Ex: 6"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-500 font-normal">
+                  Local 2 (Prateleira/Coluna)
+                </Label>
+                <Input
+                  value={location2}
+                  onChange={(e) => setLocation2(e.target.value)}
+                  placeholder="Ex: B"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-slate-500 font-normal">Local 3 (Nível/Gaveta)</Label>
+                <Input
+                  value={location3}
+                  onChange={(e) => setLocation3(e.target.value)}
+                  placeholder="Ex: 02"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
