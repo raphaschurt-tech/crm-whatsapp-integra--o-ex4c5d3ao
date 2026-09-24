@@ -60,11 +60,13 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from '@/hooks/use-toast'
 
+import { useTabs } from '@/contexts/TabsContext'
+
 export default function QuoteDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { user: currentUser } = useAuth()
-
+  const { activeTab, updateTabTitle } = useTabs()
   const [quote, setQuote] = useState<Quote | null>(null)
   const [items, setItems] = useState<QuoteItem[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
@@ -114,6 +116,9 @@ export default function QuoteDetail() {
       setAmount(q.total.toString())
       setLinkedPurchases(purchases)
       setExistingOrder(ord)
+      if (activeTab && activeTab.id) {
+        updateTabTitle(activeTab.id, q.number || `ORC-${q.id.slice(0, 5)}`)
+      }
       setSystemUsers(uList || [])
       if (currentUser && !responsibleUserId) {
         setResponsibleUserId(currentUser.id)

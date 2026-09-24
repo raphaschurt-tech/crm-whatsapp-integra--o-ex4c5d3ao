@@ -26,9 +26,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { toast } from '@/hooks/use-toast'
 
+import { useTabs } from '@/contexts/TabsContext'
+
 export default function ProductDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { activeTab, updateTabTitle } = useTabs()
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -41,6 +44,9 @@ export default function ProductDetail() {
     try {
       const p = await getProduct(id)
       setProduct(p)
+      if (activeTab && activeTab.id) {
+        updateTabTitle(activeTab.id, `Estoque — ${p.name || 'Detalhes'}`)
+      }
     } catch (e: any) {
       console.error(e)
       setLoadError(e?.message || 'Falha ao carregar produto.')

@@ -29,14 +29,21 @@ import { Input } from '@/components/ui/input'
 import { toast } from '@/hooks/use-toast'
 import { LeadSourceBadge } from '@/components/LeadSourceBadge'
 
+import { useTabs } from '@/contexts/TabsContext'
+
 export default function CustomerList() {
   const navigate = useNavigate()
-  const { isAdmin } = useAuth()
+  const { user, isAdmin } = useAuth()
+  const { activeTab, updateTabState, updateTabTitle } = useTabs()
   const [customers, setCustomers] = useState<Customer[]>([])
-  const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
+
+  // Restaura filtros salvos na aba
+  const [search, setSearch] = useState<string>(() => (activeTab?.state?.search as string) || '')
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>(
+    () => (activeTab?.state?.typeFilter as any) || 'ALL',
+  )
   const [entityFilter, setEntityFilter] = useState<'ALL' | 'cliente' | 'fornecedor' | 'ambos'>(
-    'ALL',
+    () => (activeTab?.state?.entityFilter as any) || 'ALL',
   )
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -75,6 +82,23 @@ export default function CustomerList() {
   useEffect(() => {
     loadData()
   }, [])
+
+  // Sincroniza filtros com a aba ativa e define título contextual
+  useEffect(() => {
+    if (!activeTab || activeTab.routeKey !== '/clientes') return
+    updateTabState(activeTab.id, {
+      search,
+      typeFilter,
+      entityFilter,
+    })
+
+    const trimmed = search.trim()
+    if (trimmed) {
+      updateTabTitle(activeTab.id, `Clientes — ${trimmed}`)
+    } else {
+      updateTabTitle(activeTab.id, 'Clientes')
+    }
+  }, [search, typeFilter, entityFilter, activeTab?.id])
 
   useRealtime('customers', () => {
     loadData()

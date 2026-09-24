@@ -10,9 +10,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { LeadSourceBadge } from '@/components/LeadSourceBadge'
 
+import { useTabs } from '@/contexts/TabsContext'
+
 export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { activeTab, updateTabTitle } = useTabs()
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [loading, setLoading] = useState(true)
@@ -28,6 +31,9 @@ export default function CustomerDetail() {
       setCustomer(c)
       const qList = await getQuotes()
       setQuotes(qList.filter((q) => q.customer === id))
+      if (activeTab && activeTab.id) {
+        updateTabTitle(activeTab.id, `Clientes — ${c.name || 'Detalhes'}`)
+      }
     } catch (e: any) {
       console.error(e)
       setLoadError(e?.message || 'Falha ao carregar detalhes do cliente.')

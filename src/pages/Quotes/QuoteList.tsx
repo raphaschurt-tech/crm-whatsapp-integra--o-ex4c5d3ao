@@ -37,12 +37,19 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 
+import { useTabs } from '@/contexts/TabsContext'
+
 export default function QuoteList() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const { activeTab, updateTabState, updateTabTitle } = useTabs()
   const [quotes, setQuotes] = useState<Quote[]>([])
-  const [search, setSearch] = useState(searchParams.get('search') || '')
-  const [statusFilter, setStatusFilter] = useState<string>('todos')
+  const [search, setSearch] = useState(
+    () => (activeTab?.state?.search as string) || searchParams.get('search') || '',
+  )
+  const [statusFilter, setStatusFilter] = useState<string>(
+    () => (activeTab?.state?.statusFilter as string) || 'todos',
+  )
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -69,6 +76,22 @@ export default function QuoteList() {
   useEffect(() => {
     loadData()
   }, [])
+
+  // Sincroniza estado da aba e título
+  useEffect(() => {
+    if (!activeTab || activeTab.routeKey !== '/orcamentos') return
+    updateTabState(activeTab.id, {
+      search,
+      statusFilter,
+    })
+
+    const trimmed = search.trim()
+    if (trimmed) {
+      updateTabTitle(activeTab.id, `Orçamentos — ${trimmed}`)
+    } else {
+      updateTabTitle(activeTab.id, 'Orçamentos')
+    }
+  }, [search, statusFilter, activeTab?.id])
 
   useRealtime('quotes', () => {
     loadData()

@@ -19,16 +19,24 @@ import {
 } from 'lucide-react'
 import logoImg from '@/assets/logo-rpa-auto-parts-01-definitivo-correto-1d75c.png'
 import { useAuth } from '@/hooks/use-auth'
+import { useTabs } from '@/contexts/TabsContext'
+import { TabsBar } from '@/components/TabsBar'
+import Atendimento from '@/pages/WhatsApp/Atendimento'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 export default function Layout() {
   const { user, isAdmin, signOut } = useAuth()
+  const { tabs, openTab } = useTabs()
   const location = useLocation()
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
+
+  const hasWhatsAppTab = tabs.some((t) => t.routeKey === 'whatsapp')
+  const isAtendimentoRoute =
+    location.pathname.startsWith('/whatsapp') || location.pathname.startsWith('/atendimento')
 
   const navItems = [
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -48,7 +56,7 @@ export default function Layout() {
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!searchTerm.trim()) return
-    navigate(`/orcamentos?search=${encodeURIComponent(searchTerm)}`)
+    openTab(`/orcamentos?search=${encodeURIComponent(searchTerm)}`, { title: 'Orçamentos' })
   }
 
   const handleSignOut = () => {
@@ -88,13 +96,17 @@ export default function Layout() {
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       <aside className="hidden md:flex w-[200px] flex-col bg-white border-r border-slate-200 fixed inset-y-0 z-30">
         <div className="p-3.5 flex flex-col items-center justify-center border-b border-slate-100 bg-white">
-          <Link to="/" className="flex flex-col items-center justify-center w-full group py-1">
+          <button
+            type="button"
+            onClick={() => openTab('/dashboard', { title: 'Dashboard', iconName: 'dashboard' })}
+            className="flex flex-col items-center justify-center w-full group py-1 cursor-pointer"
+          >
             <img
               src="/visual-edits/logo-preto-rpa-dfa45fe5.png"
               alt="RPA Auto Parts"
               className="w-full h-auto max-h-20 object-contain transition-transform group-hover:scale-[1.02]"
             />
-          </Link>
+          </button>
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -104,11 +116,17 @@ export default function Layout() {
               location.pathname === item.path ||
               (item.path !== '/' && location.pathname.startsWith(item.path))
             return (
-              <Link
+              <button
                 key={item.path}
-                to={item.path}
+                type="button"
+                onClick={() =>
+                  openTab(item.path, {
+                    title: item.label,
+                    iconName: item.path.replace('/', '') || 'dashboard',
+                  })
+                }
                 className={cn(
-                  'flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors relative',
+                  'w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors relative',
                   active
                     ? 'bg-emerald-50 text-emerald-700 font-semibold'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
@@ -121,7 +139,7 @@ export default function Layout() {
                   className={cn('h-4 w-4 shrink-0', active ? 'text-emerald-600' : 'text-slate-400')}
                 />
                 <span className="truncate">{item.label}</span>
-              </Link>
+              </button>
             )
           })}
         </nav>
@@ -162,13 +180,20 @@ export default function Layout() {
           />
           <div className="relative w-4/5 max-w-xs bg-white h-full flex flex-col z-10 shadow-2xl">
             <div className="p-4 flex items-center justify-between border-b bg-white">
-              <Link to="/" onClick={() => setMobileOpen(false)} className="flex items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileOpen(false)
+                  openTab('/dashboard', { title: 'Dashboard', iconName: 'dashboard' })
+                }}
+                className="flex items-center"
+              >
                 <img
                   src={logoImg}
                   alt="RPA Auto Parts"
                   className="h-11 w-auto max-w-[170px] object-contain"
                 />
-              </Link>
+              </button>
               <Button variant="ghost" size="icon" onClick={() => setMobileOpen(false)}>
                 <X className="h-5 w-5" />
               </Button>
@@ -179,18 +204,24 @@ export default function Layout() {
                 const Icon = item.icon
                 const active = location.pathname === item.path
                 return (
-                  <Link
+                  <button
                     key={item.path}
-                    to={item.path}
-                    onClick={() => setMobileOpen(false)}
+                    type="button"
+                    onClick={() => {
+                      setMobileOpen(false)
+                      openTab(item.path, {
+                        title: item.label,
+                        iconName: item.path.replace('/', '') || 'dashboard',
+                      })
+                    }}
                     className={cn(
-                      'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium',
+                      'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium',
                       active ? 'bg-emerald-50 text-emerald-700 font-semibold' : 'text-slate-600',
                     )}
                   >
                     <Icon className="h-5 w-5 shrink-0" />
                     <span>{item.label}</span>
-                  </Link>
+                  </button>
                 )
               })}
             </nav>
@@ -241,8 +272,21 @@ export default function Layout() {
           </div>
         </header>
 
-        <main className="flex-1 p-4 md:p-8 max-w-[1400px] w-full mx-auto">
-          <Outlet />
+        {/* Barra de Abas (Desktop) */}
+        <TabsBar />
+
+        <main className="flex-1 p-4 md:p-8 max-w-[1400px] w-full mx-auto relative">
+          {/* Keep-Alive para WhatsApp Atendimento enquanto a aba existir */}
+          {hasWhatsAppTab && (
+            <div className={cn('w-full h-full', isAtendimentoRoute ? 'block' : 'hidden')}>
+              <Atendimento />
+            </div>
+          )}
+
+          {/* Demais rotas renderizam normalmente via Outlet */}
+          <div className={cn('w-full h-full', isAtendimentoRoute ? 'hidden' : 'block')}>
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

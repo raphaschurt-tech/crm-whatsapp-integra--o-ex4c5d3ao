@@ -42,14 +42,21 @@ import {
 } from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 
+import { useTabs } from '@/contexts/TabsContext'
+
 export default function ProductList() {
   const navigate = useNavigate()
+  const { activeTab, updateTabState, updateTabTitle } = useTabs()
   const [products, setProducts] = useState<Product[]>([])
-  const [search, setSearch] = useState('')
+
+  // Restaura estado salvo da aba se existir
+  const [search, setSearch] = useState<string>(() => (activeTab?.state?.search as string) || '')
   const [natureFilter, setNatureFilter] = useState<'todas' | 'comprado' | 'produzido' | 'composto'>(
-    'todas',
+    () => (activeTab?.state?.natureFilter as any) || 'todas',
   )
-  const [onlyLowStock, setOnlyLowStock] = useState(false)
+  const [onlyLowStock, setOnlyLowStock] = useState<boolean>(() =>
+    Boolean(activeTab?.state?.onlyLowStock),
+  )
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -80,6 +87,23 @@ export default function ProductList() {
   useEffect(() => {
     loadData()
   }, [])
+
+  // Sincroniza filtros com o estado da aba ativa e atualiza título contextual se houver termo de busca
+  useEffect(() => {
+    if (!activeTab || activeTab.routeKey !== '/produtos') return
+    updateTabState(activeTab.id, {
+      search,
+      natureFilter,
+      onlyLowStock,
+    })
+
+    const trimmed = search.trim()
+    if (trimmed) {
+      updateTabTitle(activeTab.id, `Estoque — ${trimmed.toUpperCase()}`)
+    } else {
+      updateTabTitle(activeTab.id, 'Estoque')
+    }
+  }, [search, natureFilter, onlyLowStock, activeTab?.id])
 
   useRealtime('products', () => {
     loadData()

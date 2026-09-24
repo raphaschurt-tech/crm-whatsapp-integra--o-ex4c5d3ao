@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './hooks/use-auth'
+import { TabsProvider } from './contexts/TabsContext'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -30,44 +31,46 @@ export function App() {
     <ErrorBoundary>
       <AuthProvider>
         <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/pagamento/:id" element={<PaymentPage />} />
+          <TabsProvider>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/pagamento/:id" element={<PaymentPage />} />
 
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <Layout />
-                </ProtectedRoute>
-              }
-            >
-              <Route index element={<Navigate to="/dashboard" replace />} />
-              <Route path="dashboard" element={<Dashboard />} />
-              <Route path="clientes" element={<CustomerList />} />
-              <Route path="clientes/novo" element={<CustomerForm />} />
-              <Route path="clientes/:id" element={<CustomerDetail />} />
-              <Route path="clientes/:id/editar" element={<CustomerForm />} />
-              <Route path="funil" element={<PipelineBoard />} />
-              <Route path="orcamentos" element={<QuoteList />} />
-              <Route path="orcamentos/novo" element={<QuoteForm />} />
-              <Route path="orcamentos/:id" element={<QuoteDetail />} />
-              <Route path="orcamentos/:id/editar" element={<QuoteForm />} />
-              <Route path="pedidos" element={<OrderList />} />
-              <Route path="produtos" element={<ProductList />} />
-              <Route path="produtos/novo" element={<ProductForm />} />
-              <Route path="produtos/:id" element={<ProductDetail />} />
-              <Route path="produtos/:id/editar" element={<ProductForm />} />
-              <Route path="familias" element={<FamilyList />} />
-              <Route path="ordens-producao" element={<ProductionOrderList />} />
-              <Route path="pipeline-compras" element={<PipelineCompras />} />
-              <Route path="whatsapp" element={<Atendimento />} />
-              <Route path="usuarios" element={<UserList />} />
-              <Route path="configuracoes" element={<SettingsPage />} />
-            </Route>
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <Layout />
+                  </ProtectedRoute>
+                }
+              >
+                <Route index element={<Navigate to="/dashboard" replace />} />
+                <Route path="dashboard" element={<Dashboard />} />
+                <Route path="clientes" element={<CustomerList />} />
+                <Route path="clientes/novo" element={<CustomerForm />} />
+                <Route path="clientes/:id" element={<CustomerDetail />} />
+                <Route path="clientes/:id/editar" element={<CustomerForm />} />
+                <Route path="funil" element={<PipelineBoard />} />
+                <Route path="orcamentos" element={<QuoteList />} />
+                <Route path="orcamentos/novo" element={<QuoteForm />} />
+                <Route path="orcamentos/:id" element={<QuoteDetail />} />
+                <Route path="orcamentos/:id/editar" element={<QuoteForm />} />
+                <Route path="pedidos" element={<OrderList />} />
+                <Route path="produtos" element={<ProductList />} />
+                <Route path="produtos/novo" element={<ProductForm />} />
+                <Route path="produtos/:id" element={<ProductDetail />} />
+                <Route path="produtos/:id/editar" element={<ProductForm />} />
+                <Route path="familias" element={<FamilyList />} />
+                <Route path="ordens-producao" element={<ProductionOrderList />} />
+                <Route path="pipeline-compras" element={<PipelineCompras />} />
+                <Route path="whatsapp" element={null} />
+                <Route path="usuarios" element={<UserList />} />
+                <Route path="configuracoes" element={<SettingsPage />} />
+              </Route>
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </TabsProvider>
         </BrowserRouter>
       </AuthProvider>
     </ErrorBoundary>
