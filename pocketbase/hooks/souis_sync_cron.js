@@ -4,35 +4,29 @@
 // Horários solicitados pelo cliente no Horário de Brasília (UTC-3):
 //   - 12:00 Brasília (segunda a sexta) -> 15:00 UTC
 //   - 15:00 Brasília (segunda a sexta) -> 18:00 UTC
-//   - 18:00 Brasília (segunda a sexta) -> 21:00 UTC
 //   - 21:00 Brasília (segunda a sexta) -> 00:00 UTC do dia seguinte
+//   (Obs: a rodada das 18:00 Brasília / 21:00 UTC foi removida a pedido do cliente)
 //
 // Análise de dias da semana e virada de dia/semana (UTC-3 -> UTC):
-//   • Segunda 12:00, 15:00, 18:00 BRT = Segunda (1) 15:00, 18:00, 21:00 UTC
-//   • Segunda 21:00 BRT               = Terça   (2) 00:00 UTC
-//   • Terça   12:00, 15:00, 18:00 BRT = Terça   (2) 15:00, 18:00, 21:00 UTC
-//   • Terça   21:00 BRT               = Quarta  (3) 00:00 UTC
-//   • Quarta  12:00, 15:00, 18:00 BRT = Quarta  (3) 15:00, 18:00, 21:00 UTC
-//   • Quarta  21:00 BRT               = Quinta  (4) 00:00 UTC
-//   • Quinta  12:00, 15:00, 18:00 BRT = Quinta  (4) 15:00, 18:00, 21:00 UTC
-//   • Quinta  21:00 BRT               = Sexta   (5) 00:00 UTC
-//   • Sexta   12:00, 15:00, 18:00 BRT = Sexta   (5) 15:00, 18:00, 21:00 UTC
-//   • Sexta   21:00 BRT               = Sábado  (6) 00:00 UTC
+//   • Segunda 12:00, 15:00 BRT = Segunda (1) 15:00, 18:00 UTC
+//   • Segunda 21:00 BRT        = Terça   (2) 00:00 UTC
+//   • Terça   12:00, 15:00 BRT = Terça   (2) 15:00, 18:00 UTC
+//   • Terça   21:00 BRT        = Quarta  (3) 00:00 UTC
+//   • Quarta  12:00, 15:00 BRT = Quarta  (3) 15:00, 18:00 UTC
+//   • Quarta  21:00 BRT        = Quinta  (4) 00:00 UTC
+//   • Quinta  12:00, 15:00 BRT = Quinta  (4) 15:00, 18:00 UTC
+//   • Quinta  21:00 BRT        = Sexta   (5) 00:00 UTC
+//   • Sexta   12:00, 15:00 BRT = Sexta   (5) 15:00, 18:00 UTC
+//   • Sexta   21:00 BRT        = Sábado  (6) 00:00 UTC
 //   • Sábado / Domingo: nenhuma execução desejada.
 //
-// Observação técnica importante sobre expressão cron padrão (5 campos):
-// Uma única expressão como '0 15,18,21,0 * * 2-6' executaria:
-//   - Às 00:00 UTC de terça a sábado (2-6) -> perfeito (21h BRT de seg a sex)
-//   - PORÉM às 15:00, 18:00, 21:00 UTC também nos dias 2-6 (terça a sábado):
-//     perderia a segunda-feira de dia (dia 1) e executaria no sábado de dia (dia 6)!
-// Já '0 15,18,21,0 * * 1-5' executaria na segunda 00:00 UTC (domingo 21:00 BRT) e perderia a sexta 21:00 BRT (sábado 00:00 UTC).
-//
 // Portanto, para garantir 100% de exatidão sem dias extras no fim de semana e sem perder a segunda-feira:
-// Mantemos o job original 'souis-view-sync-scheduled' para as horas 15, 18 e 21 UTC de seg a sex (1-5),
-// e adicionamos o agendamento complementar 'souis-view-sync-nightly-scheduled' às 00:00 UTC de ter a sáb (2-6)
-// que corresponde exatamente às 21:00 BRT de segunda a sexta!
+// Mantemos o job 'souis-view-sync-scheduled' para as horas 15 e 18 UTC de seg a sex (1-5),
+// cobrindo 12:00 e 15:00 de Brasília.
+// E mantemos o agendamento complementar 'souis-view-sync-nightly-scheduled' caso configurado
+// às 00:00 UTC de ter a sáb (2-6), correspondendo a 21:00 BRT de segunda a sexta.
 
-cronAdd('souis-view-sync-scheduled', '0 15,18,21 * * 1-5', () => {
+cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
   // Funções inline de mapeamento SOU.IS
   function extractPrice(row) {
     if (!row) return 0
