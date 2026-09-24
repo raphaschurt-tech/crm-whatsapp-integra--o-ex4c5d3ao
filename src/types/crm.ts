@@ -34,6 +34,7 @@ export interface Customer extends RecordModel {
   lost_reason_detail?: string
   source?: string
   item_families?: string[]
+  whatsapp_status?: 'novo' | 'em_atendimento' | 'resolvido' | string
   expand?: {
     item_families?: ItemFamily[]
     [key: string]: any

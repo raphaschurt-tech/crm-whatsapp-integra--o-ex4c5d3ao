@@ -11,6 +11,7 @@ export interface TabItem {
   iconName?: string
   entityId?: string
   isForm?: boolean // se é rota /novo ou /editar
+  isDirty?: boolean // se há alterações não salvas no formulário
   state?: {
     search?: string
     filters?: Record<string, any>
@@ -33,6 +34,7 @@ interface TabsContextValue {
   closeTab: (tabId: string, force?: boolean) => void
   updateTabTitle: (tabId: string, title: string) => void
   updateTabState: (tabId: string, state: Record<string, any>) => void
+  setTabDirty: (dirty: boolean, tabId?: string) => void
   setPendingCloseTabId: (tabId: string | null) => void
   pendingCloseTabId: string | null
   confirmCloseTab: () => void
@@ -338,14 +340,31 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     [navigate, getDefaultTitleForPath],
   )
 
-  // Fechar aba com suporte a confirmação em formulários
+  // Marcar aba como dirty (com alterações não salvas)
+  const setTabDirty = useCallback(
+    (dirty: boolean, tabId?: string) => {
+      setTabs((prevTabs) =>
+        prevTabs.map((t) => {
+          const targetId = tabId || activeTabId
+          if (t.id === targetId) {
+            if (t.isDirty === dirty) return t
+            return { ...t, isDirty: dirty }
+          }
+          return t
+        }),
+      )
+    },
+    [activeTabId],
+  )
+
+  // Fechar aba com suporte a confirmação quando formulário estiver sujo (dirty)
   const closeTab = useCallback(
     (tabId: string, force = false) => {
       const targetTab = tabs.find((t) => t.id === tabId)
       if (!targetTab) return
 
-      // Se for formulário (/novo ou /editar) e não foi forçado, pedir confirmação
-      if (targetTab.isForm && !force) {
+      // Guard real: pedir confirmação apenas se o formulário estiver com alterações não salvas (isDirty === true)
+      if (targetTab.isForm && targetTab.isDirty && !force) {
         setPendingCloseTabId(tabId)
         return
       }
@@ -430,6 +449,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
         closeTab,
         updateTabTitle,
         updateTabState,
+        setTabDirty,
         setPendingCloseTabId,
         pendingCloseTabId,
         confirmCloseTab,

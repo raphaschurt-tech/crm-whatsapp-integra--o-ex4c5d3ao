@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useTabState } from '@/hooks/use-tab-state'
 import { Plus, Trash2, AlertCircle, Save, MessageCircle, RefreshCw, Send } from 'lucide-react'
 import { getCustomers, createCustomer, updateCustomer } from '@/services/customers'
 import { getProducts } from '@/services/products'
@@ -41,6 +42,7 @@ export default function QuoteForm() {
   const { id } = useParams()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const { markDirty } = useTabState()
 
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -117,7 +119,13 @@ export default function QuoteForm() {
     loadData()
   }, [id])
 
+  const handleCustomerChange = (val: string) => {
+    setSelectedCustomer(val)
+    markDirty(true)
+  }
+
   const handleProductChange = (index: number, productId: string) => {
+    markDirty(true)
     const prod = products.find((p) => p.id === productId)
     // Se sem estoque (stock_quantity <= 0 ou nulo), não pré-preencher preço (fica 0 até colaborador digitar)
     const hasStock = Boolean(prod && prod.stock_quantity && prod.stock_quantity > 0)
@@ -135,6 +143,7 @@ export default function QuoteForm() {
   }
 
   const handleQuantityChange = (index: number, qty: number) => {
+    markDirty(true)
     const q = Math.max(1, qty)
     setItems((prev) => {
       const next = [...prev]
@@ -148,6 +157,7 @@ export default function QuoteForm() {
   }
 
   const handlePriceChange = (index: number, price: number) => {
+    markDirty(true)
     setItems((prev) => {
       const next = [...prev]
       next[index] = {
@@ -160,10 +170,12 @@ export default function QuoteForm() {
   }
 
   const handleAddItem = () => {
+    markDirty(true)
     setItems((prev) => [...prev, { product: '', quantity: 1, unit_price: 0, total: 0 }])
   }
 
   const handleRemoveItem = (index: number) => {
+    markDirty(true)
     if (items.length <= 1) return
     setItems((prev) => prev.filter((_, i) => i !== index))
   }
@@ -252,6 +264,7 @@ export default function QuoteForm() {
       }
 
       toast({ title: 'Orçamento salvo com sucesso!' })
+      markDirty(false)
 
       if (andSendWhatsApp) {
         const cust = customers.find((c) => c.id === selectedCustomer)
@@ -366,7 +379,7 @@ export default function QuoteForm() {
           <CustomerSearchCombobox
             customers={customers}
             value={selectedCustomer}
-            onChange={setSelectedCustomer}
+            onChange={handleCustomerChange}
             placeholder="Buscar cliente por nome, telefone ou e-mail..."
           />
         </div>
@@ -524,7 +537,10 @@ export default function QuoteForm() {
             <Textarea
               placeholder="Condições de pagamento, prazos de entrega..."
               value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+              onChange={(e) => {
+                setNotes(e.target.value)
+                markDirty(true)
+              }}
               rows={4}
             />
           </div>
@@ -541,7 +557,10 @@ export default function QuoteForm() {
                 type="number"
                 step="0.01"
                 value={discount}
-                onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
+                onChange={(e) => {
+                  setDiscount(parseFloat(e.target.value) || 0)
+                  markDirty(true)
+                }}
                 className="w-32 bg-white text-right"
               />
             </div>

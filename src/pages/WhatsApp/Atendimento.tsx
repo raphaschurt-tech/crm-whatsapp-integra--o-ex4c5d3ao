@@ -51,7 +51,8 @@ import { useRealtime } from '@/hooks/use-realtime'
 import { sendWhatsAppMessage } from '@/services/quotes'
 import { ProductQuoteModal } from '@/components/WhatsApp/ProductQuoteModal'
 import { CustomerQuoteHistory } from '@/components/WhatsApp/CustomerQuoteHistory'
-import { createCustomer, getCustomers } from '@/services/customers'
+import { createCustomer, getCustomers, updateCustomer } from '@/services/customers'
+import { useAuth } from '@/hooks/use-auth'
 import { Customer } from '@/types/crm'
 import { toast } from '@/hooks/use-toast'
 
@@ -59,12 +60,31 @@ export type { WhatsAppStatus, WhatsAppMessage, WhatsAppCustomer }
 
 export default function WhatsAppAtendimento() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [customers, setCustomers] = useState<WhatsAppCustomer[]>([])
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
   const [search, setSearch] = useState('')
+
+  // Filtro de status persistido no localStorage por usuário
+  const filterStorageKey = `rpa_whatsapp_status_filter_${user?.id || 'anon'}`
   const [statusFilter, setStatusFilter] = useState<
     'todos' | 'novo' | 'nao_lidos' | 'em_atendimento' | 'antigos' | 'inativos'
-  >('todos')
+  >(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const saved = localStorage.getItem(`rpa_whatsapp_status_filter_${user?.id || 'anon'}`)
+        if (
+          saved &&
+          ['todos', 'novo', 'nao_lidos', 'em_atendimento', 'antigos', 'inativos'].includes(saved)
+        ) {
+          return saved as any
+        }
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+    return 'todos'
+  })
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'PF' | 'PJ'>('ALL')
   const [customersMap, setCustomersMap] = useState<Map<string, Customer>>(new Map())
   const [inputText, setInputText] = useState('')
@@ -410,6 +430,15 @@ export default function WhatsAppAtendimento() {
       /* ignore */
     }
   }, [sidebarWidth])
+
+  // Persistir filtro de status selecionado no localStorage por usuário
+  useEffect(() => {
+    try {
+      localStorage.setItem(filterStorageKey, statusFilter)
+    } catch (_) {
+      /* ignore */
+    }
+  }, [filterStorageKey, statusFilter])
 
   // Checagem de status de conexão do WhatsApp (Z-API)
   const checkConnectionStatus = useCallback(async (): Promise<boolean> => {
@@ -936,11 +965,48 @@ export default function WhatsAppAtendimento() {
     setIsProductModalOpen(true)
   }
 
-  const handleUpdateStatus = (newStatus: WhatsAppStatus) => {
+  const handleUpdateStatus = async (newStatus: WhatsAppStatus) => {
     if (!activeCustomer) return
+    // Atualização otimista na lista local
     setCustomers((prev) =>
       prev.map((c) => (c.id === activeCustomer.id ? { ...c, status: newStatus } : c)),
     )
+
+    // Se a conversa já tem customerId cadastrado em customers, salva direto na base
+    let custId = activeCustomer.customerId
+    try {
+      if (!custId) {
+        // Auto-cria cliente se ainda não tiver cadastro para persistir o whatsapp_status
+        const targetPhone = activeCustomer.rawPhone || activeCustomer.phone
+        const created = await createCustomer({
+          name: activeCustomer.name,
+          phone: targetPhone,
+          type: activeCustomer.type,
+          company: activeCustomer.company,
+          whatsapp_status: newStatus,
+        })
+        custId = created.id
+        activeCustomer.customerId = created.id
+        setCustomers((prev) =>
+          prev.map((c) => (c.id === activeCustomer.id ? { ...c, customerId: created.id } : c)),
+        )
+      } else {
+        await updateCustomer(custId, {
+          whatsapp_status: newStatus,
+        })
+      }
+      toast({
+        title: 'Status atualizado',
+        description: `Conversa marcada como ${newStatus === 'resolvido' ? 'Resolvido' : newStatus === 'em_atendimento' ? 'Em atendimento' : 'Novo'}.`,
+      })
+    } catch (err: any) {
+      console.error('Erro ao salvar whatsapp_status no customer:', err)
+      toast({
+        title: 'Aviso ao persistir status',
+        description: err?.message || 'Não foi possível gravar o status da conversa no banco.',
+        variant: 'destructive',
+      })
+    }
   }
 
   const getStatusBadge = (status: WhatsAppStatus) => {

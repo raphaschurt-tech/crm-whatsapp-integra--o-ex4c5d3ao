@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useTabState } from '@/hooks/use-tab-state'
 import {
   getCustomer,
   createCustomer,
@@ -38,6 +39,7 @@ const maskCNPJ = (val: string) => {
 export default function CustomerForm() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { markDirty } = useTabState()
 
   const [customerType, setCustomerType] = useState<'Cliente' | 'Fornecedor' | 'Ambos'>('Cliente')
   const [type, setType] = useState<CustomerType>('PF')
@@ -110,6 +112,7 @@ export default function CustomerForm() {
     }
   }, [id])
   const toggleFamilySelection = (familyId: string) => {
+    markDirty(true)
     setSelectedFamilyIds((prev) => {
       const next = prev.includes(familyId)
         ? prev.filter((id) => id !== familyId)
@@ -184,6 +187,7 @@ export default function CustomerForm() {
       } else {
         await createCustomer(payload)
       }
+      markDirty(false)
       toast({
         title:
           customerType === 'Fornecedor'
@@ -216,7 +220,10 @@ export default function CustomerForm() {
           <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 rounded-lg max-w-md">
             <button
               type="button"
-              onClick={() => setCustomerType('Cliente')}
+              onClick={() => {
+                setCustomerType('Cliente')
+                markDirty(true)
+              }}
               className={`flex items-center justify-center gap-1.5 py-2 px-3 text-xs sm:text-sm font-medium rounded-md transition-all ${
                 customerType === 'Cliente'
                   ? 'bg-white text-emerald-700 font-semibold shadow-sm'
@@ -228,7 +235,10 @@ export default function CustomerForm() {
             </button>
             <button
               type="button"
-              onClick={() => setCustomerType('Fornecedor')}
+              onClick={() => {
+                setCustomerType('Fornecedor')
+                markDirty(true)
+              }}
               className={`flex items-center justify-center gap-1.5 py-2 px-3 text-xs sm:text-sm font-medium rounded-md transition-all ${
                 customerType === 'Fornecedor'
                   ? 'bg-white text-amber-700 font-semibold shadow-sm'
@@ -240,7 +250,10 @@ export default function CustomerForm() {
             </button>
             <button
               type="button"
-              onClick={() => setCustomerType('Ambos')}
+              onClick={() => {
+                setCustomerType('Ambos')
+                markDirty(true)
+              }}
               className={`flex items-center justify-center gap-1.5 py-2 px-3 text-xs sm:text-sm font-medium rounded-md transition-all ${
                 customerType === 'Ambos'
                   ? 'bg-white text-indigo-700 font-semibold shadow-sm'
@@ -320,7 +333,10 @@ export default function CustomerForm() {
           <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-lg max-w-sm">
             <button
               type="button"
-              onClick={() => setType('PF')}
+              onClick={() => {
+                setType('PF')
+                markDirty(true)
+              }}
               className={`flex items-center justify-center gap-2 py-2 px-3 text-sm font-medium rounded-md transition-all ${
                 type === 'PF'
                   ? 'bg-white text-emerald-700 font-semibold shadow-sm'
@@ -332,7 +348,10 @@ export default function CustomerForm() {
             </button>
             <button
               type="button"
-              onClick={() => setType('PJ')}
+              onClick={() => {
+                setType('PJ')
+                markDirty(true)
+              }}
               className={`flex items-center justify-center gap-2 py-2 px-3 text-sm font-medium rounded-md transition-all ${
                 type === 'PJ'
                   ? 'bg-white text-emerald-700 font-semibold shadow-sm'
@@ -356,6 +375,7 @@ export default function CustomerForm() {
               value={cpf}
               onChange={(e) => {
                 setCpf(maskCPF(e.target.value))
+                markDirty(true)
                 if (documentError) setDocumentError(null)
               }}
               placeholder="000.000.000-00"
@@ -379,6 +399,7 @@ export default function CustomerForm() {
               value={cnpj}
               onChange={(e) => {
                 setCnpj(maskCNPJ(e.target.value))
+                markDirty(true)
                 if (documentError) setDocumentError(null)
               }}
               placeholder="00.000.000/0000-00"
@@ -398,7 +419,10 @@ export default function CustomerForm() {
           <Label>{type === 'PF' ? 'Nome Completo *' : 'Razão Social / Nome Fantasia *'}</Label>
           <Input
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value)
+              markDirty(true)
+            }}
             required
             placeholder={type === 'PF' ? 'Ex: Carlos Silva' : 'Ex: Auto Peças Silva Ltda'}
           />
@@ -410,7 +434,10 @@ export default function CustomerForm() {
           </Label>
           <Input
             value={contactName}
-            onChange={(e) => setContactName(e.target.value)}
+            onChange={(e) => {
+              setContactName(e.target.value)
+              markDirty(true)
+            }}
             placeholder="Ex: Carlos Silva, Roberto, Maria..."
           />
           <p className="text-xs text-slate-500">
@@ -423,7 +450,10 @@ export default function CustomerForm() {
             <Label>Telefone / WhatsApp *</Label>
             <Input
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => {
+                setPhone(e.target.value)
+                markDirty(true)
+              }}
               required
               placeholder="(11) 98765-4321"
             />
@@ -434,7 +464,10 @@ export default function CustomerForm() {
             <Input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value)
+                markDirty(true)
+              }}
               placeholder="carlos@empresa.com"
             />
           </div>
@@ -445,7 +478,10 @@ export default function CustomerForm() {
             <Label>Nome Fantasia / Contato Comercial</Label>
             <Input
               value={company}
-              onChange={(e) => setCompany(e.target.value)}
+              onChange={(e) => {
+                setCompany(e.target.value)
+                markDirty(true)
+              }}
               placeholder="Ex: Filial Centro / Contato: Marcos"
             />
           </div>
@@ -456,7 +492,10 @@ export default function CustomerForm() {
             <Label>Empresa / Vínculo (opcional)</Label>
             <Input
               value={company}
-              onChange={(e) => setCompany(e.target.value)}
+              onChange={(e) => {
+                setCompany(e.target.value)
+                markDirty(true)
+              }}
               placeholder="Empresa onde trabalha ou oficina parceira"
             />
           </div>
@@ -469,7 +508,10 @@ export default function CustomerForm() {
             <select
               id="lead-source"
               value={leadSource}
-              onChange={(e) => setLeadSource(e.target.value as LeadSource)}
+              onChange={(e) => {
+                setLeadSource(e.target.value as LeadSource)
+                markDirty(true)
+              }}
               className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {LEAD_SOURCE_OPTIONS.map((opt) => (
@@ -488,7 +530,10 @@ export default function CustomerForm() {
           <Label>Observações</Label>
           <Textarea
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
+            onChange={(e) => {
+              setNotes(e.target.value)
+              markDirty(true)
+            }}
             rows={3}
             placeholder="Preferências do cliente..."
           />

@@ -31,6 +31,7 @@ import { getFamilies } from '@/services/families'
 import { ItemFamily } from '@/types/crm'
 import { useRealtime } from '@/hooks/use-realtime'
 import { useToast } from '@/hooks/use-toast'
+import { useTabState } from '@/hooks/use-tab-state'
 import { formatCurrency } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -40,6 +41,12 @@ import { NewPurchaseModal } from './NewPurchaseModal'
 
 export default function PipelineCompras() {
   const { toast } = useToast()
+  const { tabState, setTabState } = useTabState<{
+    activeColumn?: PurchaseRequestStatus
+    search?: string
+    customerFilter?: string
+    supplierFilter?: string
+  }>()
 
   const [requests, setRequests] = useState<PurchaseRequest[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -56,6 +63,28 @@ export default function PipelineCompras() {
   // Drag & drop state
   const [draggedCardId, setDraggedCardId] = useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = useState<PurchaseRequestStatus | null>(null)
+
+  // Coluna ativa do kanban (persistida na aba)
+  const activeColumn = tabState?.activeColumn || 'solicitada'
+
+  // Refs das colunas para scroll automático
+  const columnRefs = React.useRef<Record<string, HTMLDivElement | null>>({})
+  const kanbanContainerRef = React.useRef<HTMLDivElement | null>(null)
+
+  const handleSelectColumn = useCallback(
+    (colId: PurchaseRequestStatus, smooth = true) => {
+      setTabState({ activeColumn: colId })
+      const el = columnRefs.current[colId]
+      if (el) {
+        el.scrollIntoView({
+          behavior: smooth ? 'smooth' : 'auto',
+          inline: 'center',
+          block: 'nearest',
+        })
+      }
+    },
+    [setTabState],
+  )
 
   // Filtros
   const [search, setSearch] = useState('')
@@ -117,6 +146,23 @@ export default function PipelineCompras() {
   useEffect(() => {
     loadData()
   }, [loadData])
+
+  // Restauração da coluna ativa ao montar ou carregar dados
+  useEffect(() => {
+    if (!loading && activeColumn) {
+      const timer = setTimeout(() => {
+        const el = columnRefs.current[activeColumn]
+        if (el) {
+          el.scrollIntoView({
+            behavior: 'smooth',
+            inline: 'center',
+            block: 'nearest',
+          })
+        }
+      }, 150)
+      return () => clearTimeout(timer)
+    }
+  }, [loading, activeColumn])
 
   // Realtime updates
   useRealtime('purchase_requests', () => loadData(true))
@@ -631,7 +677,7 @@ export default function PipelineCompras() {
         </div>
       ) : (
         /* Quadro Kanban com as 7 etapas especificadas */
-        <div className="overflow-x-auto pb-6">
+        <div ref={kanbanContainerRef} className="overflow-x-auto pb-6">
           <div className="flex gap-4 min-w-[1540px] items-start">
             {PURCHASE_COLUMNS.map((col) => {
               const columnCards = columnsData[col.id] || []
@@ -640,22 +686,31 @@ export default function PipelineCompras() {
                 0,
               )
               const isOver = dragOverCol === col.id
+              const isColActive = activeColumn === col.id
 
               return (
                 <div
                   key={col.id}
+                  ref={(el) => {
+                    columnRefs.current[col.id] = el
+                  }}
+                  onClick={() => handleSelectColumn(col.id)}
                   onDragOver={(e) => handleDragOverColumn(e, col.id)}
                   onDragLeave={(e) => handleDragLeaveColumn(e, col.id)}
                   onDrop={(e) => handleDropColumn(e, col.id)}
-                  className={`flex-1 min-w-[210px] max-w-[240px] bg-slate-100/70 rounded-xl border border-slate-200/80 flex flex-col transition-all ${
+                  className={`flex-1 min-w-[210px] max-w-[240px] bg-slate-100/70 rounded-xl border flex flex-col transition-all cursor-pointer ${
                     isOver
                       ? 'ring-2 ring-amber-500 bg-amber-50/40 border-amber-300'
-                      : 'hover:border-slate-300'
+                      : isColActive
+                        ? 'border-amber-400 ring-2 ring-amber-400/40 shadow-sm bg-amber-50/20'
+                        : 'border-slate-200/80 hover:border-slate-300'
                   }`}
                 >
                   {/* Cabeçalho da Coluna com border top colorido */}
                   <div
-                    className={`p-3 bg-white rounded-t-xl border-b border-slate-200 border-t-4 ${col.borderColor}`}
+                    className={`p-3 bg-white rounded-t-xl border-b border-slate-200 border-t-4 ${col.borderColor} ${
+                      isColActive ? 'bg-amber-50/30' : ''
+                    }`}
                   >
                     <div className="flex items-center justify-between gap-1 mb-1">
                       <h3

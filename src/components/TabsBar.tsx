@@ -156,6 +156,14 @@ export function TabsBar() {
                   <span className="truncate">{tab.title}</span>
                 </div>
 
+                {/* Ponto indicador de formulário com alterações não salvas (dirty) */}
+                {tab.isDirty && (
+                  <span
+                    className="h-2 w-2 rounded-full bg-amber-500 shrink-0"
+                    title="Alterações não salvas"
+                  />
+                )}
+
                 {/* Badge para atendimento ou WhatsApp */}
                 {isWhatsApp && (
                   <span

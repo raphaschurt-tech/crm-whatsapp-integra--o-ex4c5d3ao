@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-24T21:02:06.704Z",
+  "generatedAt": "2026-09-24T21:18:53.634Z",
   "collections": [
     {
       "name": "users",
@@ -198,6 +198,12 @@
           "required": false,
           "system": false,
           "collectionRef": "item_families"
+        },
+        {
+          "name": "whatsapp_status",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

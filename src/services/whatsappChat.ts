@@ -574,8 +574,16 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         (m) => m.sender === 'client' && m.timestamp > lastReadAt,
       ).length
 
-      // Se houver mensagens não lidas do cliente, marcar como "novo"; caso contrário "em_atendimento"
-      const status: WhatsAppStatus = unreadCount > 0 ? 'novo' : 'em_atendimento'
+      // Prioridade do status da conversa:
+      // Se o cliente associado tem whatsapp_status persistido no banco, respeitar
+      let status: WhatsAppStatus = unreadCount > 0 ? 'novo' : 'em_atendimento'
+      if (
+        matchedCustomer?.whatsapp_status === 'resolvido' ||
+        matchedCustomer?.whatsapp_status === 'em_atendimento' ||
+        matchedCustomer?.whatsapp_status === 'novo'
+      ) {
+        status = matchedCustomer.whatsapp_status as WhatsAppStatus
+      }
 
       const displayName = matchedCustomer ? matchedCustomer.name : formatPhoneDisplay(conv.phoneKey)
       const customerType: 'PF' | 'PJ' = matchedCustomer

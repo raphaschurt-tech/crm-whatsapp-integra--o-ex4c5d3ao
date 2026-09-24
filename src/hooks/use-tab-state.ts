@@ -5,7 +5,7 @@ import { useCallback } from 'react'
  * Hook para páginas registrarem e restaurarem termo de busca e filtros de sua aba ativa.
  */
 export function useTabState<T extends Record<string, any>>(initialDefault?: Partial<T>) {
-  const { activeTab, updateTabState, updateTabTitle } = useTabs()
+  const { activeTab, updateTabState, updateTabTitle, setTabDirty } = useTabs()
 
   const tabState = (activeTab?.state || {}) as Partial<T>
 
@@ -25,10 +25,20 @@ export function useTabState<T extends Record<string, any>>(initialDefault?: Part
     [activeTab, updateTabTitle],
   )
 
+  const markDirty = useCallback(
+    (dirty: boolean) => {
+      if (!activeTab) return
+      setTabDirty(dirty, activeTab.id)
+    },
+    [activeTab, setTabDirty],
+  )
+
   return {
     activeTab,
     tabState: { ...initialDefault, ...tabState } as T,
     setTabState,
     setTitle,
+    markDirty,
+    isDirty: Boolean(activeTab?.isDirty),
   }
 }

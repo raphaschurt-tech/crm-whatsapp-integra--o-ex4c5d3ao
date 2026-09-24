@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useTabState } from '@/hooks/use-tab-state'
 import { getProduct, createProduct, updateProduct, getProducts } from '@/services/products'
 import { getFamilies } from '@/services/families'
 import { getCompositionsByProduct, saveProductCompositions } from '@/services/compositions'
@@ -26,6 +27,7 @@ interface FamilyCompositionState {
 export default function ProductForm() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { markDirty } = useTabState()
 
   const [name, setName] = useState('')
   const [sku, setSku] = useState('')
@@ -159,6 +161,7 @@ export default function ProductForm() {
   }, [allFamilies, allStockProducts, id])
 
   const toggleFamilySelection = (familyId: string) => {
+    markDirty(true)
     setFamilyCompositions((prev) =>
       prev.map((item) => {
         if (item.familyId === familyId) {
@@ -180,6 +183,7 @@ export default function ProductForm() {
   }
 
   const toggleProductInFamily = (familyId: string, productId: string) => {
+    markDirty(true)
     setFamilyCompositions((prev) =>
       prev.map((item) => {
         if (item.familyId === familyId) {
@@ -256,6 +260,7 @@ export default function ProductForm() {
         await saveProductCompositions(savedProductId, selectedToSave)
       }
 
+      markDirty(false)
       toast({ title: 'Produto salvo com sucesso!' })
       navigate('/produtos')
     } catch (_) {
@@ -292,7 +297,10 @@ export default function ProductForm() {
               <Label>Nome do Produto *</Label>
               <Input
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  markDirty(true)
+                }}
                 required
                 placeholder="Ex: Bucha de Vedação Especial"
               />
@@ -302,7 +310,10 @@ export default function ProductForm() {
               <Label>SKU / Código *</Label>
               <Input
                 value={sku}
-                onChange={(e) => setSku(e.target.value)}
+                onChange={(e) => {
+                  setSku(e.target.value)
+                  markDirty(true)
+                }}
                 required
                 placeholder="BUC-01"
               />
@@ -330,7 +341,10 @@ export default function ProductForm() {
               >
                 <Checkbox
                   checked={isPurchased}
-                  onCheckedChange={(checked) => setIsPurchased(Boolean(checked))}
+                  onCheckedChange={(checked) => {
+                    setIsPurchased(Boolean(checked))
+                    markDirty(true)
+                  }}
                   className="mt-0.5"
                 />
                 <div className="space-y-1">
@@ -355,7 +369,10 @@ export default function ProductForm() {
               >
                 <Checkbox
                   checked={isProduced}
-                  onCheckedChange={(checked) => setIsProduced(Boolean(checked))}
+                  onCheckedChange={(checked) => {
+                    setIsProduced(Boolean(checked))
+                    markDirty(true)
+                  }}
                   className="mt-0.5"
                 />
                 <div className="space-y-1">
@@ -380,7 +397,10 @@ export default function ProductForm() {
               >
                 <Checkbox
                   checked={isComponent}
-                  onCheckedChange={(checked) => setIsComponent(Boolean(checked))}
+                  onCheckedChange={(checked) => {
+                    setIsComponent(Boolean(checked))
+                    markDirty(true)
+                  }}
                   className="mt-0.5"
                 />
                 <div className="space-y-1">
@@ -406,7 +426,10 @@ export default function ProductForm() {
               </Label>
               <Input
                 value={supplier}
-                onChange={(e) => setSupplier(e.target.value)}
+                onChange={(e) => {
+                  setSupplier(e.target.value)
+                  markDirty(true)
+                }}
                 placeholder={
                   isProduced && !isPurchased
                     ? 'Ex: PCP / Linha de Montagem Interna'
@@ -423,7 +446,10 @@ export default function ProductForm() {
                 type="number"
                 step="0.01"
                 value={price}
-                onChange={(e) => setPrice(parseFloat(e.target.value) || 0)}
+                onChange={(e) => {
+                  setPrice(parseFloat(e.target.value) || 0)
+                  markDirty(true)
+                }}
                 required
               />
             </div>
@@ -436,7 +462,10 @@ export default function ProductForm() {
                 type="number"
                 step="0.01"
                 value={cost}
-                onChange={(e) => setCost(parseFloat(e.target.value) || 0)}
+                onChange={(e) => {
+                  setCost(parseFloat(e.target.value) || 0)
+                  markDirty(true)
+                }}
                 placeholder="0.00"
               />
               {isProduced && (
@@ -453,7 +482,10 @@ export default function ProductForm() {
               <Input
                 type="number"
                 value={stockQuantity}
-                onChange={(e) => setStockQuantity(parseInt(e.target.value) || 0)}
+                onChange={(e) => {
+                  setStockQuantity(parseInt(e.target.value) || 0)
+                  markDirty(true)
+                }}
                 required
               />
             </div>
@@ -463,7 +495,10 @@ export default function ProductForm() {
               <Input
                 type="number"
                 value={minStock}
-                onChange={(e) => setMinStock(parseInt(e.target.value) || 0)}
+                onChange={(e) => {
+                  setMinStock(parseInt(e.target.value) || 0)
+                  markDirty(true)
+                }}
               />
             </div>
           </div>
@@ -472,7 +507,10 @@ export default function ProductForm() {
             <Label>Descrição do Produto</Label>
             <Textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value)
+                markDirty(true)
+              }}
               rows={3}
               placeholder="Especificações técnicas, aplicação automotiva..."
             />
@@ -490,7 +528,10 @@ export default function ProductForm() {
               <Label>Marca do Fabricante</Label>
               <Input
                 value={brand}
-                onChange={(e) => setBrand(e.target.value)}
+                onChange={(e) => {
+                  setBrand(e.target.value)
+                  markDirty(true)
+                }}
                 placeholder="Ex: JAHU, COFAP, NAKATA, RPA..."
               />
             </div>
@@ -499,7 +540,10 @@ export default function ProductForm() {
               <Label>Código Reduzido</Label>
               <Input
                 value={reducedCode}
-                onChange={(e) => setReducedCode(e.target.value)}
+                onChange={(e) => {
+                  setReducedCode(e.target.value)
+                  markDirty(true)
+                }}
                 placeholder="Ex: 3148"
               />
             </div>
@@ -508,7 +552,10 @@ export default function ProductForm() {
               <Label>Código de Barras (EAN)</Label>
               <Input
                 value={barcode}
-                onChange={(e) => setBarcode(e.target.value)}
+                onChange={(e) => {
+                  setBarcode(e.target.value)
+                  markDirty(true)
+                }}
                 placeholder="Ex: 7893732134999"
               />
             </div>
@@ -523,7 +570,10 @@ export default function ProductForm() {
                 <Label className="text-xs text-slate-500 font-normal">Local 1 (Corredor/Rua)</Label>
                 <Input
                   value={location1}
-                  onChange={(e) => setLocation1(e.target.value)}
+                  onChange={(e) => {
+                    setLocation1(e.target.value)
+                    markDirty(true)
+                  }}
                   placeholder="Ex: 6"
                 />
               </div>
@@ -533,7 +583,10 @@ export default function ProductForm() {
                 </Label>
                 <Input
                   value={location2}
-                  onChange={(e) => setLocation2(e.target.value)}
+                  onChange={(e) => {
+                    setLocation2(e.target.value)
+                    markDirty(true)
+                  }}
                   placeholder="Ex: B"
                 />
               </div>
@@ -541,7 +594,10 @@ export default function ProductForm() {
                 <Label className="text-xs text-slate-500 font-normal">Local 3 (Nível/Gaveta)</Label>
                 <Input
                   value={location3}
-                  onChange={(e) => setLocation3(e.target.value)}
+                  onChange={(e) => {
+                    setLocation3(e.target.value)
+                    markDirty(true)
+                  }}
                   placeholder="Ex: 02"
                 />
               </div>
