@@ -9,12 +9,14 @@ import {
   Check,
   RefreshCw,
   AlertTriangle,
+  Trash2,
 } from 'lucide-react'
-import { getQuotes } from '@/services/quotes'
+import { getQuotes, deleteQuote } from '@/services/quotes'
 import { getSettings } from '@/services/settings'
 import { Quote } from '@/types/crm'
 import { formatCurrency, openWhatsApp, buildQuoteMessage } from '@/lib/whatsapp'
 import { useRealtime } from '@/hooks/use-realtime'
+import { useAuth } from '@/hooks/use-auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -25,6 +27,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import { toast } from '@/hooks/use-toast'
 
 export default function QuoteList() {
@@ -37,6 +47,9 @@ export default function QuoteList() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [whatsappNumber, setWhatsappNumber] = useState('')
+  const [quoteToDelete, setQuoteToDelete] = useState<Quote | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const { isAdmin } = useAuth()
 
   const loadData = async () => {
     setLoading(true)
@@ -92,6 +105,33 @@ export default function QuoteList() {
       link,
     )
     openWhatsApp(phone, msg)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!quoteToDelete) return
+    setIsDeleting(true)
+    try {
+      await deleteQuote(quoteToDelete.id)
+      setQuotes((prev) => prev.filter((q) => q.id !== quoteToDelete.id))
+      toast({
+        title: 'Orçamento excluído',
+        description: `O orçamento ${quoteToDelete.number} foi excluído com sucesso.`,
+      })
+      setQuoteToDelete(null)
+    } catch (err: any) {
+      console.error('Erro ao excluir orçamento:', err)
+      const errorMsg =
+        err?.status === 403 || err?.data?.message?.includes('admin')
+          ? 'Apenas administradores têm permissão para excluir orçamentos.'
+          : 'Erro ao excluir orçamento. Tente novamente.'
+      toast({
+        title: 'Erro ao excluir',
+        description: errorMsg,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   const getStatusBadge = (status?: Quote['status'] | null) => {
@@ -204,7 +244,22 @@ export default function QuoteList() {
                     <td className="p-4 font-semibold text-slate-900">
                       {formatCurrency(quote.total || 0)}
                     </td>
-                    <td className="p-4">{getStatusBadge(quote.status)}</td>
+                    <td className="p-4">
+                      <div className="flex items-center gap-3">
+                        {getStatusBadge(quote.status)}
+                        {isAdmin && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setQuoteToDelete(quote)}
+                            className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            title="Excluir orçamento"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </td>
                     <td className="p-4 text-right space-x-1">
                       <Button
                         variant="ghost"
@@ -245,7 +300,20 @@ export default function QuoteList() {
               <div key={quote.id} className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-900">{quote.number}</span>
-                  {getStatusBadge(quote.status)}
+                  <div className="flex items-center gap-2">
+                    {getStatusBadge(quote.status)}
+                    {isAdmin && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setQuoteToDelete(quote)}
+                        className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                        title="Excluir orçamento"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-slate-800">
@@ -281,6 +349,56 @@ export default function QuoteList() {
           </div>
         </div>
       )}
+
+      {/* Confirmação de Exclusão de Orçamento (apenas admin) */}
+      <Dialog
+        open={!!quoteToDelete}
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) setQuoteToDelete(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <Trash2 className="h-5 w-5" /> Excluir orçamento?
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-slate-600 text-sm leading-relaxed">
+              Tem certeza que deseja excluir o orçamento{' '}
+              <strong className="text-slate-900">{quoteToDelete?.number}</strong>
+              {quoteToDelete?.expand?.customer?.name
+                ? ` (${quoteToDelete.expand.customer.name})`
+                : ''}
+              ? Esta ação não pode ser desfeita.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="pt-4 gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isDeleting}
+              onClick={() => setQuoteToDelete(null)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={isDeleting}
+              onClick={handleConfirmDelete}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {isDeleting ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Excluindo...
+                </>
+              ) : (
+                'Excluir'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
