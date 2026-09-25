@@ -1,3 +1,151 @@
+// Função utilitária global do worker para verificar encerramento automático de atendimentos humanos por inatividade
+const checkAndRunAutoCloseHumanChatsGlobal = () => {
+  try {
+    const validConfigs = $app.findRecordsByFilter(
+      'settings',
+      "zapi_instance_id != '' && zapi_token != '' && zapi_client_token != ''",
+      '-created',
+      1,
+      0,
+    )
+    if (!validConfigs || validConfigs.length === 0) return
+    const validConfigRec = validConfigs[0]
+
+    const autoCloseMin = Number(validConfigRec.get('ai_auto_close_minutes')) || 0
+    if (autoCloseMin <= 0) return // 0 = desativado
+
+    const autoCloseMsg =
+      String(validConfigRec.getString('ai_auto_close_message') || '').trim() ||
+      'Atendimento encerrado por inatividade. Se precisar de algo, me chame aqui que continuo te ajudando! 🙂'
+
+    const zapiInstance = String(validConfigRec.get('zapi_instance_id') || '')
+    const zapiToken = String(validConfigRec.get('zapi_token') || '')
+    const zapiClientToken = String(validConfigRec.get('zapi_client_token') || '')
+
+    const activeHumanControls = $app.findRecordsByFilter(
+      'chat_control',
+      'human_mode = true',
+      '-updated',
+      50,
+      0,
+    )
+
+    if (!activeHumanControls || activeHumanControls.length === 0) return
+
+    const nowMs = Date.now()
+    const timeoutMs = autoCloseMin * 60 * 1000
+
+    for (let hci = 0; hci < activeHumanControls.length; hci++) {
+      const ctrl = activeHumanControls[hci]
+      const ctrlPhone = ctrl.getString('phone')
+      if (!ctrlPhone) continue
+
+      // Encontrar última interação (cliente OU atendente)
+      let lastInteractionTimeMs = 0
+      try {
+        const cleanP = ctrlPhone.replace(/'/g, "\\'")
+        const lastMsgs = $app.findRecordsByFilter(
+          'webhook_received',
+          "phone.phone = '" + cleanP + "' || chat.phone = '" + cleanP + "'",
+          '-created',
+          1,
+          0,
+        )
+        if (lastMsgs && lastMsgs.length > 0) {
+          const dt = new Date(lastMsgs[0].getString('created') || lastMsgs[0].created)
+          if (!isNaN(dt.getTime())) {
+            lastInteractionTimeMs = dt.getTime()
+          }
+        }
+      } catch (_) {}
+
+      if (!lastInteractionTimeMs) {
+        const ctrlUp = new Date(ctrl.getString('updated') || ctrl.updated)
+        if (!isNaN(ctrlUp.getTime())) {
+          lastInteractionTimeMs = ctrlUp.getTime()
+        }
+      }
+
+      const elapsedMs = nowMs - lastInteractionTimeMs
+      if (elapsedMs >= timeoutMs) {
+        console.log(
+          '[AUTO-CLOSE-TRIGGERED]',
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            phone: ctrlPhone.slice(0, 4) + '****' + ctrlPhone.slice(-2),
+            elapsedMinutes: Math.round(elapsedMs / 60000),
+            timeoutMinutes: autoCloseMin,
+          }),
+        )
+
+        // 1. Enviar aviso de encerramento via Z-API ao cliente
+        if (zapiInstance && zapiToken && zapiClientToken) {
+          try {
+            $http.send({
+              url:
+                'https://api.z-api.io/instances/' +
+                encodeURIComponent(zapiInstance) +
+                '/token/' +
+                encodeURIComponent(zapiToken) +
+                '/send-text',
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Client-Token': zapiClientToken,
+              },
+              body: JSON.stringify({
+                phone: ctrlPhone,
+                message: autoCloseMsg,
+              }),
+              timeout: 10,
+            })
+          } catch (sendCloseErr) {
+            console.log('[AUTO-CLOSE-SEND-ERR]', String(sendCloseErr))
+          }
+        }
+
+        // Gravar aviso em webhook_received como fromMe=true para constar no chat sem apagar nada
+        try {
+          const colW = $app.findCollectionByNameOrId('webhook_received')
+          const recW = new Record(colW)
+          recW.set('type', 'AgentSentMessage')
+          recW.set('phone', { phone: ctrlPhone })
+          recW.set('fromMe', true)
+          recW.set('text', { message: autoCloseMsg })
+          recW.set('chat', { phone: ctrlPhone })
+          recW.set('sender', { role: 'agent' })
+          recW.set('status', 'SENT')
+          recW.set('messageId', 'autoclose_' + Date.now() + '_' + $security.randomString(6))
+          recW.set('moment', Math.floor(Date.now() / 1000))
+          $app.save(recW)
+        } catch (_) {}
+
+        // 2. Reativar a IA (human_mode = false) LIMPANDO a marcação de motivo (paused_by)
+        ctrl.set('human_mode', false)
+        ctrl.set('paused_by', '')
+        $app.save(ctrl)
+
+        console.log(
+          '[AUTO-CLOSE-COMPLETED]',
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            phone: ctrlPhone.slice(0, 4) + '****' + ctrlPhone.slice(-2),
+            human_mode: false,
+            paused_by_cleared: true,
+          }),
+        )
+      }
+    }
+  } catch (err) {
+    console.log('[AUTO-CLOSE-GLOBAL-ERR]', String(err))
+  }
+}
+
+// Cron leve a cada 2 minutos para verificar timeouts mesmo sem mensagens novas entrando
+cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
+  checkAndRunAutoCloseHumanChatsGlobal()
+})
+
 // Hook assíncrono acionado após inserção bem-sucedida em message_processing
 // Processa mensagens com IA (gpt-4o-mini) e envia resposta via Z-API com idempotência estrita
 onRecordAfterCreateSuccess((e) => {
@@ -157,6 +305,9 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
+  // Executar checagem de auto-close global leve
+  checkAndRunAutoCloseHumanChatsGlobal()
+
   // Blindagem estrita de allowlist: com a IA LIGADA, ela responde APENAS ao telefone de teste
   // autorizado gravado em settings (authorized_test_phone) e a NINGUÉM mais.
   // Mensagens de outros números são ignoradas (registradas no log como ignoradas, sem resposta,
@@ -223,12 +374,19 @@ onRecordAfterCreateSuccess((e) => {
     : ''
 
   // 5. Configurar systemPrompt a partir de settings ou fallback mínimo cordial
-  const configuredPrompt = String(validConfigRec.getString('ai_system_prompt') || '').trim()
+  let configuredPrompt = String(validConfigRec.getString('ai_system_prompt') || '').trim()
+  if (configuredPrompt) {
+    configuredPrompt = configuredPrompt
+      .replace(/NUNCA informe valor ou pre[çc]o ao cliente.*?transferir para atendente/gi, '')
+      .replace(/NUNCA passe valor ou pre[çc]o.*?atendente humano/gi, '')
+      .replace(/\[REGRA CR[ÍI]TICA DE PRE[ÇC]OS E ESTOQUE\][\s\S]*?(?=\n\n|$)/gi, '')
+      .trim()
+  }
+
   const fallbackPrompt =
     'Você é o assistente virtual da RPA AUTO PARTS, especializada em peças automotivas. ' +
     'Seja cordial, objetivo e atencioso. ' +
-    'NÃO invente preços, estoque, prazos ou especificações técnicas. ' +
-    'Se não souber uma informação, informe que a equipe humana irá confirmar.'
+    'NÃO invente preços, estoque, prazos ou especificações técnicas.'
 
   // Meios de pagamento configurados
   const paymentMethodsConfig = String(validConfigRec.getString('ai_payment_methods') || '').trim()

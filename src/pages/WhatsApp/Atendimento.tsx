@@ -36,7 +36,7 @@ import pb from '@/lib/pocketbase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { openWhatsApp, formatCurrency } from '@/lib/whatsapp'
+import { openWhatsApp, formatCurrency, cleanPhoneNumber } from '@/lib/whatsapp'
 import { Quote } from '@/types/crm'
 import { AlertCircle, CheckCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -1001,9 +1001,45 @@ export default function WhatsAppAtendimento() {
           whatsapp_status: newStatus,
         })
       }
+
+      // Se o status for alterado para 'resolvido' (encerramento manual pelo atendente):
+      // A IA volta a controlar automaticamente (human_mode = false) e enviamos aviso ao cliente
+      if (newStatus === 'resolvido') {
+        const targetPhone = cleanPhoneNumber(activeCustomer.rawPhone || activeCustomer.phone)
+        try {
+          // 1. Atualiza chat_control para human_mode = false e limpa paused_by
+          const controls = await pb.collection('chat_control').getList(1, 1, {
+            filter: `phone = "${targetPhone}"`,
+          })
+          if (controls.items.length > 0) {
+            await pb.collection('chat_control').update(controls.items[0].id, {
+              human_mode: false,
+              paused_by: '',
+            })
+          }
+
+          // 2. Enviar aviso de encerramento amigável para o WhatsApp do cliente
+          const settingsList = await pb.collection('settings').getList(1, 1)
+          const closeMsg =
+            settingsList.items[0]?.ai_auto_close_message ||
+            'Atendimento encerrado por inatividade. Se precisar de algo, me chame aqui que continuo te ajudando! 🙂'
+
+          // Enviar via backend send-message para registro e disparo real
+          await pb.send('/backend/v1/whatsapp/send-message', {
+            method: 'POST',
+            body: {
+              phone: targetPhone,
+              message: closeMsg,
+            },
+          })
+        } catch (closeErr) {
+          console.warn('Aviso de retorno para IA ao resolver conversa:', closeErr)
+        }
+      }
+
       toast({
         title: 'Status atualizado',
-        description: `Conversa marcada como ${newStatus === 'resolvido' ? 'Resolvido' : newStatus === 'em_atendimento' ? 'Em atendimento' : 'Novo'}.`,
+        description: `Conversa marcada como ${newStatus === 'resolvido' ? 'Resolvido (controle devolvido para IA)' : newStatus === 'em_atendimento' ? 'Em atendimento' : 'Novo'}.`,
       })
     } catch (err: any) {
       console.error('Erro ao salvar whatsapp_status no customer:', err)
