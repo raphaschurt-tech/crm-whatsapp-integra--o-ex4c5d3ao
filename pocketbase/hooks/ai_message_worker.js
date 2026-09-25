@@ -1,5 +1,6 @@
-// Função utilitária global do worker para verificar encerramento automático de atendimentos humanos por inatividade
-const checkAndRunAutoCloseHumanChatsGlobal = () => {
+// Cron leve a cada 2 minutos para verificar encerramento automático de atendimentos humanos por inatividade.
+// PocketBase JSVM isola os escopos de cada callback, portanto toda lógica é autocontida aqui dentro.
+cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
   try {
     const validConfigs = $app.findRecordsByFilter(
       'settings',
@@ -139,11 +140,6 @@ const checkAndRunAutoCloseHumanChatsGlobal = () => {
   } catch (err) {
     console.log('[AUTO-CLOSE-GLOBAL-ERR]', String(err))
   }
-}
-
-// Cron leve a cada 2 minutos para verificar timeouts mesmo sem mensagens novas entrando
-cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
-  checkAndRunAutoCloseHumanChatsGlobal()
 })
 
 // Hook assíncrono acionado após inserção bem-sucedida em message_processing
@@ -305,8 +301,49 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  // Executar checagem de auto-close global leve
-  checkAndRunAutoCloseHumanChatsGlobal()
+  // Execução de checagem defensiva de auto-close para este telefone específico (se estava em modo humano)
+  // protegida por try/catch absoluto para que QUALQUER falha nunca derrube o processamento da mensagem.
+  try {
+    const autoCloseMin = Number(validConfigRec.get('ai_auto_close_minutes')) || 0
+    if (autoCloseMin > 0 && phone) {
+      let thisChatCtrl = null
+      try {
+        const foundCtrl = $app.findRecordsByFilter(
+          'chat_control',
+          'phone = {:p} && human_mode = true',
+          '-updated',
+          1,
+          0,
+          { p: phone },
+        )
+        if (foundCtrl && foundCtrl.length > 0) {
+          thisChatCtrl = foundCtrl[0]
+        }
+      } catch (_) {}
+
+      if (thisChatCtrl) {
+        const ctrlUp = new Date(thisChatCtrl.getString('updated') || thisChatCtrl.updated)
+        const ctrlTime = !isNaN(ctrlUp.getTime()) ? ctrlUp.getTime() : 0
+        const elapsedMin = ctrlTime > 0 ? (Date.now() - ctrlTime) / 60000 : 999
+        if (elapsedMin >= autoCloseMin) {
+          thisChatCtrl.set('human_mode', false)
+          thisChatCtrl.set('paused_by', '')
+          $app.save(thisChatCtrl)
+          console.log(
+            '[AUTO-CLOSE-INLINE-RESOLVED]',
+            JSON.stringify({
+              timestamp: new Date().toISOString(),
+              phone: maskedPhone,
+              elapsedMin: Math.round(elapsedMin),
+              human_mode: false,
+            }),
+          )
+        }
+      }
+    }
+  } catch (autoCloseErr) {
+    console.log('[AUTO-CLOSE-SAFE-IGNORED]', String(autoCloseErr))
+  }
 
   // Blindagem estrita de allowlist: com a IA LIGADA, ela responde APENAS ao telefone de teste
   // autorizado gravado em settings (authorized_test_phone) e a NINGUÉM mais.
