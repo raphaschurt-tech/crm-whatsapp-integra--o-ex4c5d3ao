@@ -90,7 +90,8 @@ export default function ProductList() {
 
   // Sincroniza filtros com o estado da aba ativa e atualiza título contextual se houver termo de busca
   useEffect(() => {
-    if (!activeTab || activeTab.routeKey !== '/produtos') return
+    if (!activeTab || (activeTab.routeKey !== 'produtos' && activeTab.routeKey !== '/produtos'))
+      return
     updateTabState(activeTab.id, {
       search,
       natureFilter,

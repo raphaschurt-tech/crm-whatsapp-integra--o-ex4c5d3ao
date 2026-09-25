@@ -79,7 +79,8 @@ export default function QuoteList() {
 
   // Sincroniza estado da aba e título
   useEffect(() => {
-    if (!activeTab || activeTab.routeKey !== '/orcamentos') return
+    if (!activeTab || (activeTab.routeKey !== 'orcamentos' && activeTab.routeKey !== '/orcamentos'))
+      return
     updateTabState(activeTab.id, {
       search,
       statusFilter,

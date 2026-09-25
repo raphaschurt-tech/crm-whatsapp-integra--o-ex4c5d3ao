@@ -85,7 +85,8 @@ export default function CustomerList() {
 
   // Sincroniza filtros com a aba ativa e define título contextual
   useEffect(() => {
-    if (!activeTab || activeTab.routeKey !== '/clientes') return
+    if (!activeTab || (activeTab.routeKey !== 'clientes' && activeTab.routeKey !== '/clientes'))
+      return
     updateTabState(activeTab.id, {
       search,
       typeFilter,
