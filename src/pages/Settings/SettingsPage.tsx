@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
+  Clock,
 } from 'lucide-react'
 import { getSettings, saveSettings } from '@/services/settings'
 import pb from '@/lib/pocketbase/client'
@@ -39,6 +40,9 @@ export default function SettingsPage() {
   const [zapiToken, setZapiToken] = useState('')
   const [zapiClientToken, setZapiClientToken] = useState('')
   const [aiSystemPrompt, setAiSystemPrompt] = useState('')
+  const [aiPaymentMethods, setAiPaymentMethods] = useState('')
+  const [aiAutoCloseMinutes, setAiAutoCloseMinutes] = useState<number>(60)
+  const [aiAutoCloseMessage, setAiAutoCloseMessage] = useState('')
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -78,6 +82,18 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
         setZapiToken(s.zapi_token || '')
         setZapiClientToken(s.zapi_client_token || '')
         setAiSystemPrompt(s.ai_system_prompt || '')
+        setAiPaymentMethods(
+          s.ai_payment_methods || 'Pix, cartão em até 3x sem juros, link de pagamento',
+        )
+        setAiAutoCloseMinutes(
+          s.ai_auto_close_minutes !== undefined && s.ai_auto_close_minutes !== null
+            ? Number(s.ai_auto_close_minutes)
+            : 60,
+        )
+        setAiAutoCloseMessage(
+          s.ai_auto_close_message ||
+            'Atendimento encerrado por inatividade. Se precisar de algo, me chame aqui que continuo te ajudando! 🙂',
+        )
       }
     } catch (e) {
       console.warn('Erro ao obter configurações:', e)
@@ -106,6 +122,9 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
         zapi_token: zapiToken,
         zapi_client_token: zapiClientToken,
         ai_system_prompt: aiSystemPrompt,
+        ai_payment_methods: aiPaymentMethods,
+        ai_auto_close_minutes: Number(aiAutoCloseMinutes) || 0,
+        ai_auto_close_message: aiAutoCloseMessage,
       })
       toast({ title: 'Configurações salvas com sucesso!' })
     } catch (_) {
@@ -405,6 +424,24 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                 />
                 <p className="text-xs text-slate-500">Chave de acesso da OpenAI (GPT-4o-mini).</p>
               </div>
+
+              {/* Meios de Pagamento informados pela IA */}
+              <div className="space-y-1.5 md:col-span-2">
+                <Label className="flex items-center gap-1.5 text-slate-800 font-medium">
+                  <MessageSquare className="h-4 w-4 text-emerald-600" /> Formas de Pagamento (IA)
+                </Label>
+                <Input
+                  value={aiPaymentMethods}
+                  onChange={(e) => setAiPaymentMethods(e.target.value)}
+                  placeholder="Ex: Pix, cartão em até 3x sem juros, link de pagamento"
+                  className="bg-white text-sm"
+                />
+                <p className="text-xs text-slate-500">
+                  Texto livre informado pela IA quando o cliente perguntar como pagar (ex.: Pix,
+                  cartão em até 3x sem juros, link de pagamento). Fallback se vazio: &quot;Pagamento
+                  via link enviado no orçamento&quot;.
+                </p>
+              </div>
               {/* Z-API Instance ID */}
               <div className="space-y-1.5">
                 <Label className="flex items-center gap-1.5 text-slate-800 font-medium">
@@ -587,6 +624,59 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
             </div>
           </CardContent>
         </Card>
+        {/* Seção Nova: Encerramento Automático do Atendimento Humano (Retorno para a IA) */}
+        <Card className="bg-white border-slate-200 shadow-sm">
+          <CardHeader className="pb-4">
+            <div className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-slate-700" />
+              <CardTitle className="text-lg font-bold text-slate-900">
+                Encerramento Automático do Atendimento Humano
+              </CardTitle>
+            </div>
+            <CardDescription className="text-xs text-slate-500">
+              Devolve o controle da conversa para a IA após período de inatividade, preservando todo
+              o histórico
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5 text-slate-800 font-medium">
+                  Timeout de Inatividade (Minutos)
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={aiAutoCloseMinutes}
+                  onChange={(e) => setAiAutoCloseMinutes(Number(e.target.value))}
+                  placeholder="60"
+                  className="bg-white font-mono text-sm"
+                />
+                <p className="text-xs text-slate-500">
+                  Tempo sem nenhuma nova interação (cliente ou atendente) para reativar a IA
+                  automaticamente. Padrão: 60 minutos (0 = desativa encerramento automático).
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5 text-slate-800 font-medium">
+                Mensagem de Encerramento por Inatividade
+              </Label>
+              <Input
+                value={aiAutoCloseMessage}
+                onChange={(e) => setAiAutoCloseMessage(e.target.value)}
+                placeholder="Atendimento encerrado por inatividade. Se precisar de algo, me chame aqui que continuo te ajudando! 🙂"
+                className="bg-white text-sm"
+              />
+              <p className="text-xs text-slate-500">
+                Aviso enviado ao WhatsApp do cliente ao reativar a IA por timeout de inatividade.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Seção 2: Integrações Gerais e Links */}
         <Card className="bg-white border-slate-200 shadow-sm">
           <CardHeader className="pb-4">

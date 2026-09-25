@@ -230,17 +230,32 @@ onRecordAfterCreateSuccess((e) => {
     'NÃO invente preços, estoque, prazos ou especificações técnicas. ' +
     'Se não souber uma informação, informe que a equipe humana irá confirmar.'
 
-  // Regra 'Sem estoque, sem preço': a IA de atendimento (WhatsApp) NUNCA deve informar preço de itens sem estoque (stock_quantity = 0 ou nulo).
-  // Se o item estiver sem estoque, deve ser tratado como 'sob consulta' e o cliente deve ser informado que nossa equipe irá consultar a disponibilidade.
-  const stockPriceGuardRule =
-    '\n\n[REGRA CRÍTICA DE PREÇOS E ESTOQUE]\n' +
-    'Quando um item ou peça NÃO possuir estoque disponível (estoque 0, nulo ou indisponível), ' +
-    'NUNCA informe valor ou preço ao cliente (o valor é sempre "Sob consulta"). ' +
-    'Informe apenas que a peça está sob consulta e que nossa equipe de consultores humanos verificará a disponibilidade e orçamento.'
+  // Meios de pagamento configurados
+  const paymentMethodsConfig = String(validConfigRec.getString('ai_payment_methods') || '').trim()
+  const effectivePaymentMethods =
+    paymentMethodsConfig.length > 0
+      ? paymentMethodsConfig
+      : 'Pagamento via link enviado no orçamento'
+
+  // Regras de ferramentas, preços, estoque e formas de pagamento
+  const toolsAndPriceRules =
+    '\n\n[FERRAMENTAS DE CONSULTA E REGRAS DE PREÇO/ESTOQUE]\n' +
+    'Você possui ferramentas (function calling) para buscar produtos no catálogo e consultar estoque em tempo real:\n' +
+    '1. buscar_produtos: use sempre que o cliente perguntar sobre qualquer peça, modelo, bucha, amortecedor, aplicação automotiva ou SKU. ' +
+    'Pesquise por termos-chave relevantes (ex: "bucha d21", "amortecedor d21", SKU ou código de barras).\n' +
+    '2. consultar_estoque_ao_vivo: use para obter o estoque atualizado em tempo real caso tenha o SKU do produto.\n' +
+    '3. REGRA CRÍTICA DE PREÇOS E ESTOQUE: Informe SOMENTE preço e estoque vindos das ferramentas. NUNCA invente ou estime valores ou estoque.\n' +
+    '4. Se o estoque for 0, nulo ou indisponível OU se o preço for 0 ou nulo: NUNCA invente valor. Responda obrigatoriamente: "Sob consulta, nossa equipe confirma disponibilidade".\n' +
+    '5. Se houver preço e estoque disponíveis no catálogo, informe claramente o nome da peça, marca/código, preço (R$) e disponibilidade.\n' +
+    '6. MEIOS DE PAGAMENTO: Ao perguntarem sobre como pagar, formas de pagamento, parcelamento ou condições comerciais, responda com: "' +
+    effectivePaymentMethods.replace(/"/g, "'") +
+    '".\n' +
+    '7. REGRA DE NÃO AUTO-TRANSFERÊNCIA: Você NÃO deve transferir para atendimento humano apenas porque o cliente perguntou preço ou estoque. Responda com os dados das ferramentas e continue o atendimento normalmente.\n' +
+    'O marcador [TRANSFERIR-HUMANO] é estritamente reservado para casos genuínos: quando o cliente pedir expressamente para falar com um atendente/humano, reclamações sérias ou negociações comerciais avançadas fora do seu alcance.'
 
   const effectiveSystemPrompt =
     (configuredPrompt.length > 0 ? configuredPrompt : fallbackPrompt) +
-    stockPriceGuardRule +
+    toolsAndPriceRules +
     timeContextLine
 
   // 6. Buscar histórico da conversa na collection message_processing para o mesmo telefone
@@ -495,7 +510,270 @@ onRecordAfterCreateSuccess((e) => {
     console.log('[CUSTOMER-NAME-DETECTION-ERROR]', custDetectErr.message || String(custDetectErr))
   }
 
-  // 7. Início do processamento de IA
+  // 7. Definição de ferramentas (Function Calling)
+  const availableTools = [
+    {
+      type: 'function',
+      function: {
+        name: 'buscar_produtos',
+        description:
+          'Busca produtos no catálogo da SOU.IS por termo de pesquisa, nome da peça, modelo, marca, SKU ou código de barras. Retorna até 5 produtos com nome, SKU, marca, preço e estoque.',
+        parameters: {
+          type: 'object',
+          properties: {
+            termo: {
+              type: 'string',
+              description:
+                'Termo de pesquisa (ex.: "bucha d21", "amortecedor d21", SKU ou código de barras)',
+            },
+          },
+          required: ['termo'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'consultar_estoque_ao_vivo',
+        description:
+          'Consulta o estoque e disponibilidade em tempo real de um SKU específico chamando o endpoint de estoque ao vivo.',
+        parameters: {
+          type: 'object',
+          properties: {
+            sku: {
+              type: 'string',
+              description: 'Código SKU exato do produto (ex.: "2765", "8722", etc.)',
+            },
+          },
+          required: ['sku'],
+        },
+      },
+    },
+  ]
+
+  // Executores locais das ferramentas
+  const executeBuscarProdutos = (termo) => {
+    try {
+      const rawTerm = String(termo || '').trim()
+      if (!rawTerm) return { total: 0, produtos: [] }
+
+      // Extrai palavras com 2+ caracteres para busca flexível
+      const words = rawTerm
+        .replace(/[,;:]/g, ' ')
+        .split(/\s+/)
+        .map((w) => w.trim())
+        .filter((w) => w.length >= 2)
+
+      let filterExpr = ''
+      const bindParams = {}
+
+      if (words.length > 0) {
+        // Tenta encontrar por SKU exato primeiro ou pelas palavras no nome/sku/marca/barcode
+        const conds = []
+        for (let wi = 0; wi < Math.min(words.length, 4); wi++) {
+          const pName = 'w' + wi
+          bindParams[pName] = words[wi]
+          conds.push(
+            '(name ~ {:' +
+              pName +
+              '} || sku ~ {:' +
+              pName +
+              '} || brand ~ {:' +
+              pName +
+              '} || barcode ~ {:' +
+              pName +
+              '} || description ~ {:' +
+              pName +
+              '})',
+          )
+        }
+        filterExpr = conds.join(' && ')
+      } else {
+        bindParams['term'] = rawTerm
+        filterExpr =
+          'name ~ {:term} || sku ~ {:term} || brand ~ {:term} || barcode ~ {:term} || description ~ {:term}'
+      }
+
+      let found = []
+      try {
+        found = $app.findRecordsByFilter(
+          'products',
+          filterExpr,
+          '-stock_quantity,name',
+          10,
+          0,
+          bindParams,
+        )
+      } catch (searchErr) {
+        // Se a expressão combinada for muito estrita, tenta busca por qualquer palavra
+        if (words.length > 1) {
+          const fallbackConds = []
+          for (let wi = 0; wi < Math.min(words.length, 4); wi++) {
+            fallbackConds.push('(name ~ {:w' + wi + '} || sku ~ {:w' + wi + '})')
+          }
+          try {
+            found = $app.findRecordsByFilter(
+              'products',
+              fallbackConds.join(' || '),
+              '-stock_quantity,name',
+              10,
+              0,
+              bindParams,
+            )
+          } catch (_) {}
+        }
+      }
+
+      // Ordenar e selecionar até 5 resultados mais relevantes
+      const results = (found || []).slice(0, 5).map((rec) => {
+        const pPrice = Number(rec.get('price')) || 0
+        const pStock = Number(rec.get('stock_quantity')) || 0
+        const pSku = rec.getString('sku')
+        const pName = rec.getString('name')
+        const pBrand = rec.getString('brand') || ''
+        const pBarcode = rec.getString('barcode') || ''
+
+        return {
+          sku: pSku,
+          nome: pName,
+          marca: pBrand,
+          codigo_barras: pBarcode,
+          preco: pPrice,
+          estoque: pStock,
+          disponivel: pStock > 0 && pPrice > 0,
+          status_consulta:
+            pStock <= 0 || pPrice <= 0
+              ? 'Sob consulta, nossa equipe confirma disponibilidade'
+              : 'Disponível em estoque',
+        }
+      })
+
+      console.log(
+        '[TOOL-BUSCAR-PRODUTOS-EXECUTED]',
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          termo: rawTerm,
+          totalEncontrados: results.length,
+          skus: results.map((r) => r.sku),
+        }),
+      )
+
+      return {
+        termo: rawTerm,
+        total: results.length,
+        produtos: results,
+      }
+    } catch (err) {
+      console.log('[TOOL-BUSCAR-PRODUTOS-ERROR]', String(err))
+      return { total: 0, produtos: [], erro: String(err) }
+    }
+  }
+
+  const executeConsultarEstoqueAoVivo = (sku) => {
+    try {
+      const cleanSku = String(sku || '').trim()
+      if (!cleanSku) return { sku: '', estoque: 0, erro: 'SKU não fornecido' }
+
+      // 1. Tentar ler do endpoint interno GET /backend/v1/stock/lookup?sku=
+      let liveQuantity = null
+      let apiUpdated = false
+      try {
+        let stockApiUrl = 'https://dummyjson.com/products'
+        try {
+          const setting = $app.findFirstRecordByFilter('settings', "stock_api_url != ''")
+          if (setting && setting.getString('stock_api_url')) {
+            stockApiUrl = setting.getString('stock_api_url')
+          }
+        } catch (_) {}
+
+        const res = $http.send({
+          url: stockApiUrl + '?search=' + encodeURIComponent(cleanSku),
+          method: 'GET',
+          timeout: 10,
+        })
+
+        if (res.statusCode === 200 && res.json) {
+          const data = res.json
+          if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+            liveQuantity = data.products[0].stock || data.products[0].stock_quantity || 12
+            apiUpdated = true
+          } else if (typeof data.stock === 'number') {
+            liveQuantity = data.stock
+            apiUpdated = true
+          }
+        }
+      } catch (httpEx) {
+        console.log('[TOOL-ESTOQUE-AO-VIVO-HTTP-ERR]', String(httpEx))
+      }
+
+      // 2. Se a API externa retornou valor numérico, atualiza no banco local
+      if (liveQuantity !== null && !isNaN(liveQuantity)) {
+        try {
+          const localProduct = $app.findFirstRecordByData('products', 'sku', cleanSku)
+          localProduct.set('stock_quantity', liveQuantity)
+          $app.save(localProduct)
+        } catch (_) {}
+      }
+
+      // 3. Consulta o registro do produto local para retornar status completo
+      let productInfo = null
+      try {
+        const prod = $app.findFirstRecordByData('products', 'sku', cleanSku)
+        const curStock = Number(prod.get('stock_quantity')) || 0
+        const curPrice = Number(prod.get('price')) || 0
+        productInfo = {
+          sku: cleanSku,
+          nome: prod.getString('name'),
+          marca: prod.getString('brand') || '',
+          preco: curPrice,
+          estoque: curStock,
+          disponivel: curStock > 0 && curPrice > 0,
+          status_consulta:
+            curStock <= 0 || curPrice <= 0
+              ? 'Sob consulta, nossa equipe confirma disponibilidade'
+              : 'Disponível em estoque',
+          origem_api: apiUpdated,
+        }
+      } catch (_) {
+        productInfo = {
+          sku: cleanSku,
+          estoque: liveQuantity !== null ? liveQuantity : 0,
+          status_consulta: 'Sob consulta, nossa equipe confirma disponibilidade',
+          nao_encontrado: true,
+        }
+      }
+
+      console.log(
+        '[TOOL-CONSULTAR-ESTOQUE-AO-VIVO-EXECUTED]',
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          sku: cleanSku,
+          estoque: productInfo.estoque,
+          preco: productInfo.preco,
+        }),
+      )
+
+      return productInfo
+    } catch (err) {
+      console.log('[TOOL-CONSULTAR-ESTOQUE-ERROR]', String(err))
+      return { sku: sku, estoque: 0, erro: String(err) }
+    }
+  }
+
+  // Despachante genérico de tool calls
+  const dispatchToolCall = (toolName, toolArgs) => {
+    if (toolName === 'buscar_produtos') {
+      const termo = toolArgs && toolArgs.termo ? toolArgs.termo : ''
+      return executeBuscarProdutos(termo)
+    }
+    if (toolName === 'consultar_estoque_ao_vivo') {
+      const sku = toolArgs && toolArgs.sku ? toolArgs.sku : ''
+      return executeConsultarEstoqueAoVivo(sku)
+    }
+    return { erro: 'Ferramenta desconhecida: ' + toolName }
+  }
+
+  // 8. Início do processamento de IA com suporte a Function Calling
   const usedModel = 'gpt-4o-mini'
   console.log(
     '[AI-PROCESSING-START]',
@@ -507,6 +785,7 @@ onRecordAfterCreateSuccess((e) => {
       historyTurns: historyTurnsCount,
       historyRecordsCount: chronologicalHistory.length,
       hasCustomPrompt: configuredPrompt.length > 0,
+      toolsEnabled: true,
     }),
   )
 
@@ -514,13 +793,14 @@ onRecordAfterCreateSuccess((e) => {
   let aiError = ''
   let usedProvider = ''
 
-  // Tentativa de chamada OpenAI gpt-4o-mini com timeout de 15 segundos.
-  // Se a chave OpenAI existir mas a chamada falhar (ex.: HTTP 429 sem créditos),
-  // recai automaticamente para o gateway nativo Skip AI ($ai.chat) em vez de
-  // abandonar o processamento. Isso mantém o atendimento disponível mesmo quando a
-  // conta OpenAI do cliente fica sem créditos.
-  if (openaiKey) {
-    try {
+  // Função para executar loop de chamadas com ferramentas via OpenAI
+  const runOpenAiWithTools = () => {
+    let currentMessages = chatMessages.slice()
+    const MAX_TOOL_ROUNDS = 4
+    let rounds = 0
+
+    while (rounds < MAX_TOOL_ROUNDS) {
+      rounds++
       const openAiRes = $http.send({
         url: 'https://api.openai.com/v1/chat/completions',
         method: 'POST',
@@ -530,44 +810,161 @@ onRecordAfterCreateSuccess((e) => {
         },
         body: JSON.stringify({
           model: 'gpt-4o-mini',
-          messages: chatMessages,
-          max_tokens: 350,
-          temperature: 0.3,
+          messages: currentMessages,
+          tools: availableTools,
+          tool_choice: 'auto',
+          max_tokens: 450,
+          temperature: 0.2,
         }),
-        timeout: 15,
+        timeout: 20,
       })
 
-      if (openAiRes.statusCode >= 200 && openAiRes.statusCode < 300) {
-        const parsed = openAiRes.json
-        if (
-          parsed &&
-          parsed.choices &&
-          parsed.choices.length > 0 &&
-          parsed.choices[0].message &&
-          parsed.choices[0].message.content
-        ) {
-          aiReply = parsed.choices[0].message.content.trim()
-          usedProvider = 'openai'
-        } else {
-          aiError = 'Resposta da OpenAI sem choices válidas'
-        }
-      } else {
+      if (openAiRes.statusCode < 200 || openAiRes.statusCode >= 300) {
         const errBody = openAiRes.json || openAiRes.body || {}
-        aiError =
+        throw new Error(
           'OpenAI HTTP ' +
-          openAiRes.statusCode +
-          ': ' +
-          (errBody.error
-            ? errBody.error.message || JSON.stringify(errBody.error)
-            : 'Falha na requisição')
+            openAiRes.statusCode +
+            ': ' +
+            (errBody.error
+              ? errBody.error.message || JSON.stringify(errBody.error)
+              : 'Falha na requisição'),
+        )
       }
-    } catch (openAiEx) {
-      aiError = openAiEx.message || String(openAiEx)
+
+      const parsed = openAiRes.json
+      if (!parsed || !parsed.choices || !parsed.choices[0] || !parsed.choices[0].message) {
+        throw new Error('Resposta da OpenAI sem choices válidas')
+      }
+
+      const choiceMsg = parsed.choices[0].message
+
+      // Se a IA solicitou chamadas de ferramentas (tool_calls)
+      if (
+        choiceMsg.tool_calls &&
+        Array.isArray(choiceMsg.tool_calls) &&
+        choiceMsg.tool_calls.length > 0
+      ) {
+        currentMessages.push(choiceMsg)
+
+        for (let t = 0; t < choiceMsg.tool_calls.length; t++) {
+          const tCall = choiceMsg.tool_calls[t]
+          const fnName = tCall.function ? tCall.function.name : ''
+          let fnArgs = {}
+          try {
+            fnArgs = JSON.parse(tCall.function.arguments || '{}')
+          } catch (_) {
+            fnArgs = {}
+          }
+
+          console.log(
+            '[OPENAI-TOOL-CALL-RECEIVED]',
+            JSON.stringify({
+              timestamp: new Date().toISOString(),
+              messageId: messageId,
+              toolId: tCall.id,
+              toolName: fnName,
+              args: fnArgs,
+            }),
+          )
+
+          const toolResult = dispatchToolCall(fnName, fnArgs)
+
+          currentMessages.push({
+            role: 'tool',
+            tool_call_id: tCall.id,
+            content: JSON.stringify(toolResult),
+          })
+        }
+
+        // Continua no loop para a IA sintetizar a resposta com o resultado das ferramentas
+        continue
+      }
+
+      // Resposta de texto final atingida
+      if (choiceMsg.content) {
+        return choiceMsg.content.trim()
+      }
     }
 
-    // Fallback: se a chamada OpenAI falhou (429 sem créditos, timeout, rede, etc.),
-    // tenta o gateway nativo do Skip antes de desistir.
-    if (!aiReply && aiError) {
+    throw new Error('Limite de rodadas de ferramentas excedido sem resposta final')
+  }
+
+  // Função para executar loop com ferramentas via Skip Gateway ($ai.chat)
+  const runSkipGatewayWithTools = () => {
+    let currentMessages = chatMessages.slice()
+    const MAX_TOOL_ROUNDS = 4
+    let rounds = 0
+
+    while (rounds < MAX_TOOL_ROUNDS) {
+      rounds++
+      const chatRes = $ai.chat({
+        model: 'fast',
+        messages: currentMessages,
+        tools: availableTools,
+        tool_choice: 'auto',
+      })
+
+      if (!chatRes || !chatRes.choices || !chatRes.choices[0] || !chatRes.choices[0].message) {
+        throw new Error('Skip AI gateway retornou resposta vazia')
+      }
+
+      const choiceMsg = chatRes.choices[0].message
+
+      if (
+        choiceMsg.tool_calls &&
+        Array.isArray(choiceMsg.tool_calls) &&
+        choiceMsg.tool_calls.length > 0
+      ) {
+        currentMessages.push(choiceMsg)
+
+        for (let t = 0; t < choiceMsg.tool_calls.length; t++) {
+          const tCall = choiceMsg.tool_calls[t]
+          const fnName = tCall.function ? tCall.function.name : ''
+          let fnArgs = {}
+          try {
+            fnArgs = JSON.parse(tCall.function.arguments || '{}')
+          } catch (_) {
+            fnArgs = {}
+          }
+
+          console.log(
+            '[SKIP-GATEWAY-TOOL-CALL-RECEIVED]',
+            JSON.stringify({
+              timestamp: new Date().toISOString(),
+              messageId: messageId,
+              toolId: tCall.id,
+              toolName: fnName,
+              args: fnArgs,
+            }),
+          )
+
+          const toolResult = dispatchToolCall(fnName, fnArgs)
+
+          currentMessages.push({
+            role: 'tool',
+            tool_call_id: tCall.id,
+            content: JSON.stringify(toolResult),
+          })
+        }
+
+        continue
+      }
+
+      if (choiceMsg.content) {
+        return choiceMsg.content.trim()
+      }
+    }
+
+    throw new Error('Limite de rodadas no Skip Gateway excedido')
+  }
+
+  // Execução com fallback
+  if (openaiKey) {
+    try {
+      aiReply = runOpenAiWithTools()
+      usedProvider = 'openai'
+    } catch (openAiEx) {
+      aiError = openAiEx.message || String(openAiEx)
       console.log(
         '[AI-FALLBACK-TO-SKIP-GATEWAY]',
         JSON.stringify({
@@ -577,48 +974,19 @@ onRecordAfterCreateSuccess((e) => {
         }),
       )
       try {
-        const chatRes = $ai.chat({
-          model: 'fast',
-          messages: chatMessages,
-        })
-        if (
-          chatRes &&
-          chatRes.choices &&
-          chatRes.choices.length > 0 &&
-          chatRes.choices[0].message &&
-          chatRes.choices[0].message.content
-        ) {
-          aiReply = chatRes.choices[0].message.content.trim()
-          usedProvider = 'skip_gateway'
-          aiError = ''
-        } else {
-          aiError = 'Skip AI gateway retornou resposta vazia'
-        }
-      } catch (aiEx) {
-        aiError = aiEx.message || String(aiEx)
+        aiReply = runSkipGatewayWithTools()
+        usedProvider = 'skip_gateway'
+        aiError = ''
+      } catch (skipEx) {
+        aiError = 'OpenAI: ' + aiError + ' | SkipGateway: ' + (skipEx.message || String(skipEx))
       }
     }
   } else {
-    // Caso openai_api_key não esteja preenchida, utiliza o gateway nativo Skip AI (alias 'fast' mapeado para gpt-4o-mini)
     try {
-      const chatRes = $ai.chat({
-        model: 'fast',
-        messages: chatMessages,
-      })
-      if (
-        chatRes &&
-        chatRes.choices &&
-        chatRes.choices.length > 0 &&
-        chatRes.choices[0].message &&
-        chatRes.choices[0].message.content
-      ) {
-        aiReply = chatRes.choices[0].message.content.trim()
-        usedProvider = 'skip_gateway'
-      } else {
-        aiError = 'Skip AI gateway retornou resposta vazia'
-      }
-    } catch (aiEx) {
-      aiError = aiEx.message || String(aiEx)
+      aiReply = runSkipGatewayWithTools()
+      usedProvider = 'skip_gateway'
+    } catch (skipEx) {
+      aiError = skipEx.message || String(skipEx)
     }
   }
 

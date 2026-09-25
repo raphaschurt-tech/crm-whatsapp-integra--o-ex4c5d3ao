@@ -176,6 +176,9 @@ export interface Settings extends RecordModel {
   zapi_token?: string
   zapi_client_token?: string
   ai_system_prompt?: string
+  ai_payment_methods?: string
+  ai_auto_close_minutes?: number
+  ai_auto_close_message?: string
 }
 
 export type MessageProcessingStatus = 'received' | 'processing' | 'completed' | 'failed'

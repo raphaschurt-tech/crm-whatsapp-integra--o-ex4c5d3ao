@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-25T16:56:12.923Z",
+  "generatedAt": "2026-09-25T21:44:21.983Z",
   "collections": [
     {
       "name": "users",
@@ -700,6 +700,24 @@
         },
         {
           "name": "stock_api_token",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ai_payment_methods",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ai_auto_close_minutes",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ai_auto_close_message",
           "type": "text",
           "required": false,
           "system": false
