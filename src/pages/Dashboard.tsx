@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   FileText,
@@ -57,7 +57,7 @@ export default function Dashboard() {
   }, [])
 
   // Debounce defensivo para os eventos realtime do dashboard
-  const realtimeTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const realtimeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const debouncedLoadData = useCallback(() => {
     if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current)
     realtimeTimerRef.current = setTimeout(() => {

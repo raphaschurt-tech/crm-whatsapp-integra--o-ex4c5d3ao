@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Filter,
   RefreshCw,
@@ -163,7 +163,7 @@ export default function PipelineBoard() {
   }, [loadData])
 
   // Assinaturas realtime com debounce para evitar rajadas de recarregamento
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const debouncedRealtimeReload = useCallback(() => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
     debounceTimerRef.current = setTimeout(() => {

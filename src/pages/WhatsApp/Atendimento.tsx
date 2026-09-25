@@ -469,7 +469,7 @@ export default function WhatsAppAtendimento() {
   }, [fetchData, checkConnectionStatus])
 
   // Realtime subscription com debounce para evitar tempestade de requisições e 429
-  const realtimeDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const debouncedFetchData = useCallback(() => {
     if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current)
     realtimeDebounceRef.current = setTimeout(() => {
