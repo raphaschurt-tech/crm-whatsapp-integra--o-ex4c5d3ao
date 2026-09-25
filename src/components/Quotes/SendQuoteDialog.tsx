@@ -35,7 +35,9 @@ import {
 } from '@/services/quotePdfService'
 import { sendWhatsAppMessage, updateQuoteStatus } from '@/services/quotes'
 import { updateCustomer } from '@/services/customers'
+import { getSettings } from '@/services/settings'
 import { toast } from '@/hooks/use-toast'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 interface SendQuoteDialogProps {
   isOpen: boolean
@@ -78,13 +80,34 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
   const [messageText, setMessageText] = useState(defaultMessage)
   const [includePdf, setIncludePdf] = useState(true)
   const [sending, setSending] = useState(false)
+  const [hasPaymentLinkTemplate, setHasPaymentLinkTemplate] = useState<boolean | null>(null)
   const [sendResultInfo, setSendResultInfo] = useState<{
     success: boolean
     viaZapi: boolean
     docSent: boolean
     docError?: string | null
     fallbackWaMe?: boolean
+    paymentLinkMissing?: boolean
   } | null>(null)
+
+  // Verificar se o molde de link de pagamento está configurado em Settings
+  React.useEffect(() => {
+    if (!isOpen) return
+    let active = true
+    getSettings()
+      .then((s) => {
+        if (!active) return
+        const tpl = (s?.payment_link_template || '').trim()
+        setHasPaymentLinkTemplate(tpl.length > 0)
+      })
+      .catch(() => {
+        if (!active) return
+        setHasPaymentLinkTemplate(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [isOpen])
 
   const handleDownloadPdf = async () => {
     try {
@@ -130,6 +153,21 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
     setSendResultInfo(null)
 
     try {
+      // 1. Checar se o molde de link de pagamento está preenchido nas Configurações
+      let isPaymentLinkMissing = false
+      try {
+        const currentSettings = await getSettings()
+        const tpl = (currentSettings?.payment_link_template || '').trim()
+        if (!tpl) {
+          isPaymentLinkMissing = true
+        }
+      } catch (_) {
+        // Fallback defensivo usando o estado pré-carregado
+        if (hasPaymentLinkTemplate === false) {
+          isPaymentLinkMissing = true
+        }
+      }
+
       let docBase64: string | undefined
       if (includePdf) {
         try {
@@ -213,7 +251,20 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
         docSent,
         docError,
         fallbackWaMe,
+        paymentLinkMissing: isPaymentLinkMissing,
       })
+
+      // Aviso visível na tela: se o molde de link de pagamento não estiver configurado,
+      // alertar o atendente imediatamente via toast destacado para enviar o link manualmente.
+      if (isPaymentLinkMissing) {
+        toast({
+          title: 'Link de pagamento não configurado',
+          description:
+            'O orçamento foi enviado, mas o molde de link de pagamento está vazio nas Configurações — envie o link manualmente para o cliente.',
+          variant: 'destructive',
+          duration: 8000,
+        })
+      }
 
       toast({
         title: 'Orçamento Enviado!',
@@ -288,6 +339,22 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
               />
             </div>
           </div>
+
+          {/* Alerta preventivo visível caso molde de link de pagamento esteja vazio */}
+          {hasPaymentLinkTemplate === false && (
+            <Alert className="border-amber-300 bg-amber-50/80 text-amber-900 py-2.5 px-3">
+              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+              <div className="ml-2">
+                <AlertTitle className="text-xs font-semibold text-amber-900">
+                  Link de pagamento não configurado
+                </AlertTitle>
+                <AlertDescription className="text-[11px] text-amber-800 leading-relaxed">
+                  O molde de pagamento está em branco nas Configurações. O orçamento será enviado
+                  normalmente, mas lembre-se de enviar o link de pagamento manualmente ao cliente.
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
 
           {/* Opção PDF */}
           <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-2">
@@ -380,6 +447,16 @@ export const SendQuoteDialog: React.FC<SendQuoteDialogProps> = ({
               <p className="text-[11px] text-slate-600">
                 O status do orçamento foi atualizado para <strong>"ENVIADO"</strong>.
               </p>
+
+              {sendResultInfo.paymentLinkMissing && (
+                <div className="mt-2 pt-2 border-t border-amber-200/80 flex items-start gap-1.5 text-amber-800 font-medium">
+                  <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span className="text-[11px]">
+                    <strong>Atenção:</strong> Molde de pagamento não configurado nas Configurações —
+                    envie o link de pagamento manualmente.
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -631,11 +631,11 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
               <Input
                 value={paymentLinkTemplate}
                 onChange={(e) => setPaymentLinkTemplate(e.target.value)}
-                placeholder="Deixe em branco para usar a página interna de checkout"
+                placeholder="https://seu-link-aqui/{valor}"
               />
               <p className="text-xs text-slate-500">
-                Pode usar espaço para gateway customizado. Ex: https://gateway.com/pay/{'{id}'}
-                ?token={'{token}'}
+                Molde de link para futura integração bancária/gateway (ex: https://seu-link-aqui/
+                {'{valor}'}). Se vazio, envie o link manualmente.
               </p>
             </div>
           </CardContent>

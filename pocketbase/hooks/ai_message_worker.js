@@ -157,20 +157,40 @@ onRecordAfterCreateSuccess((e) => {
     return e.next()
   }
 
-  // O filtro de número só é aplicado no modo de teste controlado (IA desligada).
-  // Com a IA habilitada, qualquer número recebido pelo webhook pode ser processado.
-  if (!iaEnabled && (!authorizedPhone || phone !== authorizedPhone)) {
+  // Blindagem estrita de allowlist: com a IA LIGADA, ela responde APENAS ao telefone de teste
+  // autorizado gravado em settings (authorized_test_phone) e a NINGUÉM mais.
+  // Mensagens de outros números são ignoradas (registradas no log como ignoradas, sem resposta,
+  // sem gastar tokens da OpenAI ou provedor).
+  const cleanPhoneDigits = String(phone || '').replace(/\D/g, '')
+  const cleanAuthPhoneDigits = String(authorizedPhone || '').replace(/\D/g, '')
+
+  // Comparação tolerante com ou sem DDI 55
+  const phoneWithoutDdi =
+    cleanPhoneDigits.startsWith('55') && cleanPhoneDigits.length >= 12
+      ? cleanPhoneDigits.slice(2)
+      : cleanPhoneDigits
+  const authWithoutDdi =
+    cleanAuthPhoneDigits.startsWith('55') && cleanAuthPhoneDigits.length >= 12
+      ? cleanAuthPhoneDigits.slice(2)
+      : cleanAuthPhoneDigits
+
+  const isAuthorizedNumber =
+    Boolean(cleanAuthPhoneDigits) &&
+    (cleanPhoneDigits === cleanAuthPhoneDigits || phoneWithoutDdi === authWithoutDdi)
+
+  if (!isAuthorizedNumber) {
     console.log(
-      '[UNAUTHORIZED-TEST-NUMBER]',
+      '[UNAUTHORIZED-PHONE-IGNORED]',
       JSON.stringify({
         timestamp: new Date().toISOString(),
         messageId: messageId,
         senderPhone: maskedPhone,
+        reason: 'Phone not in authorized_test_phone allowlist while AI is enabled',
       }),
     )
     try {
       procRecord.set('status', 'failed')
-      procRecord.set('errorMessage', 'Phone not authorized for test mode')
+      procRecord.set('errorMessage', 'Phone not authorized (allowlist active)')
       $app.save(procRecord)
     } catch (_) {}
     return e.next()
