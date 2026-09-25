@@ -932,13 +932,7 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
     no_price_skus: mappedResult.noPriceSkus,
   }
 
-  try {
-    $app
-      .db()
-      .newQuery("UPDATE settings SET payment_link_template = {:val} WHERE id != ''")
-      .bind({ val: JSON.stringify(resultSummary) })
-      .execute()
-  } catch (_) {}
+  console.log('[SOUIS-TRIGGER-NOW-SUMMARY]', JSON.stringify(resultSummary))
 
   return e.json(200, {
     success: true,
@@ -981,15 +975,7 @@ routerAdd('GET', '/backend/v1/souis/trigger-save', (e) => {
     }
   }
 
-  try {
-    const setRec = $app.findFirstRecordByFilter('settings', "id != ''")
-    if (setRec) {
-      setRec.set('payment_link_template', JSON.stringify(result))
-      $app.save(setRec)
-    }
-  } catch (errSet) {
-    result.errSet = String(errSet)
-  }
+  console.log('[SOUIS-TRIGGER-SAVE-PROBE]', JSON.stringify(result))
 
   return e.json(200, result)
 })
