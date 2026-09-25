@@ -56,15 +56,18 @@ export default function Dashboard() {
     loadData()
   }, [])
 
-  useRealtime('quotes', () => {
-    loadData()
-  })
-  useRealtime('products', () => {
-    loadData()
-  })
-  useRealtime('customers', () => {
-    loadData()
-  })
+  // Debounce defensivo para os eventos realtime do dashboard
+  const realtimeTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const debouncedLoadData = useCallback(() => {
+    if (realtimeTimerRef.current) clearTimeout(realtimeTimerRef.current)
+    realtimeTimerRef.current = setTimeout(() => {
+      loadData()
+    }, 600)
+  }, [])
+
+  useRealtime('quotes', debouncedLoadData)
+  useRealtime('products', debouncedLoadData)
+  useRealtime('customers', debouncedLoadData)
 
   const totalQuotes = quotes.length
   const approvedQuotes = quotes.filter((q) => q.status === 'aprovado' || q.status === 'pago').length

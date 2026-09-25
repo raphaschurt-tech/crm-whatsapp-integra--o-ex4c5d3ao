@@ -164,17 +164,25 @@ export async function loadPipelineBoardData(): Promise<{
   quotes: Quote[]
   whatsappConversations: WhatsAppCustomer[]
 }> {
+  // Executa as consultas com backoff e retries aumentados para absorver limites de taxa
   const [customers, quotes, whatsappConversations, purchaseRequests] = await Promise.all([
-    withRetry(() => getCustomers(), { retries: 3, delayMs: 800 }).catch(() => [] as Customer[]),
-    withRetry(() => getQuotes(), { retries: 3, delayMs: 800 }).catch(() => [] as Quote[]),
-    withRetry(() => loadWhatsAppConversations(), { retries: 3, delayMs: 800 }).catch(
-      () => [] as WhatsAppCustomer[],
-    ),
+    withRetry(() => getCustomers(), { retries: 4, delayMs: 1000 }).catch((err) => {
+      console.warn('Erro ao carregar customers para o Pipeline:', err)
+      return [] as Customer[]
+    }),
+    withRetry(() => getQuotes(), { retries: 4, delayMs: 1000 }).catch((err) => {
+      console.warn('Erro ao carregar quotes para o Pipeline:', err)
+      return [] as Quote[]
+    }),
+    withRetry(() => loadWhatsAppConversations(), { retries: 3, delayMs: 1000 }).catch((err) => {
+      console.warn('Erro ao carregar whatsappConversations para o Pipeline:', err)
+      return [] as WhatsAppCustomer[]
+    }),
     withRetry(
       () => pb.collection('purchase_requests').getFullList({ filter: 'status != "entregue"' }),
       {
-        retries: 2,
-        delayMs: 500,
+        retries: 3,
+        delayMs: 800,
       },
     ).catch(() => [] as any[]),
   ])

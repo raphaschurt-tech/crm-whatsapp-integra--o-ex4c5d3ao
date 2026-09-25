@@ -239,40 +239,104 @@ export async function loadWhatsAppReadStates(): Promise<Map<string, number>> {
   return map
 }
 
+// In-flight saving map para evitar concorrência de gravações da mesma conversa
+const inFlightReadStateSaves = new Map<string, Promise<void>>()
+// Cache do ID de read state por phone para acelerar e evitar concorrência
+const readStateIdCache = new Map<string, string>()
+
 /**
  * Marca uma conversa como lida até o timestamp especificado no banco PocketBase
+ * Implementa upsert defensivo com in-flight dedup e tratamento para conflitos (erro 400).
  */
 export async function markWhatsAppAsRead(rawPhone: string, readTimestamp: number): Promise<void> {
   if (!rawPhone || !readTimestamp) return
   const key = normalizePhoneKey(rawPhone)
   if (!key) return
 
-  try {
-    // Tenta encontrar registro existente por phone
-    let existingRecord: WhatsAppReadStateRecord | null = null
-    try {
-      existingRecord = await pb
-        .collection<WhatsAppReadStateRecord>('whatsapp_read_states')
-        .getFirstListItem(`phone = "${key}"`)
-    } catch (_) {
-      // Registro não existe ainda
-    }
+  // Deduplicação defensiva in-flight para não disputar o mesmo registro
+  if (inFlightReadStateSaves.has(key)) {
+    return inFlightReadStateSaves.get(key)
+  }
 
-    if (existingRecord) {
-      // Atualiza se o novo timestamp for maior ou igual ao gravado
-      if (readTimestamp >= (existingRecord.lastReadAt || 0)) {
-        await pb
-          .collection('whatsapp_read_states')
-          .update(existingRecord.id, { lastReadAt: readTimestamp })
+  const savePromise = (async () => {
+    try {
+      await withRetry(
+        async () => {
+          await persistReadStateRecord(key, readTimestamp)
+        },
+        { retries: 2, delayMs: 400 },
+      )
+    } catch (err) {
+      console.warn(`[markWhatsAppAsRead] Falha ao marcar leitura para ${key}:`, err)
+    } finally {
+      inFlightReadStateSaves.delete(key)
+    }
+  })()
+
+  inFlightReadStateSaves.set(key, savePromise)
+  return savePromise
+}
+
+async function persistReadStateRecord(key: string, readTimestamp: number): Promise<void> {
+  // 1. Tentar atualizar diretamente se já conhecemos o ID pelo cache
+  const cachedId = readStateIdCache.get(key)
+  if (cachedId) {
+    try {
+      await pb.collection('whatsapp_read_states').update(cachedId, { lastReadAt: readTimestamp })
+      return
+    } catch (err: any) {
+      if (err?.status === 404) {
+        readStateIdCache.delete(key)
+      } else {
+        throw err
       }
-    } else {
-      await pb.collection('whatsapp_read_states').create({
+    }
+  }
+
+  // 2. Tenta encontrar registro existente por phone
+  let existingRecord: WhatsAppReadStateRecord | null = null
+  try {
+    existingRecord = await pb
+      .collection<WhatsAppReadStateRecord>('whatsapp_read_states')
+      .getFirstListItem(`phone = "${key}"`)
+  } catch (_) {
+    // Registro não existe ainda
+  }
+
+  if (existingRecord) {
+    readStateIdCache.set(key, existingRecord.id)
+    if (readTimestamp >= (existingRecord.lastReadAt || 0)) {
+      await pb
+        .collection('whatsapp_read_states')
+        .update(existingRecord.id, { lastReadAt: readTimestamp })
+    }
+  } else {
+    // Se duas chamadas disputarem a criação simultânea, o create pode falhar com 400 (unique constraint).
+    // Nesse caso, recuperamos o registro recém-criado e atualizamos.
+    try {
+      const created = await pb.collection<WhatsAppReadStateRecord>('whatsapp_read_states').create({
         phone: key,
         lastReadAt: readTimestamp,
       })
+      readStateIdCache.set(key, created.id)
+    } catch (createErr: any) {
+      try {
+        const found = await pb
+          .collection<WhatsAppReadStateRecord>('whatsapp_read_states')
+          .getFirstListItem(`phone = "${key}"`)
+        if (found) {
+          readStateIdCache.set(key, found.id)
+          await pb
+            .collection('whatsapp_read_states')
+            .update(found.id, { lastReadAt: readTimestamp })
+        }
+      } catch (recoveryErr) {
+        console.warn(
+          `[persistReadStateRecord] Conflito de gravação recuperado para ${key}:`,
+          recoveryErr,
+        )
+      }
     }
-  } catch (err) {
-    console.error(`Erro ao salvar marcação de leitura para ${key}:`, err)
   }
 }
 

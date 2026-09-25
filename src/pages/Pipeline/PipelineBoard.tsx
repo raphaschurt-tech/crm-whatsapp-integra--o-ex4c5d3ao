@@ -118,45 +118,64 @@ export default function PipelineBoard() {
   } | null>(null)
   const [isSavingLostReason, setIsSavingLostReason] = useState(false)
 
-  // Carga dos dados
-  const loadData = useCallback(async (isSilent = false) => {
-    if (!isSilent) setIsRefreshing(true)
-    try {
-      const [boardData, userList] = await Promise.all([
-        loadPipelineBoardData(),
-        getUsers().catch(() => [] as User[]),
-      ])
-      setCards(boardData.cards)
-      setUsers(userList || [])
-      setLoadError(null)
+  // Carga dos dados resiliente: em caso de erro, NUNCA esvazia cards já exibidos
+  const loadData = useCallback(
+    async (isSilent = false) => {
+      if (!isSilent) setIsRefreshing(true)
+      try {
+        const [boardData, userList] = await Promise.all([
+          loadPipelineBoardData(),
+          getUsers().catch(() => [] as User[]),
+        ])
 
-      // Atualizar o card selecionado no drawer se estiver aberto
-      setSelectedCard((prev) => {
-        if (!prev) return null
-        const updated = boardData.cards.find((c) => c.customer.id === prev.customer.id)
-        return updated || null
-      })
-    } catch (err: any) {
-      console.error('Erro ao carregar Pipeline:', err)
-      setLoadError(
-        err?.message || 'Falha ao conectar com o servidor. O serviço pode estar reiniciando.',
-      )
-    } finally {
-      setLoading(false)
-      setIsRefreshing(false)
-    }
-  }, [])
+        // Se a busca retornou cards (ou foi uma lista vazia legítima confirmada), atualiza.
+        // Se por acaso os clientes vieram vazios devido a erro suprimido e já temos cards em tela, mantemos o anterior.
+        if (boardData.customers.length > 0 || cards.length === 0) {
+          setCards(boardData.cards)
+        }
+        setUsers(userList || [])
+        setLoadError(null)
+
+        // Atualizar o card selecionado no drawer se estiver aberto
+        setSelectedCard((prev) => {
+          if (!prev) return null
+          const updated = boardData.cards.find((c) => c.customer.id === prev.customer.id)
+          return updated || prev
+        })
+      } catch (err: any) {
+        console.error('Erro ao carregar Pipeline:', err)
+        // Mantém os cards já carregados para não esvaziar a tela em caso de falha de rede ou 429
+        if (cards.length === 0) {
+          setLoadError(
+            err?.message || 'Falha ao conectar com o servidor. O serviço pode estar reiniciando.',
+          )
+        }
+      } finally {
+        setLoading(false)
+        setIsRefreshing(false)
+      }
+    },
+    [cards.length],
+  )
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
-  // Assinaturas realtime para atualizar automaticamente
-  useRealtime('customers', () => loadData(true))
-  useRealtime('quotes', () => loadData(true))
-  useRealtime('webhook_received', () => loadData(true))
-  useRealtime('message_processing', () => loadData(true))
-  useRealtime('purchase_requests', () => loadData(true))
+  // Assinaturas realtime com debounce para evitar rajadas de recarregamento
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const debouncedRealtimeReload = useCallback(() => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    debounceTimerRef.current = setTimeout(() => {
+      loadData(true)
+    }, 400)
+  }, [loadData])
+
+  useRealtime('customers', debouncedRealtimeReload)
+  useRealtime('quotes', debouncedRealtimeReload)
+  useRealtime('webhook_received', debouncedRealtimeReload)
+  useRealtime('message_processing', debouncedRealtimeReload)
+  useRealtime('purchase_requests', debouncedRealtimeReload)
 
   // Filtros aplicados sobre os cards
   const filteredCards = useMemo(() => {

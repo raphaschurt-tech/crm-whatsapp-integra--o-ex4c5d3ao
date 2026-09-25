@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus,
@@ -101,8 +101,12 @@ export default function CustomerList() {
     }
   }, [search, typeFilter, entityFilter, activeTab?.id])
 
+  const realtimeDebounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useRealtime('customers', () => {
-    loadData()
+    if (realtimeDebounceTimer.current) clearTimeout(realtimeDebounceTimer.current)
+    realtimeDebounceTimer.current = setTimeout(() => {
+      loadData()
+    }, 500)
   })
 
   const filtered = customers.filter((c) => {

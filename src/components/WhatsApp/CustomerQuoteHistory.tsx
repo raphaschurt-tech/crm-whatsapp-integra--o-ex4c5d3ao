@@ -15,6 +15,8 @@ import {
 import { Quote } from '@/types/crm'
 import pb from '@/lib/pocketbase/client'
 import { formatCurrency, openWhatsApp, buildPaymentLinkMessage } from '@/lib/whatsapp'
+import { findCustomerByPhone } from '@/services/customers'
+import { withRetry } from '@/lib/retry'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
@@ -58,37 +60,16 @@ export function CustomerQuoteHistory({
     try {
       let resolvedCustomerId = customerId
 
-      // Se não temos customerId direto, tentar localizar o cliente pelo telefone antes de buscar quotes
+      // Se não temos customerId direto, tentar localizar o cliente pelo helper centralizado
+      // que conta com debounce, cache em memória (60s) e in-flight dedup
       if (!resolvedCustomerId && customerPhone) {
-        const digits = customerPhone.replace(/\D/g, '')
-        if (digits.length >= 8) {
-          const variants = new Set<string>()
-          variants.add(digits)
-          if (digits.startsWith('55') && digits.length >= 12) {
-            variants.add(digits.slice(2))
-          } else if (!digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) {
-            variants.add(`55${digits}`)
+        try {
+          const matched = await findCustomerByPhone(customerPhone)
+          if (matched) {
+            resolvedCustomerId = matched.id
           }
-
-          const filterPhoneParts = Array.from(variants)
-            .map((v) => `phone ~ "${v}"`)
-            .join(' || ')
-
-          try {
-            const matchedCustomers = await pb.collection('customers').getList(1, 5, {
-              filter: filterPhoneParts,
-            })
-            // Encontrar cliente cujo número limpo case exatamente com uma das variantes
-            const matched = matchedCustomers.items.find((c: any) => {
-              const cDigits = (c.phone || '').replace(/\D/g, '')
-              return variants.has(cDigits)
-            })
-            if (matched) {
-              resolvedCustomerId = matched.id
-            }
-          } catch (cErr) {
-            console.warn('Erro ao buscar cliente por telefone no CustomerQuoteHistory:', cErr)
-          }
+        } catch (cErr) {
+          console.warn('Erro ao buscar cliente por telefone no CustomerQuoteHistory:', cErr)
         }
       }
 
@@ -98,23 +79,31 @@ export function CustomerQuoteHistory({
         return
       }
 
-      const list = await pb.collection<Quote>('quotes').getFullList({
-        filter: `customer = "${resolvedCustomerId}"`,
-        sort: '-created',
-        expand: 'customer',
-      })
+      const list = await withRetry(
+        () =>
+          pb.collection<Quote>('quotes').getFullList({
+            filter: `customer = "${resolvedCustomerId}"`,
+            sort: '-created',
+            expand: 'customer',
+          }),
+        { retries: 3, delayMs: 800 },
+      )
 
       setQuotes(list)
     } catch (err) {
       console.warn('Erro ao carregar histórico de orçamentos do cliente:', err)
-      setQuotes([])
+      // Mantém os orçamentos anteriores se houver erro temporário, evitando tela em branco
     } finally {
       setLoading(false)
     }
   }
 
+  // Debounce defensivo para evitar múltiplos disparos rápidos caso props sofram oscilações
   useEffect(() => {
-    loadCustomerQuotes()
+    const timer = setTimeout(() => {
+      loadCustomerQuotes()
+    }, 150)
+    return () => clearTimeout(timer)
   }, [customerId, customerPhone, refreshTrigger])
 
   /**

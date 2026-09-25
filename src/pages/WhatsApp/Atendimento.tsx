@@ -468,26 +468,30 @@ export default function WhatsAppAtendimento() {
     checkConnectionStatus()
   }, [fetchData, checkConnectionStatus])
 
-  // Realtime subscription para webhook_received e message_processing
-  useRealtime('webhook_received', () => {
-    fetchData(true)
-  })
-  useRealtime('message_processing', () => {
-    fetchData(true)
-  })
-  useRealtime('whatsapp_read_states', () => {
-    fetchData(true)
-  })
+  // Realtime subscription com debounce para evitar tempestade de requisições e 429
+  const realtimeDebounceRef = useRef<NodeJS.Timeout | null>(null)
+  const debouncedFetchData = useCallback(() => {
+    if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current)
+    realtimeDebounceRef.current = setTimeout(() => {
+      fetchData(true)
+    }, 500)
+  }, [fetchData])
+
+  useRealtime('webhook_received', debouncedFetchData)
+  useRealtime('message_processing', debouncedFetchData)
+  useRealtime('whatsapp_read_states', debouncedFetchData)
   useRealtime('quotes', () => {
     setHistoryRefreshKey((k) => k + 1)
-    fetchData(true)
+    debouncedFetchData()
   })
 
-  // Polling leve a cada 12 segundos para garantir sincronização caso realtime falhe
+  // Polling moderado a cada 25 segundos (somente se a aba estiver visível) para evitar 429
   useEffect(() => {
     const interval = setInterval(() => {
-      fetchData(true)
-    }, 12000)
+      if (document.visibilityState === 'visible') {
+        fetchData(true)
+      }
+    }, 25000)
     return () => clearInterval(interval)
   }, [fetchData])
 

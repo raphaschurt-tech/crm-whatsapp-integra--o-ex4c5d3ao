@@ -49,13 +49,19 @@ export function isNetworkOrServerError(error: unknown): boolean {
       }
     }
 
-    // Status de cold start / gateway temporariamente indisponível
+    // Status de cold start / gateway temporariamente indisponível ou 429 Too Many Requests
     if (
+      errObj.status === 429 ||
       errObj.status === 502 ||
       errObj.status === 503 ||
       errObj.status === 504 ||
       errObj.status === 408
     ) {
+      return true
+    }
+
+    const msg = (errObj.message || '').toLowerCase()
+    if (msg.includes('429') || msg.includes('too many requests')) {
       return true
     }
 
@@ -70,10 +76,10 @@ export function isNetworkOrServerError(error: unknown): boolean {
 
 export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
   const {
-    retries = 2,
+    retries = 3,
     delayMs = 1000,
     backoffFactor = 2,
-    maxDelayMs = 5000,
+    maxDelayMs = 6000,
     isRetryable = isNetworkOrServerError,
   } = options
 
@@ -83,14 +89,26 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
   while (true) {
     try {
       return await fn()
-    } catch (error) {
+    } catch (error: any) {
       attempt++
       if (attempt > retries || !isRetryable(error)) {
         throw error
       }
 
-      console.warn(`[Network Retry] Tentativa ${attempt} de ${retries} após erro de rede:`, error)
-      await new Promise((resolve) => setTimeout(resolve, currentDelay))
+      const status = error?.status ?? error?.response?.status
+      const is429 = status === 429 || (error?.message || '').includes('429')
+      // Para 429: backoff exponencial rigoroso (1s -> 2s -> 4s) com jitter
+      const baseDelay = is429
+        ? Math.max(currentDelay, 1000 * Math.pow(backoffFactor, attempt - 1))
+        : currentDelay
+      const jitter = Math.random() * 200
+      const waitTime = Math.min(baseDelay + jitter, maxDelayMs)
+
+      console.warn(
+        `[Network Retry] Tentativa ${attempt} de ${retries} após erro (status: ${status || 'desconhecido'}, aguardando ${Math.round(waitTime)}ms):`,
+        error,
+      )
+      await new Promise((resolve) => setTimeout(resolve, waitTime))
       currentDelay = Math.min(currentDelay * backoffFactor, maxDelayMs)
     }
   }
