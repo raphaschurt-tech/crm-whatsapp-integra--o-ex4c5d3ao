@@ -432,20 +432,21 @@ onRecordAfterCreateSuccess((e) => {
       ? paymentMethodsConfig
       : 'Pagamento via link enviado no orçamento'
 
-  // Regras de ferramentas, preços, estoque e formas de pagamento
+  // Regras de ferramentas, preços, estoque, apresentação das opções e formas de pagamento
   const toolsAndPriceRules =
     '\n\n[FERRAMENTAS DE CONSULTA E REGRAS DE PREÇO/ESTOQUE]\n' +
     'Você possui ferramentas (function calling) para buscar produtos no catálogo e consultar estoque em tempo real:\n' +
     '1. buscar_produtos: use sempre que o cliente perguntar sobre qualquer peça, modelo, bucha, amortecedor, aplicação automotiva ou SKU. ' +
     'Pesquise por termos-chave relevantes (ex: "bucha d21", "amortecedor d21", SKU ou código de barras).\n' +
     '2. consultar_estoque_ao_vivo: use para obter o estoque atualizado em tempo real caso tenha o SKU do produto.\n' +
-    '3. REGRA CRÍTICA DE PREÇOS E ESTOQUE: Informe SOMENTE preço e estoque vindos das ferramentas. NUNCA invente ou estime valores ou estoque.\n' +
-    '4. Se o estoque for 0, nulo ou indisponível OU se o preço for 0 ou nulo: NUNCA invente valor. Responda obrigatoriamente: "Sob consulta, nossa equipe confirma disponibilidade".\n' +
-    '5. Se houver preço e estoque disponíveis no catálogo, informe claramente o nome da peça, marca/código, preço (R$) e disponibilidade.\n' +
-    '6. MEIOS DE PAGAMENTO: Ao perguntarem sobre como pagar, formas de pagamento, parcelamento ou condições comerciais, responda com: "' +
+    '3. REGRA CRÍTICA DE APRESENTAÇÃO: Quando a busca encontrar produtos, SEMPRE cite as opções encontradas na resposta, com o nome completo (incluindo a faixa de anos, ex.: \'88/97\') e a descrição/aplicação de cada uma — mesmo quando estiverem sem estoque ou sem preço: "Encontrei estas opções para o seu veículo: ... Para todas, o valor fica sob consulta e nossa equipe confirma a disponibilidade." Se faltar informação essencial (ano/modelo do veículo, qual peça ou posição), pergunte ao cliente antes de buscar — nunca chute. Cumprimente o cliente na primeira mensagem da conversa.\n' +
+    '4. REGRA CRÍTICA DE PREÇOS E ESTOQUE: Informe SOMENTE preço e estoque vindos das ferramentas. NUNCA invente ou estime valores ou estoque.\n' +
+    '5. Se o estoque for 0, nulo ou indisponível OU se o preço for 0 ou nulo: NUNCA invente valor. Responda obrigatoriamente: "Sob consulta, nossa equipe confirma disponibilidade".\n' +
+    '6. Se houver preço e estoque disponíveis no catálogo, informe claramente o nome da peça, marca/código, preço (R$) e disponibilidade.\n' +
+    '7. MEIOS DE PAGAMENTO: Ao perguntarem sobre como pagar, formas de pagamento, parcelamento ou condições comerciais, responda com: "' +
     effectivePaymentMethods.replace(/"/g, "'") +
     '".\n' +
-    '7. REGRA DE NÃO AUTO-TRANSFERÊNCIA: Você NÃO deve transferir para atendimento humano apenas porque o cliente perguntou preço ou estoque. Responda com os dados das ferramentas e continue o atendimento normalmente.\n' +
+    '8. REGRA DE NÃO AUTO-TRANSFERÊNCIA: Você NÃO deve transferir para atendimento humano apenas porque o cliente perguntou preço ou estoque. Responda com os dados das ferramentas e continue o atendimento normalmente.\n' +
     'O marcador [TRANSFERIR-HUMANO] é estritamente reservado para casos genuínos: quando o cliente pedir expressamente para falar com um atendente/humano, reclamações sérias ou negociações comerciais avançadas fora do seu alcance.'
 
   const effectiveSystemPrompt =
@@ -712,7 +713,7 @@ onRecordAfterCreateSuccess((e) => {
       function: {
         name: 'buscar_produtos',
         description:
-          'Busca produtos no catálogo da SOU.IS por termo de pesquisa, nome da peça, modelo, marca, SKU ou código de barras. Retorna até 5 produtos com nome, SKU, marca, preço e estoque.',
+          'Busca produtos no catálogo da SOU.IS por termo de pesquisa, nome da peça, modelo, marca, SKU ou código de barras. Retorna até 5 produtos com nome, SKU, marca, anos de aplicação, descrição/aplicação detalhada, preço e estoque.',
         parameters: {
           type: 'object',
           properties: {
@@ -934,6 +935,21 @@ onRecordAfterCreateSuccess((e) => {
         return false
       }
 
+      // Helper para extrair faixa de anos formatada do nome do produto (ex.: "88/97", "06/15")
+      const extractYearRangeString = (text) => {
+        if (!text) return ''
+        const rangeRegex = /\b(\d{2}|\d{4})\s*[/-]\s*(\d{2}|\d{4})\b/g
+        const match = rangeRegex.exec(text)
+        if (match) {
+          let y1 = match[1]
+          let y2 = match[2]
+          if (y1.length === 4) y1 = y1.slice(2)
+          if (y2.length === 4) y2 = y2.slice(2)
+          return y1 + '/' + y2
+        }
+        return ''
+      }
+
       // Sistema de pontuação e relevância
       const scoredCandidates = []
 
@@ -1009,7 +1025,7 @@ onRecordAfterCreateSuccess((e) => {
       // Limitar aos top 5
       const topSelected = scoredCandidates.slice(0, 5)
 
-      // Montar contrato atual de retorno
+      // Montar contrato atual de retorno com description e years enriquecidos
       const results = topSelected.map((item) => {
         const rec = item.rec
         const pPrice = Number(rec.get('price')) || 0
@@ -1018,8 +1034,10 @@ onRecordAfterCreateSuccess((e) => {
         const pName = rec.getString('name')
         const pBrand = rec.getString('brand') || ''
         const pBarcode = rec.getString('barcode') || ''
+        const pDesc = String(rec.getString('description') || '').trim()
+        const pYears = extractYearRangeString(pName)
 
-        return {
+        const prodObj = {
           sku: pSku,
           nome: pName,
           marca: pBrand,
@@ -1032,6 +1050,15 @@ onRecordAfterCreateSuccess((e) => {
               ? 'Sob consulta, nossa equipe confirma disponibilidade'
               : 'Disponível em estoque',
         }
+
+        if (pDesc) {
+          prodObj.description = pDesc
+        }
+        if (pYears) {
+          prodObj.years = pYears
+        }
+
+        return prodObj
       })
 
       // Horário de Brasília UTC-3 para logs padronizados (sem UTC)

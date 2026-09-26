@@ -108,6 +108,20 @@ export function matchesYearRange(text: string, year2Digit: number): boolean {
   return false
 }
 
+export function extractYearRangeString(text: string): string {
+  if (!text) return ''
+  const rangeRegex = /\b(\d{2}|\d{4})\s*[/-]\s*(\d{2}|\d{4})\b/g
+  const match = rangeRegex.exec(text)
+  if (match) {
+    let y1 = match[1]
+    let y2 = match[2]
+    if (y1.length === 4) y1 = y1.slice(2)
+    if (y2.length === 4) y2 = y2.slice(2)
+    return `${y1}/${y2}`
+  }
+  return ''
+}
+
 export function scoreAndRankProducts(
   products: MockProduct[],
   rawTerm: string,

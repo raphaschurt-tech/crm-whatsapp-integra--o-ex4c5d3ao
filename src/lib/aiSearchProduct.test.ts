@@ -1,4 +1,9 @@
-import { extractAiTokensAndYears, matchesYearRange, scoreAndRankProducts } from './aiSearchProduct'
+import {
+  extractAiTokensAndYears,
+  extractYearRangeString,
+  matchesYearRange,
+  scoreAndRankProducts,
+} from './aiSearchProduct'
 
 // Produtos reais do catálogo SOU.IS sincronizado
 const catalogMock = [
@@ -148,6 +153,28 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
     allPass = false
   } else {
     details.push(`SUCESSO: Para pergunta com stopwords "${term2}", SKU 8722 é top 1`)
+  }
+
+  // Teste 5: Extração da string da faixa de anos
+  const rangeStr1 = extractYearRangeString('AMORTECEDOR BUCHA D21 88/97 DIANTEIRO')
+  const rangeStr2 = extractYearRangeString('BUCHA FREELANDER 2 06/15 SUPERIOR BRAÇO TRASEIRO')
+  const rangeStr3 = extractYearRangeString('BRAÇO D21 PITMAN DIRECAO')
+
+  details.push(`Faixa extraída de D21 88/97: "${rangeStr1}"`)
+  details.push(`Faixa extraída de FREELANDER 06/15: "${rangeStr2}"`)
+  details.push(`Faixa extraída sem anos: "${rangeStr3}"`)
+
+  if (rangeStr1 !== '88/97') {
+    details.push(`ERRO: extractYearRangeString esperado '88/97', obteve '${rangeStr1}'`)
+    allPass = false
+  }
+  if (rangeStr2 !== '06/15') {
+    details.push(`ERRO: extractYearRangeString esperado '06/15', obteve '${rangeStr2}'`)
+    allPass = false
+  }
+  if (rangeStr3 !== '') {
+    details.push(`ERRO: extractYearRangeString esperado vazio, obteve '${rangeStr3}'`)
+    allPass = false
   }
 
   return { success: allPass, details }
