@@ -752,75 +752,266 @@ onRecordAfterCreateSuccess((e) => {
       const rawTerm = String(termo || '').trim()
       if (!rawTerm) return { total: 0, produtos: [] }
 
-      // Extrai palavras com 2+ caracteres para busca flexível
-      const words = rawTerm
-        .replace(/[,;:]/g, ' ')
-        .split(/\s+/)
-        .map((w) => w.trim())
-        .filter((w) => w.length >= 2)
-
-      let filterExpr = ''
-      const bindParams = {}
-
-      if (words.length > 0) {
-        // Tenta encontrar por SKU exato primeiro ou pelas palavras no nome/sku/marca/barcode
-        const conds = []
-        for (let wi = 0; wi < Math.min(words.length, 4); wi++) {
-          const pName = 'w' + wi
-          bindParams[pName] = words[wi]
-          conds.push(
-            '(name ~ {:' +
-              pName +
-              '} || sku ~ {:' +
-              pName +
-              '} || brand ~ {:' +
-              pName +
-              '} || barcode ~ {:' +
-              pName +
-              '} || description ~ {:' +
-              pName +
-              '})',
-          )
-        }
-        filterExpr = conds.join(' && ')
-      } else {
-        bindParams['term'] = rawTerm
-        filterExpr =
-          'name ~ {:term} || sku ~ {:term} || brand ~ {:term} || barcode ~ {:term} || description ~ {:term}'
+      // Lista de stopwords estritas em português conforme especificação
+      const stopWordsSet = {
+        de: true,
+        do: true,
+        da: true,
+        dos: true,
+        das: true,
+        para: true,
+        em: true,
+        um: true,
+        uma: true,
+        tem: true,
+        temos: true,
+        você: true,
+        voce: true,
+        qual: true,
+        quanto: true,
+        custa: true,
+        o: true,
+        a: true,
+        e: true,
+        é: true,
+        ano: true,
+        anos: true,
+        modelo: true,
+        peca: true,
+        peça: true,
+        pecas: true,
+        peças: true,
+        pra: true,
+        pro: true,
       }
 
-      let found = []
+      // Normalização e extração de tokens
+      // Mantém letras, números e remove pontuação como ?, !, ,, ;, :, etc.
+      const rawWords = rawTerm
+        .toLowerCase()
+        .replace(/[?!,;:()[\]{}"'\\/]/g, ' ')
+        .split(/\s+/)
+        .map((w) => w.trim())
+        .filter((w) => w.length > 0)
+
+      const usefulTokens = []
+      const detectedYears = [] // Anos de 2 dígitos (00-99) ou 4 dígitos (ex: 1991 -> 91)
+
+      for (let wi = 0; wi < rawWords.length; wi++) {
+        const token = rawWords[wi]
+        if (!token) continue
+
+        // Ignorar se for stopword
+        if (stopWordsSet[token]) continue
+
+        // Detecção e tratamento de anos:
+        // Caso A: 4 dígitos (ex.: "1991", "2005") -> ano de veículo
+        if (/^(19|20)\d{2}$/.test(token)) {
+          const twoDigit = parseInt(token.slice(2), 10)
+          if (!isNaN(twoDigit)) detectedYears.push(twoDigit)
+          continue // Descartar token de 4 dígitos da busca direta de texto
+        }
+
+        // Caso B: 2 dígitos isolados (ex.: "91", "97")
+        // Nota: modelos com letras e dígitos como "d21", "l200", "f1000", "147" não entram aqui
+        if (/^\d{2}$/.test(token)) {
+          const twoDigit = parseInt(token, 10)
+          if (!isNaN(twoDigit)) detectedYears.push(twoDigit)
+          continue // Descartar token de 2 dígitos isolado da busca direta de texto
+        }
+
+        // Token útil preservado (ex.: "bucha", "amortecedor", "d21", "dianteiro")
+        if (token.length >= 2) {
+          usefulTokens.push(token)
+        }
+      }
+
+      // Fallback: se todos os tokens foram stopwords ou anos, usa os rawWords com len >= 2
+      const searchTokens =
+        usefulTokens.length > 0 ? usefulTokens : rawWords.filter((w) => w.length >= 2)
+
+      if (searchTokens.length === 0) {
+        // Horário de Brasília UTC-3 para log de diagnóstico
+        let nowBrasiliaIso = ''
+        try {
+          const bDate = new Date(Date.now() - 3 * 3600 * 1000)
+          nowBrasiliaIso = bDate.toISOString().replace('Z', '-03:00')
+        } catch (_) {
+          nowBrasiliaIso = new Date().toISOString()
+        }
+
+        console.log(
+          '[TOOL-BUSCAR-PRODUTOS-ZERO-RESULTS]',
+          JSON.stringify({
+            horarioBrasilia: nowBrasiliaIso,
+            termoOriginal: rawTerm,
+            tokensUsados: searchTokens,
+            anosDetectados: detectedYears,
+            motivo: 'Nenhum token útil após remoção de stopwords/anos',
+          }),
+        )
+
+        return { total: 0, produtos: [] }
+      }
+
+      // Monta consulta PocketBase: busca produtos que casem com qualquer um dos searchTokens
+      // Limitamos a até 8 tokens para não gerar filtros excessivamente longos
+      const queryTokens = searchTokens.slice(0, 8)
+      const bindParams = {}
+      const tokenConds = []
+
+      for (let ti = 0; ti < queryTokens.length; ti++) {
+        const pKey = 't' + ti
+        bindParams[pKey] = queryTokens[ti]
+        tokenConds.push(
+          '(name ~ {:' +
+            pKey +
+            '} || sku ~ {:' +
+            pKey +
+            '} || brand ~ {:' +
+            pKey +
+            '} || barcode ~ {:' +
+            pKey +
+            '} || description ~ {:' +
+            pKey +
+            '})',
+        )
+      }
+
+      const filterExpr = tokenConds.join(' || ')
+
+      let candidates = []
       try {
-        found = $app.findRecordsByFilter(
+        candidates = $app.findRecordsByFilter(
           'products',
           filterExpr,
           '-stock_quantity,name',
-          10,
+          50,
           0,
           bindParams,
         )
       } catch (searchErr) {
-        // Se a expressão combinada for muito estrita, tenta busca por qualquer palavra
-        if (words.length > 1) {
-          const fallbackConds = []
-          for (let wi = 0; wi < Math.min(words.length, 4); wi++) {
-            fallbackConds.push('(name ~ {:w' + wi + '} || sku ~ {:w' + wi + '})')
-          }
-          try {
-            found = $app.findRecordsByFilter(
-              'products',
-              fallbackConds.join(' || '),
-              '-stock_quantity,name',
-              10,
-              0,
-              bindParams,
-            )
-          } catch (_) {}
-        }
+        console.log('[TOOL-BUSCAR-PRODUTOS-DB-ERR]', String(searchErr))
+        candidates = []
       }
 
-      // Ordenar e selecionar até 5 resultados mais relevantes
-      const results = (found || []).slice(0, 5).map((rec) => {
+      // Se nada foi encontrado por '||', tenta busca ampla pelo termo cru
+      if ((!candidates || candidates.length === 0) && rawTerm.length >= 2) {
+        try {
+          candidates = $app.findRecordsByFilter(
+            'products',
+            'name ~ {:rt} || sku ~ {:rt} || brand ~ {:rt} || barcode ~ {:rt}',
+            '-stock_quantity,name',
+            20,
+            0,
+            { rt: rawTerm },
+          )
+        } catch (_) {}
+      }
+
+      // Helper para checar se uma faixa de anos no nome do produto (ex.: "88/97", "92/04")
+      // contempla os anos pesquisados (ex.: 91 está entre 88 e 97)
+      const matchesYearRange = (text, year2Digit) => {
+        if (!text || year2Digit === undefined || year2Digit === null) return false
+        // Procura padrões como "88/97", "93/03", "92-04", "88/1997"
+        const rangeRegex = /\b(\d{2}|\d{4})\s*[/-]\s*(\d{2}|\d{4})\b/g
+        let match
+        while ((match = rangeRegex.exec(text)) !== null) {
+          let startY = parseInt(match[1], 10)
+          let endY = parseInt(match[2], 10)
+          if (startY > 1000) startY = startY % 100
+          if (endY > 1000) endY = endY % 100
+
+          if (!isNaN(startY) && !isNaN(endY)) {
+            if (startY <= endY) {
+              if (year2Digit >= startY && year2Digit <= endY) return true
+            } else {
+              // Transição de século ex.: 95/05 (1995 a 2005)
+              if (year2Digit >= startY || year2Digit <= endY) return true
+            }
+          }
+        }
+        return false
+      }
+
+      // Sistema de pontuação e relevância
+      const scoredCandidates = []
+
+      for (let ci = 0; ci < (candidates || []).length; ci++) {
+        const rec = candidates[ci]
+        const pSku = String(rec.getString('sku') || '').toLowerCase()
+        const pName = String(rec.getString('name') || '').toLowerCase()
+        const pBrand = String(rec.getString('brand') || '').toLowerCase()
+        const pBarcode = String(rec.getString('barcode') || '').toLowerCase()
+        const pDesc = String(rec.getString('description') || '').toLowerCase()
+        const fullSearchable = pName + ' ' + pSku + ' ' + pBrand + ' ' + pBarcode + ' ' + pDesc
+
+        let matchedTokenCount = 0
+        for (let ti = 0; ti < searchTokens.length; ti++) {
+          const tok = searchTokens[ti]
+          if (fullSearchable.includes(tok)) {
+            matchedTokenCount++
+          }
+        }
+
+        // Se o produto não casou com nenhum dos searchTokens, desconsidera
+        if (matchedTokenCount === 0 && searchTokens.length > 0) continue
+
+        // Base score: 10 pontos por token casado
+        let score = matchedTokenCount * 10
+
+        // Bônus se casou com TODOS os searchTokens (match perfeito de palavras)
+        if (matchedTokenCount === searchTokens.length && searchTokens.length > 1) {
+          score += 25
+        }
+
+        // Bônus de SKU exato
+        if (pSku === rawTerm.toLowerCase()) {
+          score += 100
+        }
+
+        // Bônus se casou na faixa de anos
+        if (detectedYears.length > 0) {
+          let yearMatched = false
+          for (let yi = 0; yi < detectedYears.length; yi++) {
+            if (matchesYearRange(pName, detectedYears[yi])) {
+              yearMatched = true
+              break
+            }
+          }
+          if (yearMatched) {
+            score += 15 // Recompensa alta para produtos da mesma faixa de anos
+          }
+        }
+
+        // Desempate secundário: produtos com estoque positivo ganham leve prioridade
+        const stockQty = Number(rec.get('stock_quantity')) || 0
+        if (stockQty > 0) {
+          score += 2
+        }
+
+        scoredCandidates.push({
+          rec: rec,
+          score: score,
+          matchedTokenCount: matchedTokenCount,
+        })
+      }
+
+      // Ordenar decrescente por score (relevância), depois por estoque, depois por nome
+      scoredCandidates.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score
+        const stockA = Number(a.rec.get('stock_quantity')) || 0
+        const stockB = Number(b.rec.get('stock_quantity')) || 0
+        if (stockB !== stockA) return stockB - stockA
+        return a.rec.getString('name').localeCompare(b.rec.getString('name'))
+      })
+
+      // Limitar aos top 5
+      const topSelected = scoredCandidates.slice(0, 5)
+
+      // Montar contrato atual de retorno
+      const results = topSelected.map((item) => {
+        const rec = item.rec
         const pPrice = Number(rec.get('price')) || 0
         const pStock = Number(rec.get('stock_quantity')) || 0
         const pSku = rec.getString('sku')
@@ -843,15 +1034,38 @@ onRecordAfterCreateSuccess((e) => {
         }
       })
 
-      console.log(
-        '[TOOL-BUSCAR-PRODUTOS-EXECUTED]',
-        JSON.stringify({
-          timestamp: new Date().toISOString(),
-          termo: rawTerm,
-          totalEncontrados: results.length,
-          skus: results.map((r) => r.sku),
-        }),
-      )
+      // Horário de Brasília UTC-3 para logs padronizados (sem UTC)
+      let nowBrasiliaIso = ''
+      try {
+        const bDate = new Date(Date.now() - 3 * 3600 * 1000)
+        nowBrasiliaIso = bDate.toISOString().replace('Z', '-03:00')
+      } catch (_) {
+        nowBrasiliaIso = new Date().toISOString()
+      }
+
+      if (results.length === 0) {
+        console.log(
+          '[TOOL-BUSCAR-PRODUTOS-ZERO-RESULTS]',
+          JSON.stringify({
+            horarioBrasilia: nowBrasiliaIso,
+            termoOriginal: rawTerm,
+            tokensUsados: searchTokens,
+            anosDetectados: detectedYears,
+            totalCandidatosBanco: (candidates || []).length,
+          }),
+        )
+      } else {
+        console.log(
+          '[TOOL-BUSCAR-PRODUTOS-EXECUTED]',
+          JSON.stringify({
+            horarioBrasilia: nowBrasiliaIso,
+            termo: rawTerm,
+            tokensUsados: searchTokens,
+            totalEncontrados: results.length,
+            skus: results.map((r) => r.sku),
+          }),
+        )
+      }
 
       return {
         termo: rawTerm,
