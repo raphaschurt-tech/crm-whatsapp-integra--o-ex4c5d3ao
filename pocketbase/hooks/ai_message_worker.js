@@ -1615,10 +1615,14 @@ onRecordAfterCreateSuccess((e) => {
   const hasTransferMarker = transferMarkerRegex.test(aiReply) || Boolean(interestDetails)
 
   // 3. Limpeza completa dos marcadores para que o cliente NUNCA os veja
+  // Preserva quebras de linha (\n) da formatação da IA, colapsando apenas espaços/tabs horizontais
+  // e normalizando sequências excessivas de quebras de linha e \r\n
   let cleanAiReply = aiReply
     .replace(purchaseInterestRegex, '')
     .replace(transferMarkerRegex, '')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/\r\n/g, '\n')
+    .replace(/[^\S\r\n]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
 
   if (interestDetails || hasTransferMarker) {
