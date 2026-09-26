@@ -462,6 +462,10 @@ onRecordAfterCreateSuccess((e) => {
     'Pesquise por termos-chave relevantes (ex: "bucha d21", "amortecedor d21", SKU ou código de barras).\n' +
     '2. consultar_estoque_ao_vivo: use para obter o estoque atualizado em tempo real caso tenha o SKU do produto.\n' +
     "3. REGRA CRÍTICA DE APRESENTAÇÃO: Quando a busca encontrar produtos, SEMPRE cite as opções encontradas na resposta, com o nome completo (incluindo a faixa de anos, ex.: '88/97') e a descrição/aplicação de cada uma — mesmo quando estiverem com estoque 0 ou sem preço. Se faltar informação essencial (ano/modelo do veículo, qual peça ou posição), pergunte ao cliente antes de buscar — nunca chute. Cumprimente o cliente na primeira mensagem da conversa.\n" +
+    'FORMATO OBRIGATÓRIO para apresentar produtos: apresente CADA produto em bloco separado, com linha em branco entre eles, usando este modelo —\n' +
+    "'1. *Nome completo do produto (com a faixa de anos)*\n" +
+    "Marca: X | Valor: Sob consulta | Disponibilidade: disponível em até 48 horas'.\n" +
+    'Máximo de 3 produtos por mensagem; se houver mais, apresente os 3 mais relevantes e diga que há outras opções. Nunca escreva dois produtos na mesma linha. Separe a resposta em: lista de produtos, e depois UMA frase de fechamento ou pergunta.\n' +
     '4. TABELA DE DISPONIBILIDADE E PREÇOS (OBRIGATÓRIO):\n' +
     '- Estoque 0: NUNCA use a palavra "indisponível" ou "sem estoque". Responda sempre: "disponível em até 48 horas" (pedido sob encomenda);\n' +
     '- Preço 0 ou sem preço: informe "Sob consulta";\n' +

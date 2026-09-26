@@ -219,7 +219,8 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
       if (result.success) {
         toast({
           title: 'Todos os 10 testes unitários passaram!',
-          description: 'Busca, tokenização, anos, ranking, disponibilidade 48h e exclusão de SKUs validados.',
+          description:
+            'Busca, tokenização, anos, ranking, disponibilidade 48h e exclusão de SKUs validados.',
           className: 'bg-emerald-600 text-white border-emerald-700',
         })
       } else {
