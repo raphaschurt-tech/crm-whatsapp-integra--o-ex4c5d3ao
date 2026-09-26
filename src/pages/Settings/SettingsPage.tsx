@@ -61,6 +61,13 @@ export default function SettingsPage() {
     message?: string
   }>({ status: 'idle' })
 
+  // Estado do Teste Unitário da IA (Busca & Relevância de Produtos)
+  const [runningAiUnitTest, setRunningAiUnitTest] = useState(false)
+  const [aiUnitTestResult, setAiUnitTestResult] = useState<{
+    success: boolean
+    details: string[]
+  } | null>(null)
+
   const defaultPromptTemplate = `Você é o assistente virtual de atendimento comercial inteligente da empresa CRM Intragan.
 Seu objetivo é atender os clientes de forma educada, prestativa, ágil e profissional via WhatsApp.
 Você pode tirar dúvidas sobre produtos, estoque atual, preços e condições de pagamento.
@@ -200,6 +207,37 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
       })
     } finally {
       setConfiguringWebhook(false)
+    }
+  }
+
+  const handleRunAiUnitTest = async () => {
+    setRunningAiUnitTest(true)
+    try {
+      const { runAiSearchUnitTest } = await import('@/lib/aiSearchProduct.test')
+      const result = runAiSearchUnitTest()
+      setAiUnitTestResult(result)
+      if (result.success) {
+        toast({
+          title: 'Todos os 10 testes unitários passaram!',
+          description: 'Busca, tokenização, anos, ranking, disponibilidade 48h e exclusão de SKUs validados.',
+          className: 'bg-emerald-600 text-white border-emerald-700',
+        })
+      } else {
+        toast({
+          title: 'Falha em testes unitários',
+          description: 'Verifique os detalhes na tela.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      toast({
+        title: 'Erro ao rodar testes',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setRunningAiUnitTest(false)
     }
   }
 
@@ -604,8 +642,29 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                     type="button"
                     variant="outline"
                     size="sm"
+                    onClick={handleRunAiUnitTest}
+                    disabled={runningAiUnitTest || testingConnection || configuringWebhook}
+                    className="border-purple-300 hover:bg-purple-50 text-purple-800 bg-white shadow-xs font-medium"
+                    title="Executar os 10 testes unitários da busca IA (tokenização, anos, ranking, 48h, ai_excluded_skus)"
+                  >
+                    {runningAiUnitTest ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin text-purple-600" />
+                        Rodando Testes...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="mr-1.5 h-3.5 w-3.5 text-purple-600" />
+                        Rodar Testes IA
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={handleTestConnection}
-                    disabled={testingConnection || configuringWebhook}
+                    disabled={testingConnection || configuringWebhook || runningAiUnitTest}
                     className="border-emerald-300 hover:bg-emerald-50 text-emerald-800 bg-white shadow-xs font-medium"
                   >
                     {testingConnection ? (
@@ -622,6 +681,52 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                   </Button>
                 </div>
               </div>
+
+              {/* Feedback Visual dos Testes Unitários da IA */}
+              {aiUnitTestResult && (
+                <div
+                  className={`p-3 rounded-lg text-xs border animate-in fade-in duration-200 ${
+                    aiUnitTestResult.success
+                      ? 'bg-purple-50/70 border-purple-200 text-purple-900'
+                      : 'bg-rose-50 border-rose-200 text-rose-900'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold flex items-center gap-1.5">
+                      <Sparkles className="h-4 w-4 text-purple-600" />
+                      {aiUnitTestResult.success
+                        ? '✅ Testes Unitários da IA (10/10 APROVADOS)'
+                        : '❌ Falha nos Testes Unitários da IA'}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={
+                        aiUnitTestResult.success
+                          ? 'bg-purple-100 text-purple-800 border-purple-300'
+                          : 'bg-rose-100 text-rose-800 border-rose-300'
+                      }
+                    >
+                      {aiUnitTestResult.success ? '100% Sucesso' : 'Falhou'}
+                    </Badge>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto space-y-1 bg-white/70 p-2 rounded border border-purple-100 font-mono text-[11px]">
+                    {aiUnitTestResult.details.map((line, idx) => (
+                      <div
+                        key={idx}
+                        className={
+                          line.startsWith('ERRO:')
+                            ? 'text-rose-600 font-bold'
+                            : line.startsWith('SUCESSO:')
+                              ? 'text-emerald-700 font-semibold'
+                              : 'text-slate-600'
+                        }
+                      >
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Feedback Visual do Teste */}
               {testResult.status === 'success' && (

@@ -7,6 +7,7 @@ import {
   twoPhaseProductSearch,
 } from './aiSearchProduct'
 
+// Executa os testes no momento da importação em ambiente de desenvolvimento / verificação
 // Produtos reais do catálogo SOU.IS sincronizado
 const catalogMock = [
   {

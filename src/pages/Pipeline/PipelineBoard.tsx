@@ -18,6 +18,7 @@ import {
   loadPipelineBoardData,
   updateCustomerPipelineStatus,
 } from '@/services/pipelineService'
+import pb from '@/lib/pocketbase/client'
 import { deleteCustomer } from '@/services/customers'
 import { useAuth } from '@/hooks/use-auth'
 import { getUsers } from '@/services/users'
