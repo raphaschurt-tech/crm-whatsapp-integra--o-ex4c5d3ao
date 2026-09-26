@@ -410,7 +410,29 @@ onRecordAfterCreateSuccess((e) => {
     ? '\n\nData/hora atual: ' + dateTimeSP + ' (horário de Brasília).'
     : ''
 
-  // 5. Configurar systemPrompt a partir de settings ou fallback mínimo cordial
+  // 5. Verificar se é a primeira resposta da IA na conversa para este telefone
+  let isFirstAiReplyInConversation = false
+  try {
+    const cleanP = String(phone || '').replace(/'/g, "\\'")
+    const prevReplies = $app.findRecordsByFilter(
+      'message_processing',
+      "phone = '" + cleanP + "' && replySent = true && id != '" + recordId + "'",
+      '-created',
+      1,
+      0,
+    )
+    if (!prevReplies || prevReplies.length === 0) {
+      isFirstAiReplyInConversation = true
+    }
+  } catch (firstReplyCheckErr) {
+    console.log('[FIRST-REPLY-CHECK-ERR]', String(firstReplyCheckErr))
+  }
+
+  const firstReplyInstruction = isFirstAiReplyInConversation
+    ? '\n\nEsta é a sua primeira resposta nesta conversa: cumprimente o cliente e apresente-se como assistente da RPA AUTO PARTS antes de responder.'
+    : ''
+
+  // 6. Configurar systemPrompt a partir de settings ou fallback mínimo cordial
   let configuredPrompt = String(validConfigRec.getString('ai_system_prompt') || '').trim()
   if (configuredPrompt) {
     configuredPrompt = configuredPrompt
@@ -451,9 +473,9 @@ onRecordAfterCreateSuccess((e) => {
 
   const effectiveSystemPrompt =
     (configuredPrompt.length > 0 ? configuredPrompt : fallbackPrompt) +
+    firstReplyInstruction +
     toolsAndPriceRules +
     timeContextLine
-
   // 6. Buscar histórico da conversa na collection message_processing para o mesmo telefone
   // Filtrar apenas interações anteriores já concluídas com resposta da IA enviada (replySent = true && aiReplyText != '')
   // e ignorar o registro atual
@@ -855,8 +877,9 @@ onRecordAfterCreateSuccess((e) => {
         return { total: 0, produtos: [] }
       }
 
-      // Monta consulta PocketBase: busca produtos que casem com qualquer um dos searchTokens
-      // Limitamos a até 8 tokens para não gerar filtros excessivamente longos
+      // Busca em duas fases no banco de dados:
+      // Fase 1: Consulta AND estrita (todos os queryTokens devem casar em name/sku/brand/barcode/description)
+      // Fase 2: Se Fase 1 retornar menos de 5 candidatos, executa consulta OR com limit 200 para complementar pool
       const queryTokens = searchTokens.slice(0, 8)
       const bindParams = {}
       const tokenConds = []
@@ -879,24 +902,60 @@ onRecordAfterCreateSuccess((e) => {
         )
       }
 
-      const filterExpr = tokenConds.join(' || ')
-
       let candidates = []
-      try {
-        candidates = $app.findRecordsByFilter(
-          'products',
-          filterExpr,
-          '-stock_quantity,name',
-          50,
-          0,
-          bindParams,
-        )
-      } catch (searchErr) {
-        console.log('[TOOL-BUSCAR-PRODUTOS-DB-ERR]', String(searchErr))
-        candidates = []
+      const candidateIds = {}
+
+      // Execução da Fase 1 (AND)
+      if (tokenConds.length > 0) {
+        const andFilterExpr = tokenConds.join(' && ')
+        try {
+          const phase1Candidates = $app.findRecordsByFilter(
+            'products',
+            andFilterExpr,
+            '-stock_quantity,name',
+            50,
+            0,
+            bindParams,
+          )
+          if (phase1Candidates && phase1Candidates.length > 0) {
+            for (let p1i = 0; p1i < phase1Candidates.length; p1i++) {
+              const rec = phase1Candidates[p1i]
+              candidates.push(rec)
+              candidateIds[rec.id] = true
+            }
+          }
+        } catch (searchErr1) {
+          console.log('[TOOL-BUSCAR-PRODUTOS-PHASE1-ERR]', String(searchErr1))
+        }
       }
 
-      // Se nada foi encontrado por '||', tenta busca ampla pelo termo cru
+      // Execução da Fase 2 (OR com limit 200) somente se Fase 1 retornar menos de 5 candidatos
+      if (candidates.length < 5 && tokenConds.length > 0) {
+        const orFilterExpr = tokenConds.join(' || ')
+        try {
+          const phase2Candidates = $app.findRecordsByFilter(
+            'products',
+            orFilterExpr,
+            '-stock_quantity,name',
+            200,
+            0,
+            bindParams,
+          )
+          if (phase2Candidates && phase2Candidates.length > 0) {
+            for (let p2i = 0; p2i < phase2Candidates.length; p2i++) {
+              const rec = phase2Candidates[p2i]
+              if (!candidateIds[rec.id]) {
+                candidates.push(rec)
+                candidateIds[rec.id] = true
+              }
+            }
+          }
+        } catch (searchErr2) {
+          console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(searchErr2))
+        }
+      }
+
+      // Fallback amplo pelo termo cru caso nada tenha sido encontrado
       if ((!candidates || candidates.length === 0) && rawTerm.length >= 2) {
         try {
           candidates = $app.findRecordsByFilter(
@@ -963,11 +1022,24 @@ onRecordAfterCreateSuccess((e) => {
         const fullSearchable = pName + ' ' + pSku + ' ' + pBrand + ' ' + pBarcode + ' ' + pDesc
 
         let matchedTokenCount = 0
+        let matchedNameSkuCount = 0
+        const nameSkuSearchable = pName + ' ' + pSku
+
         for (let ti = 0; ti < searchTokens.length; ti++) {
           const tok = searchTokens[ti]
           if (fullSearchable.includes(tok)) {
             matchedTokenCount++
           }
+          if (nameSkuSearchable.includes(tok)) {
+            matchedNameSkuCount++
+          }
+        }
+
+        // Filtro de relevância mínima: quando o termo de busca tiver 2 ou mais tokens,
+        // descartar candidatos com menos de 2 tokens casados no nome/SKU (elimina falsos positivos
+        // como "Bucha Braco Tensor Uno..." numa busca de 3 tokens)
+        if (searchTokens.length >= 2 && matchedNameSkuCount < 2) {
+          continue
         }
 
         // Se o produto não casou com nenhum dos searchTokens, desconsidera
@@ -1051,7 +1123,8 @@ onRecordAfterCreateSuccess((e) => {
               : 'Disponível em estoque',
         }
 
-        if (pDesc) {
+        // Limpar boilerplate do description: só incluir se NÃO começar com "Produto SOU.IS sincronizado"
+        if (pDesc && !pDesc.startsWith('Produto SOU.IS sincronizado')) {
           prodObj.description = pDesc
         }
         if (pYears) {

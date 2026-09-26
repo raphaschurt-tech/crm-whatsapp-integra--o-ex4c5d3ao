@@ -1,8 +1,10 @@
 import {
+  cleanProductDescription,
   extractAiTokensAndYears,
   extractYearRangeString,
   matchesYearRange,
   scoreAndRankProducts,
+  twoPhaseProductSearch,
 } from './aiSearchProduct'
 
 // Produtos reais do catálogo SOU.IS sincronizado
@@ -12,7 +14,7 @@ const catalogMock = [
     name: 'AMORTECEDOR BUCHA D21 88/97 DIANTEIRO',
     brand: 'RPA',
     barcode: '',
-    description: 'Produto SOU.IS',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
     stock_quantity: 0,
     price: 0,
   },
@@ -21,7 +23,7 @@ const catalogMock = [
     name: 'BUCHA D21 88/97 BARRA DIANTEIRA',
     brand: 'RPA',
     barcode: '',
-    description: 'Produto SOU.IS',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
     stock_quantity: 0,
     price: 0,
   },
@@ -30,7 +32,7 @@ const catalogMock = [
     name: 'BUCHA D21 88/97 BANDEJA INFERIOR DIANTEIRA',
     brand: 'RPA',
     barcode: '',
-    description: 'Produto SOU.IS',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
     stock_quantity: 0,
     price: 0,
   },
@@ -39,7 +41,7 @@ const catalogMock = [
     name: 'BUCHA BANDEJA SUPERIOR DIANTEIRA L200 93/03 PAJERO 92/02 D21 88/97 PATHFINDER 90/95 CAPA BORRACHA 41.4 PINO 49.3 X 18.3',
     brand: 'JAHU',
     barcode: '',
-    description: 'Produto SOU.IS',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
     stock_quantity: 1,
     price: 0,
   },
@@ -48,8 +50,17 @@ const catalogMock = [
     name: 'BUCHA BANDEJA SUPERIOR DIANTEIRA L200 93/03 PAJERO 92/02 D21 88/97 PATHFINDER 90/95 CAPA BORRACHA 41.4 PINO 49.3 X 18.3',
     brand: 'DPA',
     barcode: '',
-    description: 'Produto SOU.IS',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
     stock_quantity: 1,
+    price: 0,
+  },
+  {
+    sku: '6123',
+    name: 'BUCHA L200 GL/GLS 92/04 PATFHINDER 2./3.0 90/95 D21 88/97 BANDEJA SUPERIOR DIANTEIRA',
+    brand: 'RPA',
+    barcode: '',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+    stock_quantity: 0,
     price: 0,
   },
   {
@@ -57,18 +68,91 @@ const catalogMock = [
     name: 'BRAÇO D21 PITMAN DIRECAO',
     brand: 'RPA',
     barcode: '',
-    description: 'Produto SOU.IS',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
     stock_quantity: 0,
     price: 0,
+  },
+  {
+    sku: '9901',
+    name: 'Bucha Braco Tensor Uno 84/13 Elba/Fiorino 85/96 Premio',
+    brand: 'BORRACHAS',
+    barcode: '',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+    stock_quantity: 50,
+    price: 35,
+  },
+  {
+    sku: '9902',
+    name: 'Bucha Santana 84/06 Traseira',
+    brand: 'SANT',
+    barcode: '',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+    stock_quantity: 40,
+    price: 25,
+  },
+  {
+    sku: '9903',
+    name: 'Bucha Bongo K2500 08/12 Dianteira',
+    brand: 'KIA',
+    barcode: '',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+    stock_quantity: 30,
+    price: 45,
+  },
+  {
+    sku: '9904',
+    name: 'Bucha Doblo 02/21 Dianteira',
+    brand: 'FIAT',
+    barcode: '',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+    stock_quantity: 20,
+    price: 30,
   },
   {
     sku: '1234',
     name: 'AMORTECEDOR TRASEIRO COROLLA 03/08',
     brand: 'COFAP',
     barcode: '',
-    description: 'Outro carro',
+    description: 'Aplicação especial Toyota Corolla',
     stock_quantity: 5,
     price: 150,
+  },
+  // Peças de Freelander
+  {
+    sku: '2235',
+    name: 'BUCHA DIANT BAND DIANT VOLVO XC60 08/18 FREELANDER 06/15 DISCOVERY SPORT/EVOQUE 12/19 CAPA 60 PINO 59.80MM X 14 MM',
+    brand: 'RPA',
+    barcode: '',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+    stock_quantity: 3,
+    price: 174,
+  },
+  {
+    sku: '2430',
+    name: 'BUCHA FREELANDER 2 06/15 DIANTEIRA BANDEJA DIANTEIRA',
+    brand: 'RPA',
+    barcode: '',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+    stock_quantity: 0,
+    price: 0,
+  },
+  {
+    sku: '2431',
+    name: 'BUCHA FREELANDER 2 06/15 TRASEIRA BANDEJA DIANTEIRA',
+    brand: 'RPA',
+    barcode: '',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+    stock_quantity: 0,
+    price: 0,
+  },
+  {
+    sku: '8393',
+    name: 'BUCHA FREELANDER 2 06/15 SUPERIOR BRACO TRASEIRO',
+    brand: 'RPA',
+    barcode: '',
+    description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+    stock_quantity: 4,
+    price: 0,
   },
 ]
 
@@ -175,6 +259,76 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
   if (rangeStr3 !== '') {
     details.push(`ERRO: extractYearRangeString esperado vazio, obteve '${rangeStr3}'`)
     allPass = false
+  }
+
+  // Teste 6: Limpeza de boilerplate na descrição SOU.IS
+  const descBoilerplate = cleanProductDescription(
+    'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+  )
+  const descReal = cleanProductDescription('Aplicação especial Toyota Corolla')
+  details.push(`Limpeza boilerplate: "${descBoilerplate}" (esperado vazio)`)
+  details.push(`Preservação descrição real: "${descReal}"`)
+
+  if (descBoilerplate !== '') {
+    details.push('ERRO: cleanProductDescription não limpou o boilerplate da SOU.IS')
+    allPass = false
+  }
+  if (descReal !== 'Aplicação especial Toyota Corolla') {
+    details.push('ERRO: cleanProductDescription removeu indevidamente descrição legítima')
+    allPass = false
+  }
+
+  // Teste 7: Busca em duas fases e filtro de relevância eliminando Uno/Santana/Bongo/Doblo
+  // Simula o cenário real: termo "bucha amortecedor d21 ano 91"
+  const candidatesPhase = twoPhaseProductSearch(catalogMock, extracted1.searchTokens, term1)
+  const rankedD21 = scoreAndRankProducts(
+    candidatesPhase,
+    term1,
+    extracted1.searchTokens,
+    extracted1.detectedYears,
+  )
+
+  const d21Skus = rankedD21.map((r) => r.rec.sku)
+  details.push(`Top 5 D21 filtrados: ${d21Skus.join(', ')}`)
+
+  // Critério de aceitação: top 5 = peças D21 88/97 (8722, 8721, 8717, 2765, 5436/6123) — zero peças de Uno/Santana/Bongo/Doblo
+  const unwantedSkus = ['9901', '9902', '9903', '9904', '1234']
+  for (const unwanted of unwantedSkus) {
+    if (d21Skus.includes(unwanted)) {
+      details.push(`ERRO: SKU indesejado ${unwanted} apareceu no top 5 de D21`)
+      allPass = false
+    }
+  }
+
+  if (d21Skus[0] !== '8722') {
+    details.push(`ERRO: 8722 não é o top 1 de D21 (é ${d21Skus[0]})`)
+    allPass = false
+  } else {
+    details.push('SUCESSO: Zero falsos positivos de Uno/Santana/Bongo/Doblo no resultado!')
+  }
+
+  // Teste 8: "bucha band freelander" -> Freelander no topo, incluindo SKU 8393
+  const termFreelander = 'bucha band freelander'
+  const extractedFree = extractAiTokensAndYears(termFreelander)
+  const candidatesFree = twoPhaseProductSearch(
+    catalogMock,
+    extractedFree.searchTokens,
+    termFreelander,
+  )
+  const rankedFree = scoreAndRankProducts(
+    candidatesFree,
+    termFreelander,
+    extractedFree.searchTokens,
+    extractedFree.detectedYears,
+  )
+  const freeSkus = rankedFree.map((r) => r.rec.sku)
+  details.push(`Top Freelander: ${freeSkus.join(', ')}`)
+
+  if (!freeSkus.includes('8393')) {
+    details.push('ERRO: SKU 8393 não está presente no resultado de "bucha band freelander"')
+    allPass = false
+  } else {
+    details.push('SUCESSO: SKU 8393 incluído com sucesso no resultado de Freelander!')
   }
 
   return { success: allPass, details }

@@ -122,13 +122,82 @@ export function extractYearRangeString(text: string): string {
   return ''
 }
 
+/**
+ * Simula a busca em duas fases (AND -> OR com fallback) sobre o catálogo de produtos.
+ * Fase 1: AND estrito em name, sku, brand, barcode ou description
+ * Fase 2: OR amplo se Fase 1 trouxer menos de 5 produtos
+ */
+export function twoPhaseProductSearch(
+  products: MockProduct[],
+  searchTokens: string[],
+  rawTerm = '',
+): MockProduct[] {
+  if (!products || products.length === 0 || !searchTokens || searchTokens.length === 0) {
+    return []
+  }
+
+  const queryTokens = searchTokens.slice(0, 8)
+
+  const matchesToken = (prod: MockProduct, tok: string) => {
+    const full =
+      `${prod.name} ${prod.sku} ${prod.brand} ${prod.barcode} ${prod.description}`.toLowerCase()
+    return full.includes(tok.toLowerCase())
+  }
+
+  // Fase 1: AND estrito
+  const phase1 = products.filter((p) => queryTokens.every((tok) => matchesToken(p, tok)))
+
+  const selectedIds = new Set(phase1.map((p) => p.sku))
+  const results = [...phase1]
+
+  // Fase 2: OR caso Fase 1 traga menos de 5
+  if (results.length < 5) {
+    const phase2 = products.filter((p) => {
+      if (selectedIds.has(p.sku)) return false
+      return queryTokens.some((tok) => matchesToken(p, tok))
+    })
+    for (const p of phase2) {
+      results.push(p)
+      selectedIds.add(p.sku)
+      if (results.length >= 200) break
+    }
+  }
+
+  // Fallback se nada foi encontrado
+  if (results.length === 0 && rawTerm.length >= 2) {
+    const rt = rawTerm.toLowerCase()
+    const fallback = products.filter((p) =>
+      `${p.name} ${p.sku} ${p.brand} ${p.barcode}`.toLowerCase().includes(rt),
+    )
+    results.push(...fallback.slice(0, 20))
+  }
+
+  return results
+}
+
+/**
+ * Limpa description se for boilerplate da sincronização SOU.IS
+ */
+export function cleanProductDescription(desc: string | undefined | null): string {
+  const s = String(desc || '').trim()
+  if (!s || s.startsWith('Produto SOU.IS sincronizado')) {
+    return ''
+  }
+  return s
+}
+
 export function scoreAndRankProducts(
   products: MockProduct[],
   rawTerm: string,
   searchTokens: string[],
   detectedYears: number[],
 ) {
-  const scoredCandidates: { rec: MockProduct; score: number; matchedTokenCount: number }[] = []
+  const scoredCandidates: {
+    rec: MockProduct
+    score: number
+    matchedTokenCount: number
+    matchedNameSkuCount: number
+  }[] = []
 
   for (let ci = 0; ci < products.length; ci++) {
     const rec = products[ci]
@@ -138,13 +207,24 @@ export function scoreAndRankProducts(
     const pBarcode = String(rec.barcode || '').toLowerCase()
     const pDesc = String(rec.description || '').toLowerCase()
     const fullSearchable = pName + ' ' + pSku + ' ' + pBrand + ' ' + pBarcode + ' ' + pDesc
+    const nameSkuSearchable = pName + ' ' + pSku
 
     let matchedTokenCount = 0
+    let matchedNameSkuCount = 0
     for (let ti = 0; ti < searchTokens.length; ti++) {
       const tok = searchTokens[ti]
       if (fullSearchable.includes(tok)) {
         matchedTokenCount++
       }
+      if (nameSkuSearchable.includes(tok)) {
+        matchedNameSkuCount++
+      }
+    }
+
+    // Filtro de relevância mínima: quando o termo tiver 2 ou mais tokens,
+    // descarta produtos com menos de 2 tokens casados no nome/SKU
+    if (searchTokens.length >= 2 && matchedNameSkuCount < 2) {
+      continue
     }
 
     if (matchedTokenCount === 0 && searchTokens.length > 0) continue
@@ -177,6 +257,7 @@ export function scoreAndRankProducts(
       rec,
       score,
       matchedTokenCount,
+      matchedNameSkuCount,
     })
   }
 
