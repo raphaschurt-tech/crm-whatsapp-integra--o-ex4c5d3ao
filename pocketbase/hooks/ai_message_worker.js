@@ -908,37 +908,129 @@ onRecordAfterCreateSuccess((e) => {
         return { total: 0, produtos: [] }
       }
 
-      // Busca em duas fases no banco de dados:
-      // Fase 1: Consulta AND estrita (todos os queryTokens devem casar em name/sku/brand/barcode/description)
-      // Fase 2: Se Fase 1 retornar menos de 5 candidatos, executa consulta OR com limit 200 para complementar pool
-      const queryTokens = searchTokens.slice(0, 8)
-      const bindParams = {}
-      const tokenConds = []
+      // Tabela fixa e determinística de apelidos e abreviações do ERP SOU.IS
+      // Mapeamento bidirecional determinístico palavra completa <-> abreviação do catálogo
+      // NUNCA usar prefixo genérico arbitrário para evitar falsos positivos (ex: "volante" nunca casa com "VOLVO")
+      const TOKEN_ALIASES_MAP = {
+        bandeja: ['band'],
+        bandejas: ['band'],
+        band: ['bandeja'],
+        dianteira: ['diant'],
+        dianteiro: ['diant'],
+        dianteiras: ['diant'],
+        dianteiros: ['diant'],
+        diant: ['dianteira', 'dianteiro'],
+        traseira: ['tras'],
+        traseiro: ['tras'],
+        traseiras: ['tras'],
+        traseiros: ['tras'],
+        tras: ['traseira', 'traseiro'],
+        amortecedor: ['amort'],
+        amortecedores: ['amort'],
+        amort: ['amortecedor'],
+        estabilizadora: ['estab'],
+        estabilizador: ['estab'],
+        estab: ['estabilizadora', 'estabilizador'],
+        superior: ['sup'],
+        superiores: ['sup'],
+        sup: ['superior'],
+        inferior: ['inf'],
+        inferiores: ['inf'],
+        inf: ['inferior'],
+        direcao: ['dir'],
+        direção: ['dir'],
+        dir: ['direcao', 'direção'],
+        articulacao: ['artic'],
+        articulação: ['artic'],
+        articulador: ['artic'],
+        artic: ['articulacao', 'articulação', 'articulador'],
+        hidraulica: ['hidr'],
+        hidráulica: ['hidr'],
+        hidraulico: ['hidr'],
+        hidráulico: ['hidr'],
+        hidr: ['hidraulica', 'hidráulica', 'hidraulico', 'hidráulico'],
+        esquerda: ['esq'],
+        esquerdo: ['esq'],
+        esq: ['esquerda', 'esquerdo'],
+        direita: ['dir'],
+        direito: ['dir'],
+        homocinetica: ['homoc'],
+        homocinética: ['homoc'],
+        homoc: ['homocinetica', 'homocinética'],
+        travessa: ['trav'],
+        trav: ['travessa'],
+        tensor: ['tens'],
+        tens: ['tensor'],
+        rolamento: ['rol'],
+        rol: ['rolamento'],
+        transversal: ['trans'],
+        trans: ['transversal'],
+      }
 
-      for (let ti = 0; ti < queryTokens.length; ti++) {
-        const pKey = 't' + ti
-        bindParams[pKey] = queryTokens[ti]
-        tokenConds.push(
-          '(name ~ {:' +
-            pKey +
-            '} || sku ~ {:' +
-            pKey +
-            '} || brand ~ {:' +
-            pKey +
-            '} || barcode ~ {:' +
-            pKey +
-            '} || description ~ {:' +
-            pKey +
-            '})',
-        )
+      // Função que expande cada token para o conjunto de termos equivalentes [token, ...aliases]
+      const getEquivalentsForToken = (tok) => {
+        const cleanTok = String(tok || '')
+          .toLowerCase()
+          .trim()
+        if (!cleanTok) return []
+        const aliasList = TOKEN_ALIASES_MAP[cleanTok] || []
+        const result = [cleanTok]
+        for (let ai = 0; ai < aliasList.length; ai++) {
+          const alias = aliasList[ai]
+          if (!result.includes(alias)) {
+            result.push(alias)
+          }
+        }
+        return result
+      }
+
+      // Grupos de tokens equivalentes para busca (cada posição representa 1 conceito da busca do usuário)
+      const tokenGroups = []
+      for (let sti = 0; sti < searchTokens.length; sti++) {
+        tokenGroups.push(getEquivalentsForToken(searchTokens[sti]))
+      }
+
+      // Busca em duas fases no banco de dados com equivalência de apelidos:
+      // Fase 1: Consulta AND entre os grupos (cada conceito deve casar via o token ou um de seus apelidos)
+      // Fase 2: Se Fase 1 retornar menos de 5 candidatos, executa consulta OR com limit 200 para complementar pool
+      const queryGroups = tokenGroups.slice(0, 8)
+      const bindParams = {}
+      const groupConds = []
+      let paramCounter = 0
+
+      for (let gi = 0; gi < queryGroups.length; gi++) {
+        const groupVariants = queryGroups[gi]
+        const variantConds = []
+        for (let vi = 0; vi < groupVariants.length; vi++) {
+          const pKey = 'p' + paramCounter++
+          bindParams[pKey] = groupVariants[vi]
+          variantConds.push(
+            '(name ~ {:' +
+              pKey +
+              '} || sku ~ {:' +
+              pKey +
+              '} || brand ~ {:' +
+              pKey +
+              '} || barcode ~ {:' +
+              pKey +
+              '} || description ~ {:' +
+              pKey +
+              '})',
+          )
+        }
+        if (variantConds.length === 1) {
+          groupConds.push(variantConds[0])
+        } else if (variantConds.length > 1) {
+          groupConds.push('(' + variantConds.join(' || ') + ')')
+        }
       }
 
       let candidates = []
       const candidateIds = {}
 
-      // Execução da Fase 1 (AND)
-      if (tokenConds.length > 0) {
-        const andFilterExpr = tokenConds.join(' && ')
+      // Execução da Fase 1 (AND entre conceitos)
+      if (groupConds.length > 0) {
+        const andFilterExpr = groupConds.join(' && ')
         try {
           const phase1Candidates = $app.findRecordsByFilter(
             'products',
@@ -960,9 +1052,9 @@ onRecordAfterCreateSuccess((e) => {
         }
       }
 
-      // Execução da Fase 2 (OR com limit 200) somente se Fase 1 retornar menos de 5 candidatos
-      if (candidates.length < 5 && tokenConds.length > 0) {
-        const orFilterExpr = tokenConds.join(' || ')
+      // Execução da Fase 2 (OR amplo com limit 200) somente se Fase 1 retornar menos de 5 candidatos
+      if (candidates.length < 5 && groupConds.length > 0) {
+        const orFilterExpr = groupConds.join(' || ')
         try {
           const phase2Candidates = $app.findRecordsByFilter(
             'products',
@@ -1040,7 +1132,11 @@ onRecordAfterCreateSuccess((e) => {
         return ''
       }
 
-      // Sistema de pontuação e relevância
+      // Sistema de pontuação e relevância com suporte a apelidos do ERP:
+      // ORDEM DO SCORE (conforme item 2 da especificação):
+      // 1º: Número de tokens casados (ordem primária: peça com mais tokens nunca perde para peça com menos tokens)
+      // 2º: Bônus stock_quantity > 0
+      // 3º: Bônus de faixa de anos
       const scoredCandidates = []
 
       for (let ci = 0; ci < (candidates || []).length; ci++) {
@@ -1057,17 +1153,31 @@ onRecordAfterCreateSuccess((e) => {
         const pBarcode = String(rec.getString('barcode') || '').toLowerCase()
         const pDesc = String(rec.getString('description') || '').toLowerCase()
         const fullSearchable = pName + ' ' + pSku + ' ' + pBrand + ' ' + pBarcode + ' ' + pDesc
+        const nameSkuSearchable = pName + ' ' + pSku
 
         let matchedTokenCount = 0
         let matchedNameSkuCount = 0
-        const nameSkuSearchable = pName + ' ' + pSku
 
-        for (let ti = 0; ti < searchTokens.length; ti++) {
-          const tok = searchTokens[ti]
-          if (fullSearchable.includes(tok)) {
+        // Cada conceito de busca pode casar via seu token direto ou via qualquer apelido configurado
+        for (let gi = 0; gi < tokenGroups.length; gi++) {
+          const variants = tokenGroups[gi]
+          let groupMatchedFull = false
+          let groupMatchedNameSku = false
+
+          for (let vi = 0; vi < variants.length; vi++) {
+            const vTok = variants[vi]
+            if (fullSearchable.includes(vTok)) {
+              groupMatchedFull = true
+            }
+            if (nameSkuSearchable.includes(vTok)) {
+              groupMatchedNameSku = true
+            }
+          }
+
+          if (groupMatchedFull) {
             matchedTokenCount++
           }
-          if (nameSkuSearchable.includes(tok)) {
+          if (groupMatchedNameSku) {
             matchedNameSkuCount++
           }
         }
@@ -1075,29 +1185,35 @@ onRecordAfterCreateSuccess((e) => {
         // Filtro de relevância mínima: quando o termo de busca tiver 2 ou mais tokens,
         // descartar candidatos com menos de 2 tokens casados no nome/SKU (elimina falsos positivos
         // como "Bucha Braco Tensor Uno..." numa busca de 3 tokens)
-        if (searchTokens.length >= 2 && matchedNameSkuCount < 2) {
+        if (tokenGroups.length >= 2 && matchedNameSkuCount < 2) {
           continue
         }
 
-        // Se o produto não casou com nenhum dos searchTokens, desconsidera
-        if (matchedTokenCount === 0 && searchTokens.length > 0) continue
+        // Se o produto não casou com nenhum conceito, desconsidera
+        if (matchedTokenCount === 0 && tokenGroups.length > 0) continue
 
-        // Base score: 10 pontos por token casado
-        let score = matchedTokenCount * 10
+        // Base score: 1000 pontos por conceito/token casado (peso dominante para que mais tokens sempre vençam)
+        let score = matchedTokenCount * 1000
 
-        // Bônus se casou com TODOS os searchTokens (match perfeito de palavras)
-        if (matchedTokenCount === searchTokens.length && searchTokens.length > 1) {
-          score += 25
+        // Bônus se casou com TODOS os tokens da pesquisa (match perfeito)
+        if (matchedTokenCount === tokenGroups.length && tokenGroups.length > 1) {
+          score += 100
         }
 
         // Bônus de SKU exato
         if (pSku === rawTerm.toLowerCase()) {
-          score += 100
+          score += 5000
         }
 
-        // Bônus se casou na faixa de anos
+        // Bônus se o estoque é positivo (critério secundário: vem após número de tokens)
+        const stockQty = Number(rec.get('stock_quantity')) || 0
+        if (stockQty > 0) {
+          score += 20
+        }
+
+        // Bônus se casou na faixa de anos (critério terciário: após estoque)
+        let yearMatched = false
         if (detectedYears.length > 0) {
-          let yearMatched = false
           for (let yi = 0; yi < detectedYears.length; yi++) {
             if (matchesYearRange(pName, detectedYears[yi])) {
               yearMatched = true
@@ -1105,26 +1221,27 @@ onRecordAfterCreateSuccess((e) => {
             }
           }
           if (yearMatched) {
-            score += 15 // Recompensa alta para produtos da mesma faixa de anos
+            score += 10
           }
-        }
-
-        // Desempate secundário: produtos com estoque positivo ganham leve prioridade
-        const stockQty = Number(rec.get('stock_quantity')) || 0
-        if (stockQty > 0) {
-          score += 2
         }
 
         scoredCandidates.push({
           rec: rec,
           score: score,
           matchedTokenCount: matchedTokenCount,
+          yearMatched: yearMatched,
         })
       }
 
-      // Ordenar decrescente por score (relevância), depois por estoque, depois por nome
+      // Ordenar decrescente:
+      // 1. score total (onde matchedTokenCount domina por ter peso 1000, depois stockQty bônus 20, depois yearMatched 10)
+      // 2. desempate: matchedTokenCount
+      // 3. desempate: stock_quantity
+      // 4. desempate: nome alfabético
       scoredCandidates.sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score
+        if (b.matchedTokenCount !== a.matchedTokenCount)
+          return b.matchedTokenCount - a.matchedTokenCount
         const stockA = Number(a.rec.get('stock_quantity')) || 0
         const stockB = Number(b.rec.get('stock_quantity')) || 0
         if (stockB !== stockA) return stockB - stockA

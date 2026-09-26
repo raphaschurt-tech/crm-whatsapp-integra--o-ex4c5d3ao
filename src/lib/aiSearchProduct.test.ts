@@ -308,7 +308,7 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
     details.push('SUCESSO: Zero falsos positivos de Uno/Santana/Bongo/Doblo no resultado!')
   }
 
-  // Teste 8: "bucha band freelander" -> Freelander no topo, incluindo SKU 8393
+  // Teste 8: "bucha band freelander" -> Freelander no topo, incluindo SKU 2430, 2431 e 8393
   const termFreelander = 'bucha band freelander'
   const extractedFree = extractAiTokensAndYears(termFreelander)
   const candidatesFree = twoPhaseProductSearch(
@@ -323,13 +323,101 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
     extractedFree.detectedYears,
   )
   const freeSkus = rankedFree.map((r) => r.rec.sku)
-  details.push(`Top Freelander: ${freeSkus.join(', ')}`)
+  details.push(`Top Freelander (bucha band freelander): ${freeSkus.join(', ')}`)
 
-  if (!freeSkus.includes('8393')) {
-    details.push('ERRO: SKU 8393 não está presente no resultado de "bucha band freelander"')
+  if (!freeSkus.includes('8393') || !freeSkus.includes('2430') || !freeSkus.includes('2431')) {
+    details.push(
+      'ERRO: SKUs 2430, 2431 ou 8393 não estão presentes no resultado de "bucha band freelander"',
+    )
     allPass = false
   } else {
-    details.push('SUCESSO: SKU 8393 incluído com sucesso no resultado de Freelander!')
+    details.push(
+      'SUCESSO: SKUs 2430, 2431 e 8393 incluídos com sucesso no resultado de "bucha band freelander"!',
+    )
+  }
+
+  // Teste 8B (BUG REAL RESOLVIDO): "bucha bandeja freelander"
+  // Deve casar o apelido "band" do SKU 2235 ("BUCHA DIANT BAND DIANT VOLVO XC60 08/18 FREELANDER 06/15...")
+  // e ranquear o SKU 2235 no top 3 (estoque 3, R$ 174 — supera as peças sem estoque pela ordem de score)
+  const termFreelanderBandeja = 'bucha bandeja freelander'
+  const extractedFreeBandeja = extractAiTokensAndYears(termFreelanderBandeja)
+  const candidatesFreeBandeja = twoPhaseProductSearch(
+    catalogMock,
+    extractedFreeBandeja.searchTokens,
+    termFreelanderBandeja,
+  )
+  const rankedFreeBandeja = scoreAndRankProducts(
+    candidatesFreeBandeja,
+    termFreelanderBandeja,
+    extractedFreeBandeja.searchTokens,
+    extractedFreeBandeja.detectedYears,
+  )
+  const top3Bandeja = rankedFreeBandeja.slice(0, 3)
+  const top3Skus = top3Bandeja.map((r) => r.rec.sku)
+  details.push(`Top 3 "bucha bandeja freelander": ${top3Skus.join(', ')}`)
+
+  if (!top3Skus.includes('2235')) {
+    details.push(
+      `ERRO: SKU 2235 não ficou no top 3 para "bucha bandeja freelander" (retornou: ${top3Skus.join(', ')})`,
+    )
+    allPass = false
+  } else {
+    // 2235 tem estoque 3 e casa os 3 tokens (bucha, band/bandeja, freelander)
+    // 2430 e 2431 também casam os 3 tokens mas têm estoque 0
+    // Portanto 2235 deve vir antes ou empatar em tokens e vencer por estoque > 0
+    const sku2235Pos = top3Skus.indexOf('2235')
+    details.push(
+      `SUCESSO: SKU 2235 está na posição ${sku2235Pos + 1} do top 3 com estoque ${rankedFreeBandeja[sku2235Pos].rec.stock_quantity}!`,
+    )
+  }
+
+  // Teste 8C (ANTI-FALSO-POSITIVO): "bucha do volante do Doblo"
+  // NÃO deve retornar peças de Volvo (ex: XC60/V40), evitando falso positivo por prefixo genérico "vol"
+  // Adiciona mock de peça Volvo para testar explicitamente
+  const catalogWithVolvoMock = [
+    ...catalogMock,
+    {
+      sku: '2478',
+      name: 'CAIXA VOLVO XC 60 09/11 DIRECAO HIDRAULICA',
+      brand: 'RPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado',
+      stock_quantity: 0,
+      price: 0,
+    },
+    {
+      sku: '2001',
+      name: 'BUCHA FOCUS 08/... VOLVO V40 BARRA EST DIANT',
+      brand: 'JAHU',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado',
+      stock_quantity: 0,
+      price: 0,
+    },
+  ]
+  const termVolanteDoblo = 'bucha do volante do Doblo'
+  const extractedVolanteDoblo = extractAiTokensAndYears(termVolanteDoblo)
+  const candidatesVolanteDoblo = twoPhaseProductSearch(
+    catalogWithVolvoMock,
+    extractedVolanteDoblo.searchTokens,
+    termVolanteDoblo,
+  )
+  const rankedVolanteDoblo = scoreAndRankProducts(
+    candidatesVolanteDoblo,
+    termVolanteDoblo,
+    extractedVolanteDoblo.searchTokens,
+    extractedVolanteDoblo.detectedYears,
+  )
+  const volanteDobloSkus = rankedVolanteDoblo.map((r) => r.rec.sku)
+  const volanteDobloNames = rankedVolanteDoblo.map((r) => r.rec.name)
+  details.push(`Resultados para "${termVolanteDoblo}": ${volanteDobloSkus.join(', ')}`)
+
+  const hasVolvoItem = volanteDobloNames.some((n) => n.toUpperCase().includes('VOLVO'))
+  if (hasVolvoItem) {
+    details.push('ERRO: Busca por "bucha do volante do Doblo" retornou produto da VOLVO!')
+    allPass = false
+  } else {
+    details.push('SUCESSO: Busca por "bucha do volante do Doblo" não retornou nenhuma peça Volvo!')
   }
 
   // Teste 9: Regras de Disponibilidade e Proibição de "indisponível"

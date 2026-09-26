@@ -127,6 +127,83 @@ export function extractYearRangeString(text: string): string {
  * Fase 1: AND estrito em name, sku, brand, barcode ou description
  * Fase 2: OR amplo se Fase 1 trouxer menos de 5 produtos
  */
+export const TOKEN_ALIASES_MAP: Record<string, string[]> = {
+  bandeja: ['band'],
+  bandejas: ['band'],
+  band: ['bandeja'],
+  dianteira: ['diant'],
+  dianteiro: ['diant'],
+  dianteiras: ['diant'],
+  dianteiros: ['diant'],
+  diant: ['dianteira', 'dianteiro'],
+  traseira: ['tras'],
+  traseiro: ['tras'],
+  traseiras: ['tras'],
+  traseiros: ['tras'],
+  tras: ['traseira', 'traseiro'],
+  amortecedor: ['amort'],
+  amortecedores: ['amort'],
+  amort: ['amortecedor'],
+  estabilizadora: ['estab'],
+  estabilizador: ['estab'],
+  estab: ['estabilizadora', 'estabilizador'],
+  superior: ['sup'],
+  superiores: ['sup'],
+  sup: ['superior'],
+  inferior: ['inf'],
+  inferiores: ['inf'],
+  inf: ['inferior'],
+  direcao: ['dir'],
+  direção: ['dir'],
+  dir: ['direcao', 'direção'],
+  articulacao: ['artic'],
+  articulação: ['artic'],
+  articulador: ['artic'],
+  artic: ['articulacao', 'articulação', 'articulador'],
+  hidraulica: ['hidr'],
+  hidráulica: ['hidr'],
+  hidraulico: ['hidr'],
+  hidráulico: ['hidr'],
+  hidr: ['hidraulica', 'hidráulica', 'hidraulico', 'hidráulico'],
+  esquerda: ['esq'],
+  esquerdo: ['esq'],
+  esq: ['esquerda', 'esquerdo'],
+  direita: ['dir'],
+  direito: ['dir'],
+  homocinetica: ['homoc'],
+  homocinética: ['homoc'],
+  homoc: ['homocinetica', 'homocinética'],
+  travessa: ['trav'],
+  trav: ['travessa'],
+  tensor: ['tens'],
+  tens: ['tensor'],
+  rolamento: ['rol'],
+  rol: ['rolamento'],
+  transversal: ['trans'],
+  trans: ['transversal'],
+}
+
+export function getEquivalentsForToken(tok: string): string[] {
+  const cleanTok = String(tok || '')
+    .toLowerCase()
+    .trim()
+  if (!cleanTok) return []
+  const aliasList = TOKEN_ALIASES_MAP[cleanTok] || []
+  const result = [cleanTok]
+  for (let ai = 0; ai < aliasList.length; ai++) {
+    const alias = aliasList[ai]
+    if (!result.includes(alias)) {
+      result.push(alias)
+    }
+  }
+  return result
+}
+
+/**
+ * Simula a busca em duas fases (AND -> OR com fallback) sobre o catálogo de produtos com equivalência de apelidos.
+ * Fase 1: AND estrito entre grupos de equivalência
+ * Fase 2: OR amplo se Fase 1 trouxer menos de 5 produtos
+ */
 export function twoPhaseProductSearch(
   products: MockProduct[],
   searchTokens: string[],
@@ -136,16 +213,16 @@ export function twoPhaseProductSearch(
     return []
   }
 
-  const queryTokens = searchTokens.slice(0, 8)
+  const tokenGroups = searchTokens.slice(0, 8).map(getEquivalentsForToken)
 
-  const matchesToken = (prod: MockProduct, tok: string) => {
+  const matchesGroup = (prod: MockProduct, variants: string[]) => {
     const full =
       `${prod.name} ${prod.sku} ${prod.brand} ${prod.barcode} ${prod.description}`.toLowerCase()
-    return full.includes(tok.toLowerCase())
+    return variants.some((v) => full.includes(v.toLowerCase()))
   }
 
-  // Fase 1: AND estrito
-  const phase1 = products.filter((p) => queryTokens.every((tok) => matchesToken(p, tok)))
+  // Fase 1: AND estrito entre conceitos
+  const phase1 = products.filter((p) => tokenGroups.every((group) => matchesGroup(p, group)))
 
   const selectedIds = new Set(phase1.map((p) => p.sku))
   const results = [...phase1]
@@ -154,7 +231,7 @@ export function twoPhaseProductSearch(
   if (results.length < 5) {
     const phase2 = products.filter((p) => {
       if (selectedIds.has(p.sku)) return false
-      return queryTokens.some((tok) => matchesToken(p, tok))
+      return tokenGroups.some((group) => matchesGroup(p, group))
     })
     for (const p of phase2) {
       results.push(p)
@@ -209,35 +286,61 @@ export function scoreAndRankProducts(
     const fullSearchable = pName + ' ' + pSku + ' ' + pBrand + ' ' + pBarcode + ' ' + pDesc
     const nameSkuSearchable = pName + ' ' + pSku
 
+    const tokenGroups = searchTokens.map(getEquivalentsForToken)
+
     let matchedTokenCount = 0
     let matchedNameSkuCount = 0
-    for (let ti = 0; ti < searchTokens.length; ti++) {
-      const tok = searchTokens[ti]
-      if (fullSearchable.includes(tok)) {
+
+    for (let gi = 0; gi < tokenGroups.length; gi++) {
+      const variants = tokenGroups[gi]
+      let groupMatchedFull = false
+      let groupMatchedNameSku = false
+
+      for (let vi = 0; vi < variants.length; vi++) {
+        const vTok = variants[vi]
+        if (fullSearchable.includes(vTok)) {
+          groupMatchedFull = true
+        }
+        if (nameSkuSearchable.includes(vTok)) {
+          groupMatchedNameSku = true
+        }
+      }
+
+      if (groupMatchedFull) {
         matchedTokenCount++
       }
-      if (nameSkuSearchable.includes(tok)) {
+      if (groupMatchedNameSku) {
         matchedNameSkuCount++
       }
     }
 
     // Filtro de relevância mínima: quando o termo tiver 2 ou mais tokens,
     // descarta produtos com menos de 2 tokens casados no nome/SKU
-    if (searchTokens.length >= 2 && matchedNameSkuCount < 2) {
+    if (tokenGroups.length >= 2 && matchedNameSkuCount < 2) {
       continue
     }
 
-    if (matchedTokenCount === 0 && searchTokens.length > 0) continue
+    if (matchedTokenCount === 0 && tokenGroups.length > 0) continue
 
-    let score = matchedTokenCount * 10
-    if (matchedTokenCount === searchTokens.length && searchTokens.length > 1) {
-      score += 25
-    }
-    if (pSku === rawTerm.toLowerCase()) {
+    // Ordem do score:
+    // 1º Número de tokens casados (peso dominante 1000)
+    // 2º Bônus stock_quantity > 0 (+20)
+    // 3º Bônus faixa de anos (+10)
+    let score = matchedTokenCount * 1000
+
+    if (matchedTokenCount === tokenGroups.length && tokenGroups.length > 1) {
       score += 100
     }
+    if (pSku === rawTerm.toLowerCase()) {
+      score += 5000
+    }
+
+    if (rec.stock_quantity > 0) {
+      score += 20
+    }
+
+    let yearMatched = false
     if (detectedYears.length > 0) {
-      let yearMatched = false
       for (let yi = 0; yi < detectedYears.length; yi++) {
         if (matchesYearRange(pName, detectedYears[yi])) {
           yearMatched = true
@@ -245,12 +348,8 @@ export function scoreAndRankProducts(
         }
       }
       if (yearMatched) {
-        score += 15
+        score += 10
       }
-    }
-
-    if (rec.stock_quantity > 0) {
-      score += 2
     }
 
     scoredCandidates.push({
@@ -263,6 +362,8 @@ export function scoreAndRankProducts(
 
   scoredCandidates.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
+    if (b.matchedTokenCount !== a.matchedTokenCount)
+      return b.matchedTokenCount - a.matchedTokenCount
     if (b.rec.stock_quantity !== a.rec.stock_quantity)
       return b.rec.stock_quantity - a.rec.stock_quantity
     return a.rec.name.localeCompare(b.rec.name)
