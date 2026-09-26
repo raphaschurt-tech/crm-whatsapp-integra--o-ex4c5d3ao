@@ -53,6 +53,8 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({
   } = card
   const resolvedType = customer.type || (customer.cnpj ? 'PJ' : 'PF')
   const isSupplier = customer.customer_type === 'fornecedor'
+  // Card na coluna Lead não visto pisca com borda vermelha
+  const isUnseenLead = columnId === 'novo_lead' && customer.lead_viewed === false
 
   // Nome da pessoa de contato: só exibe se preenchido e não for apenas o número de telefone
   const rawContactName = customer.contact_name?.trim() || ''
@@ -75,7 +77,11 @@ export const PipelineCard: React.FC<PipelineCardProps> = ({
       draggable
       onDragStart={handleCardDragStart}
       onClick={onClick}
-      className="group relative bg-white border border-slate-200/90 rounded-xl p-3.5 shadow-xs hover:shadow-md hover:border-emerald-300 transition-all cursor-pointer select-none space-y-2.5 active:scale-[0.99] active:shadow-xs"
+      className={`group relative bg-white border rounded-xl p-3.5 shadow-xs hover:shadow-md hover:border-emerald-300 transition-all cursor-pointer select-none space-y-2.5 active:scale-[0.99] active:shadow-xs ${
+        isUnseenLead
+          ? 'border-rose-500 animate-pulse-lead-border ring-1 ring-rose-400'
+          : 'border-slate-200/90'
+      }`}
     >
       {/* Top Header: Tipo + Origem + Nome + Grip */}
       <div className="flex items-start justify-between gap-2">

@@ -370,6 +370,17 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
     }
   }
 
+  // Diagnóstico do sync: logar exatamente uma linha com a lista de nomes de colunas recebidas da view VW_PRODUTO_PRECO_ESTOQUE
+  try {
+    let receivedColumns = []
+    if (rows && rows.length > 0 && typeof rows[0] === 'object' && rows[0] !== null) {
+      receivedColumns = Object.keys(rows[0])
+    }
+    console.log('[SOUIS-SYNC-COLUMNS] ' + JSON.stringify(receivedColumns))
+  } catch (colErr) {
+    console.log('[SOUIS-SYNC-COLUMNS] erro ao extrair colunas: ' + String(colErr))
+  }
+
   const mappedResult = mapRowsToProducts(rows)
   const mappedProducts = mappedResult.mappedProducts
   const productCodes = Object.keys(mappedProducts)

@@ -454,22 +454,29 @@ onRecordAfterCreateSuccess((e) => {
       ? paymentMethodsConfig
       : 'Pagamento via link enviado no orçamento'
 
-  // Regras de ferramentas, preços, estoque, apresentação das opções e formas de pagamento
+  // Regras de ferramentas, preços, estoque, apresentação das opções, disponibilidade e fluxo de interesse de compra
   const toolsAndPriceRules =
-    '\n\n[FERRAMENTAS DE CONSULTA E REGRAS DE PREÇO/ESTOQUE]\n' +
+    '\n\n[FERRAMENTAS DE CONSULTA E REGRAS DE PREÇO/ESTOQUE/DISPONIBILIDADE]\n' +
     'Você possui ferramentas (function calling) para buscar produtos no catálogo e consultar estoque em tempo real:\n' +
     '1. buscar_produtos: use sempre que o cliente perguntar sobre qualquer peça, modelo, bucha, amortecedor, aplicação automotiva ou SKU. ' +
     'Pesquise por termos-chave relevantes (ex: "bucha d21", "amortecedor d21", SKU ou código de barras).\n' +
     '2. consultar_estoque_ao_vivo: use para obter o estoque atualizado em tempo real caso tenha o SKU do produto.\n' +
-    '3. REGRA CRÍTICA DE APRESENTAÇÃO: Quando a busca encontrar produtos, SEMPRE cite as opções encontradas na resposta, com o nome completo (incluindo a faixa de anos, ex.: \'88/97\') e a descrição/aplicação de cada uma — mesmo quando estiverem sem estoque ou sem preço: "Encontrei estas opções para o seu veículo: ... Para todas, o valor fica sob consulta e nossa equipe confirma a disponibilidade." Se faltar informação essencial (ano/modelo do veículo, qual peça ou posição), pergunte ao cliente antes de buscar — nunca chute. Cumprimente o cliente na primeira mensagem da conversa.\n' +
-    '4. REGRA CRÍTICA DE PREÇOS E ESTOQUE: Informe SOMENTE preço e estoque vindos das ferramentas. NUNCA invente ou estime valores ou estoque.\n' +
-    '5. Se o estoque for 0, nulo ou indisponível OU se o preço for 0 ou nulo: NUNCA invente valor. Responda obrigatoriamente: "Sob consulta, nossa equipe confirma disponibilidade".\n' +
-    '6. Se houver preço e estoque disponíveis no catálogo, informe claramente o nome da peça, marca/código, preço (R$) e disponibilidade.\n' +
-    '7. MEIOS DE PAGAMENTO: Ao perguntarem sobre como pagar, formas de pagamento, parcelamento ou condições comerciais, responda com: "' +
+    "3. REGRA CRÍTICA DE APRESENTAÇÃO: Quando a busca encontrar produtos, SEMPRE cite as opções encontradas na resposta, com o nome completo (incluindo a faixa de anos, ex.: '88/97') e a descrição/aplicação de cada uma — mesmo quando estiverem com estoque 0 ou sem preço. Se faltar informação essencial (ano/modelo do veículo, qual peça ou posição), pergunte ao cliente antes de buscar — nunca chute. Cumprimente o cliente na primeira mensagem da conversa.\n" +
+    '4. TABELA DE DISPONIBILIDADE E PREÇOS (OBRIGATÓRIO):\n' +
+    '- Estoque 0: NUNCA use a palavra "indisponível" ou "sem estoque". Responda sempre: "disponível em até 48 horas" (pedido sob encomenda);\n' +
+    '- Preço 0 ou sem preço: informe "Sob consulta";\n' +
+    '- Estoque 0 E Preço 0: informe "Sob consulta" e "disponível em até 48 horas";\n' +
+    '- Estoque > 0 e Preço > 0: informe o preço em R$ e a quantidade ("X un.");\n' +
+    '- REGRA PERMANENTE: É PROIBIDO USAR A PALAVRA "indisponível" EM QUALQUER RESPOSTA.\n' +
+    '5. FLUXO DE INTERESSE DE COMPRA (Gatilho -> Coleta -> Confirmação -> Handoff):\n' +
+    '- GATILHO: Dispare APENAS quando o cliente declarar expressamente a intenção de comprar/fechar (ex.: "quero o item 1 e 2", "vou ficar com o 1", "fechar", "me manda", "quero levar"). Perguntas de curiosidade ou mera cotação de preço ("quanto custa?", "tem?") NÃO disparam este fluxo.\n' +
+    '- COLETA: Ao detectar intenção declarada de compra, confirme quais itens o cliente quer (citando o nome e a aplicação), pergunte a quantidade de cada item e confirme se a aplicação/ano do veículo está correto. Você tem no MÁXIMO 2 rodadas de perguntas para coletar essas informações caso ainda não tenham sido ditas.\n' +
+    '- CONFIRMAÇÃO FINAL: Antes do handoff para a equipe, envie UMA confirmação final resumindo os itens + quantidade + aplicação coletados, iniciando obrigatoriamente por: "Só confirmando: ..." (ex.: "Só confirmando: item 1 (Bucha Diant Freelander 2 06/15) - 2 unidades, para Freelander 2 ano 2011."). Essa confirmação não conta no limite das 2 rodadas.\n' +
+    '- HANDOFF: Assim que o cliente confirmar o resumo final (ou se a intenção e os dados já estiverem todos claros na mesma mensagem), transfira para a equipe de atendimento humano: responda exatamente incluindo a mensagem "Estou passando para uma atendente, ela retorna em instantes com preço e disponibilidade" e adicione no final da sua resposta o marcador [INTERESSE-COMPRA: itens=<descreva os itens>, qtd=<quantidades>, app=<aplicacao/veiculo>] seguido de [TRANSFERIR-HUMANO]. O marcador acionará a criação/atualização do card na coluna Lead do Pipeline e a transferência humana.\n' +
+    '6. MEIOS DE PAGAMENTO: Ao perguntarem sobre como pagar, formas de pagamento, parcelamento ou condições comerciais, responda com: "' +
     effectivePaymentMethods.replace(/"/g, "'") +
     '".\n' +
-    '8. REGRA DE NÃO AUTO-TRANSFERÊNCIA: Você NÃO deve transferir para atendimento humano apenas porque o cliente perguntou preço ou estoque. Responda com os dados das ferramentas e continue o atendimento normalmente.\n' +
-    'O marcador [TRANSFERIR-HUMANO] é estritamente reservado para casos genuínos: quando o cliente pedir expressamente para falar com um atendente/humano, reclamações sérias ou negociações comerciais avançadas fora do seu alcance.'
+    '7. REGRA DE NÃO AUTO-TRANSFERÊNCIA: Você NÃO deve transferir para atendimento humano apenas porque o cliente perguntou preço ou estoque. Responda com os dados das ferramentas e continue o atendimento normalmente. O marcador [TRANSFERIR-HUMANO] é estritamente reservado para a conclusão do fluxo de interesse de compra, pedido expresso de atendente pelo cliente, ou reclamações graves.'
 
   const effectiveSystemPrompt =
     (configuredPrompt.length > 0 ? configuredPrompt : fallbackPrompt) +
@@ -775,6 +782,26 @@ onRecordAfterCreateSuccess((e) => {
       const rawTerm = String(termo || '').trim()
       if (!rawTerm) return { total: 0, produtos: [] }
 
+      // Leitura dinâmica ao vivo de SKUs excluídos (sem cache) gravados em settings.ai_excluded_skus
+      let excludedSkusSet = {}
+      try {
+        const liveSetting = $app.findFirstRecordByFilter('settings', "id != ''")
+        if (liveSetting) {
+          const rawExcluded = String(liveSetting.getString('ai_excluded_skus') || '').trim()
+          if (rawExcluded) {
+            const splitted = rawExcluded.split(',')
+            for (let sIdx = 0; sIdx < splitted.length; sIdx++) {
+              const skuClean = splitted[sIdx].trim().toLowerCase()
+              if (skuClean) {
+                excludedSkusSet[skuClean] = true
+              }
+            }
+          }
+        }
+      } catch (exErr) {
+        console.log('[AI-EXCLUDED-SKUS-READ-ERR]', String(exErr))
+      }
+
       // Lista de stopwords estritas em português conforme especificação
       const stopWordsSet = {
         de: true,
@@ -1015,6 +1042,12 @@ onRecordAfterCreateSuccess((e) => {
       for (let ci = 0; ci < (candidates || []).length; ci++) {
         const rec = candidates[ci]
         const pSku = String(rec.getString('sku') || '').toLowerCase()
+
+        // Excluir SKUs configurados em ai_excluded_skus (insumos puros)
+        if (excludedSkusSet[pSku] || excludedSkusSet[pSku.trim()]) {
+          continue
+        }
+
         const pName = String(rec.getString('name') || '').toLowerCase()
         const pBrand = String(rec.getString('brand') || '').toLowerCase()
         const pBarcode = String(rec.getString('barcode') || '').toLowerCase()
@@ -1109,6 +1142,17 @@ onRecordAfterCreateSuccess((e) => {
         const pDesc = String(rec.getString('description') || '').trim()
         const pYears = extractYearRangeString(pName)
 
+        let statusConsulta = ''
+        if (pStock > 0 && pPrice > 0) {
+          statusConsulta = 'R$ ' + pPrice.toFixed(2) + ' (' + pStock + ' un.)'
+        } else if (pStock <= 0 && pPrice <= 0) {
+          statusConsulta = 'Sob consulta - disponível em até 48 horas'
+        } else if (pStock <= 0) {
+          statusConsulta = 'R$ ' + pPrice.toFixed(2) + ' - disponível em até 48 horas'
+        } else {
+          statusConsulta = 'Sob consulta (' + pStock + ' un.)'
+        }
+
         const prodObj = {
           sku: pSku,
           nome: pName,
@@ -1116,11 +1160,10 @@ onRecordAfterCreateSuccess((e) => {
           codigo_barras: pBarcode,
           preco: pPrice,
           estoque: pStock,
-          disponivel: pStock > 0 && pPrice > 0,
-          status_consulta:
-            pStock <= 0 || pPrice <= 0
-              ? 'Sob consulta, nossa equipe confirma disponibilidade'
-              : 'Disponível em estoque',
+          disponivel: pStock > 0,
+          disponibilidade_info:
+            pStock <= 0 ? 'disponível em até 48 horas' : pStock + ' un. em estoque',
+          status_consulta: statusConsulta,
         }
 
         // Limpar boilerplate do description: só incluir se NÃO começar com "Produto SOU.IS sincronizado"
@@ -1230,24 +1273,37 @@ onRecordAfterCreateSuccess((e) => {
         const prod = $app.findFirstRecordByData('products', 'sku', cleanSku)
         const curStock = Number(prod.get('stock_quantity')) || 0
         const curPrice = Number(prod.get('price')) || 0
+        let statusAoVivo = ''
+        if (curStock > 0 && curPrice > 0) {
+          statusAoVivo = 'R$ ' + curPrice.toFixed(2) + ' (' + curStock + ' un.)'
+        } else if (curStock <= 0 && curPrice <= 0) {
+          statusAoVivo = 'Sob consulta - disponível em até 48 horas'
+        } else if (curStock <= 0) {
+          statusAoVivo = 'R$ ' + curPrice.toFixed(2) + ' - disponível em até 48 horas'
+        } else {
+          statusAoVivo = 'Sob consulta (' + curStock + ' un.)'
+        }
+
         productInfo = {
           sku: cleanSku,
           nome: prod.getString('name'),
           marca: prod.getString('brand') || '',
           preco: curPrice,
           estoque: curStock,
-          disponivel: curStock > 0 && curPrice > 0,
-          status_consulta:
-            curStock <= 0 || curPrice <= 0
-              ? 'Sob consulta, nossa equipe confirma disponibilidade'
-              : 'Disponível em estoque',
+          disponivel: curStock > 0,
+          disponibilidade_info:
+            curStock <= 0 ? 'disponível em até 48 horas' : curStock + ' un. em estoque',
+          status_consulta: statusAoVivo,
           origem_api: apiUpdated,
         }
       } catch (_) {
+        const liveStk = liveQuantity !== null ? liveQuantity : 0
         productInfo = {
           sku: cleanSku,
-          estoque: liveQuantity !== null ? liveQuantity : 0,
-          status_consulta: 'Sob consulta, nossa equipe confirma disponibilidade',
+          estoque: liveStk,
+          disponibilidade_info:
+            liveStk <= 0 ? 'disponível em até 48 horas' : liveStk + ' un. em estoque',
+          status_consulta: 'Sob consulta - disponível em até 48 horas',
           nao_encontrado: true,
         }
       }
@@ -1535,18 +1591,33 @@ onRecordAfterCreateSuccess((e) => {
   )
 
   // ==========================================
-  // DETECÇÃO E PROCESSAMENTO DO MARCADOR DE TRANSFERÊNCIA PARA HUMANO
+  // DETECÇÃO E PROCESSAMENTO DE MARCADORES (INTERESSE-COMPRA E TRANSFERIR-HUMANO)
   // ==========================================
-  // O marcador [TRANSFERIR-HUMANO] pode vir em qualquer posição do texto retornado pela IA,
-  // com tolerância a espaços, quebras de linha e múltiplas ocorrências.
-  // Deve ser completamente removido antes do envio para que o cliente NUNCA o veja.
-  // Se houver qualquer ocorrência, após o envio com sucesso ativamos o modo humano (human_mode = true, paused_by = "transferencia_ia").
-  const transferMarkerRegex = /\[\s*TRANSFERIR\s*-\s*HUMANO\s*\]/gi
-  const hasTransferMarker = transferMarkerRegex.test(aiReply)
+  // 1. Extração do marcador de interesse de compra [INTERESSE-COMPRA: itens=..., qtd=..., app=...]
+  const purchaseInterestRegex =
+    /\[\s*INTERESSE\s*-\s*COMPRA\s*:\s*(?:itens=([^,\]]+))?(?:,\s*qtd=([^,\]]+))?(?:,\s*app=([^,\]]+))?\s*\]/i
+  const purchaseMatch = aiReply.match(purchaseInterestRegex)
+  let interestDetails = null
+  if (purchaseMatch) {
+    interestDetails = {
+      itens: (purchaseMatch[1] || '').trim(),
+      qtd: (purchaseMatch[2] || '').trim(),
+      app: (purchaseMatch[3] || '').trim(),
+    }
+  }
 
+  // 2. Extração do marcador de transferência para humano [TRANSFERIR-HUMANO]
+  const transferMarkerRegex = /\[\s*TRANSFERIR\s*-\s*HUMANO\s*\]/gi
+  const hasTransferMarker = transferMarkerRegex.test(aiReply) || Boolean(interestDetails)
+
+  // 3. Limpeza completa dos marcadores para que o cliente NUNCA os veja
   let cleanAiReply = aiReply
-  if (hasTransferMarker) {
-    cleanAiReply = aiReply.replace(transferMarkerRegex, '').trim()
+    .replace(purchaseInterestRegex, '')
+    .replace(transferMarkerRegex, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  if (interestDetails || hasTransferMarker) {
     console.log(
       '[HUMAN-TRANSFER-DETECTED]',
       JSON.stringify({
@@ -1554,6 +1625,7 @@ onRecordAfterCreateSuccess((e) => {
         messageId: messageId,
         senderPhone: maskedPhone,
         hasTransferMarker: true,
+        interestDetails: interestDetails,
       }),
     )
   }
@@ -1671,6 +1743,150 @@ onRecordAfterCreateSuccess((e) => {
           '[CHAT-CONTROL-TRANSFER-SAVE-ERR]',
           transferSaveErr.message || String(transferSaveErr),
         )
+      }
+    }
+
+    // ==========================================
+    // CRIAÇÃO / ATUALIZAÇÃO DE CARD NA COLUNA LEAD (DEDUPE POR TELEFONE)
+    // ==========================================
+    // No handoff de interesse de compra: criar ou atualizar card na coluna "novo_lead" (Lead)
+    // deduplicado estritamente por telefone.
+    if (hasTransferMarker && phone) {
+      // Log do resumo de interesse com horário de Brasília (UTC-3)
+      let brasiliaTimeStr = ''
+      try {
+        const bDate = new Date(Date.now() - 3 * 3600 * 1000)
+        brasiliaTimeStr = bDate.toISOString().replace('T', ' ').replace('Z', ' UTC-3')
+      } catch (_) {
+        brasiliaTimeStr = new Date().toISOString()
+      }
+
+      const summaryLog = {
+        horarioBrasilia: brasiliaTimeStr,
+        telefone: phone,
+        itens: interestDetails ? interestDetails.itens : 'Não especificado',
+        quantidade: interestDetails ? interestDetails.qtd : 'Não especificado',
+        aplicacao: interestDetails ? interestDetails.app : 'Não especificado',
+        origem: 'IA (WhatsApp)',
+      }
+
+      console.log('[INTERESSE-COMPRA-RESUMO]', JSON.stringify(summaryLog))
+
+      try {
+        const cleanP = String(phone || '').replace(/\D/g, '')
+        let pWithoutDdi = cleanP
+        if (pWithoutDdi.startsWith('55') && pWithoutDdi.length >= 12) {
+          pWithoutDdi = pWithoutDdi.slice(2)
+        }
+
+        let existingCustomer = null
+        try {
+          const foundCusts = $app.findRecordsByFilter(
+            'customers',
+            'phone ~ {:p1} || phone ~ {:p2}',
+            '-created',
+            1,
+            0,
+            { p1: cleanP, p2: pWithoutDdi },
+          )
+          if (foundCusts && foundCusts.length > 0) {
+            existingCustomer = foundCusts[0]
+          }
+        } catch (findErr) {
+          console.log('[CUSTOMER-FIND-FOR-LEAD-ERR]', String(findErr))
+        }
+
+        const buildInterestNote = (prevNotes) => {
+          const timestampHeader = '[' + brasiliaTimeStr + ' - Interesse IA]'
+          let noteLine = timestampHeader
+          if (interestDetails && (interestDetails.itens || interestDetails.qtd)) {
+            noteLine +=
+              ' Itens: ' +
+              (interestDetails.itens || 'N/A') +
+              ' | Qtd: ' +
+              (interestDetails.qtd || 'N/A') +
+              (interestDetails.app ? ' | Aplicação: ' + interestDetails.app : '')
+          } else {
+            noteLine +=
+              ' Cliente solicitou cotação/compra via WhatsApp e foi transferido para atendente.'
+          }
+
+          if (prevNotes && prevNotes.trim()) {
+            return noteLine + '\n---\n' + prevNotes.trim()
+          }
+          return noteLine
+        }
+
+        if (existingCustomer) {
+          const currentCol = String(existingCustomer.getString('pipeline_status') || '').trim()
+
+          // DEDUPE: se já está na coluna Lead (novo_lead), atualiza o card existente:
+          // acrescenta itens/quantidade, marca como não visto para piscar vermelho e atualiza timestamp
+          if (!currentCol || currentCol === 'novo_lead') {
+            existingCustomer.set('pipeline_status', 'novo_lead')
+            existingCustomer.set('lead_source', 'whatsapp')
+            existingCustomer.set('lead_viewed', false)
+            existingCustomer.set('notes', buildInterestNote(existingCustomer.getString('notes')))
+            $app.save(existingCustomer)
+
+            console.log(
+              '[PIPELINE-LEAD-UPDATED]',
+              JSON.stringify({
+                timestamp: brasiliaTimeStr,
+                customerId: existingCustomer.id,
+                phone: maskedPhone,
+                column: 'novo_lead',
+                lead_viewed: false,
+              }),
+            )
+          } else {
+            // Se o contato já está em OUTRA coluna (ex: em_atendimento, orcamento_enviado, etc.),
+            // loga e NÃO move automaticamente para não quebrar o funil do vendedor
+            existingCustomer.set('notes', buildInterestNote(existingCustomer.getString('notes')))
+            $app.save(existingCustomer)
+
+            console.log(
+              '[PIPELINE-LEAD-MAINTAINED-OTHER-COLUMN]',
+              JSON.stringify({
+                timestamp: brasiliaTimeStr,
+                customerId: existingCustomer.id,
+                phone: maskedPhone,
+                currentColumn: currentCol,
+                action:
+                  'Apenas notas atualizadas, mantido na coluna atual conforme regra de negócio',
+              }),
+            )
+          }
+        } else {
+          // Contato ainda não existe: criar novo card na coluna Lead
+          try {
+            const custCol = $app.findCollectionByNameOrId('customers')
+            const newLead = new Record(custCol)
+            newLead.set('name', phone)
+            newLead.set('phone', phone)
+            newLead.set('type', 'PF')
+            newLead.set('lead_source', 'whatsapp')
+            newLead.set('pipeline_status', 'novo_lead')
+            newLead.set('lead_viewed', false)
+            newLead.set('notes', buildInterestNote(''))
+            $app.save(newLead)
+
+            console.log(
+              '[PIPELINE-LEAD-CREATED]',
+              JSON.stringify({
+                timestamp: brasiliaTimeStr,
+                customerId: newLead.id,
+                phone: maskedPhone,
+                column: 'novo_lead',
+                lead_viewed: false,
+              }),
+            )
+          } catch (createLeadErr) {
+            console.log('[PIPELINE-LEAD-CREATE-ERR]', String(createLeadErr))
+          }
+        }
+      } catch (leadPipelineErr) {
+        console.log('[PIPELINE-LEAD-GLOBAL-ERR]', String(leadPipelineErr))
       }
     }
   } else {

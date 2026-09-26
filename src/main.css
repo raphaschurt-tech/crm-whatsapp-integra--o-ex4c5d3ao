@@ -287,4 +287,20 @@
   .animate-spotlight {
     animation: spotlight 2s ease forwards;
   }
+
+  @keyframes pulse-lead-border {
+    0%,
+    100% {
+      border-color: rgba(244, 63, 94, 0.95);
+      box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.45);
+    }
+    50% {
+      border-color: rgba(244, 63, 94, 0.25);
+      box-shadow: 0 0 0 0px rgba(244, 63, 94, 0);
+    }
+  }
+
+  .animate-pulse-lead-border {
+    animation: pulse-lead-border 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
 }

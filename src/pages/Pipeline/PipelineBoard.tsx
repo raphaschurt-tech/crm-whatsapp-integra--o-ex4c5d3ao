@@ -441,6 +441,26 @@ export default function PipelineBoard() {
     }
   }
 
+  // Ao abrir o card, se for um lead não visto, marca como visto no banco e no estado
+  const handleOpenCard = async (card: PipelineCardData) => {
+    setSelectedCard(card)
+    if (card.customer.lead_viewed === false) {
+      try {
+        await pb.collection('customers').update(card.customer.id, { lead_viewed: true })
+        // Atualiza estado local para parar de piscar imediatamente
+        setCards((prev) =>
+          prev.map((c) =>
+            c.customer.id === card.customer.id
+              ? { ...c, customer: { ...c.customer, lead_viewed: true } }
+              : c,
+          ),
+        )
+      } catch (err) {
+        console.warn('Erro ao atualizar lead_viewed:', err)
+      }
+    }
+  }
+
   // Drag and Drop handlers
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, customerId: string) => {
     setDraggedCustomerId(customerId)
@@ -795,7 +815,7 @@ export default function PipelineBoard() {
                           card={card}
                           isAdmin={isAdmin}
                           onDelete={handleDeleteLead}
-                          onClick={() => setSelectedCard(card)}
+                          onClick={() => handleOpenCard(card)}
                           onDragStart={handleDragStart}
                         />
                       ))

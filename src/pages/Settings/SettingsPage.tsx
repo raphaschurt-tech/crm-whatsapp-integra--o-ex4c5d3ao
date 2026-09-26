@@ -43,6 +43,7 @@ export default function SettingsPage() {
   const [aiPaymentMethods, setAiPaymentMethods] = useState('')
   const [aiAutoCloseMinutes, setAiAutoCloseMinutes] = useState<number>(60)
   const [aiAutoCloseMessage, setAiAutoCloseMessage] = useState('')
+  const [aiExcludedSkus, setAiExcludedSkus] = useState('')
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -94,6 +95,7 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
           s.ai_auto_close_message ||
             'Atendimento encerrado por inatividade. Se precisar de algo, me chame aqui que continuo te ajudando! 🙂',
         )
+        setAiExcludedSkus((s as any).ai_excluded_skus || '')
       }
     } catch (e) {
       console.warn('Erro ao obter configurações:', e)
@@ -125,6 +127,7 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
         ai_payment_methods: aiPaymentMethods,
         ai_auto_close_minutes: Number(aiAutoCloseMinutes) || 0,
         ai_auto_close_message: aiAutoCloseMessage,
+        ai_excluded_skus: aiExcludedSkus,
       })
       toast({ title: 'Configurações salvas com sucesso!' })
     } catch (_) {
@@ -440,6 +443,29 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                   Texto livre informado pela IA quando o cliente perguntar como pagar (ex.: Pix,
                   cartão em até 3x sem juros, link de pagamento). Fallback se vazio: &quot;Pagamento
                   via link enviado no orçamento&quot;.
+                </p>
+              </div>
+
+              {/* SKUs Excluídos da Busca da IA (Insumos puros) */}
+              <div className="space-y-1.5 md:col-span-2">
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-1.5 text-slate-800 font-medium">
+                    <XCircle className="h-4 w-4 text-rose-600" /> SKUs Excluídos da Busca da IA
+                    (ai_excluded_skus)
+                  </Label>
+                  <span className="text-xs text-slate-400">Separados por vírgula</span>
+                </div>
+                <Input
+                  value={aiExcludedSkus}
+                  onChange={(e) => setAiExcludedSkus(e.target.value)}
+                  placeholder="Ex: 3899, 4120, 9901"
+                  className="bg-white font-mono text-sm"
+                />
+                <p className="text-xs text-slate-500">
+                  Paliativo temporário para insumos puros (produtos que o cliente final nunca compra
+                  sozinho, ex.: capa de bucha). Produtos híbridos (peça de venda que também é insumo
+                  de montagem) <strong>NUNCA</strong> devem ser incluídos. Lidos ao vivo pela IA a
+                  cada busca.
                 </p>
               </div>
               {/* Z-API Instance ID */}

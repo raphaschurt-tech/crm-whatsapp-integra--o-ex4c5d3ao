@@ -35,6 +35,7 @@ export interface Customer extends RecordModel {
   source?: string
   item_families?: string[]
   whatsapp_status?: 'novo' | 'em_atendimento' | 'resolvido' | string
+  lead_viewed?: boolean
   expand?: {
     item_families?: ItemFamily[]
     [key: string]: any
@@ -179,6 +180,7 @@ export interface Settings extends RecordModel {
   ai_payment_methods?: string
   ai_auto_close_minutes?: number
   ai_auto_close_message?: string
+  ai_excluded_skus?: string
 }
 
 export type MessageProcessingStatus = 'received' | 'processing' | 'completed' | 'failed'

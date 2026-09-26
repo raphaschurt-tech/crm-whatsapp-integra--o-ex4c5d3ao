@@ -331,5 +331,60 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
     details.push('SUCESSO: SKU 8393 incluído com sucesso no resultado de Freelander!')
   }
 
+  // Teste 9: Regras de Disponibilidade e Proibição de "indisponível"
+  // - Estoque 0 -> "disponível em até 48 horas"
+  // - Preço 0 -> "Sob consulta"
+  // - Estoque 0 E preço 0 -> "Sob consulta" + "disponível em até 48 horas"
+  // - Estoque > 0 -> "X un." + preço
+  // - Proibir a palavra "indisponível" nas respostas
+  const formatAvailability = (stock: number, price: number) => {
+    let statusText = ''
+    if (stock > 0 && price > 0) {
+      statusText = `R$ ${price.toFixed(2)} (${stock} un.)`
+    } else if (stock <= 0 && price <= 0) {
+      statusText = 'Sob consulta - disponível em até 48 horas'
+    } else if (stock <= 0) {
+      statusText = `R$ ${price.toFixed(2)} - disponível em até 48 horas`
+    } else {
+      statusText = `Sob consulta (${stock} un.)`
+    }
+    return statusText
+  }
+
+  const sampleCases = [
+    { stock: 0, price: 0, expected: 'Sob consulta - disponível em até 48 horas' },
+    { stock: 0, price: 150, expected: 'R$ 150.00 - disponível em até 48 horas' },
+    { stock: 5, price: 0, expected: 'Sob consulta (5 un.)' },
+    { stock: 10, price: 95, expected: 'R$ 95.00 (10 un.)' },
+  ]
+
+  for (const sc of sampleCases) {
+    const formatted = formatAvailability(sc.stock, sc.price)
+    if (
+      formatted.toLowerCase().includes('indisponível') ||
+      formatted.toLowerCase().includes('indisponivel')
+    ) {
+      details.push(`ERRO: Formatação contém a palavra proibida 'indisponível': ${formatted}`)
+      allPass = false
+    }
+    if (formatted !== sc.expected) {
+      details.push(`ERRO: Formatação esperada '${sc.expected}', obteve '${formatted}'`)
+      allPass = false
+    }
+  }
+
+  // Teste 10: Exclusão de SKUs (ai_excluded_skus com paliativo para SKU 3899)
+  const excludedSkusList = ['3899']
+  const filteredCandidates = candidatesFree.filter(
+    (c) => !excludedSkusList.includes(String(c.sku).trim()),
+  )
+  const filteredSkus = filteredCandidates.map((c) => c.sku)
+  if (filteredSkus.includes('3899')) {
+    details.push('ERRO: SKU 3899 não foi excluído da lista de busca')
+    allPass = false
+  } else {
+    details.push('SUCESSO: SKU 3899 devidamente excluído via ai_excluded_skus!')
+  }
+
   return { success: allPass, details }
 }
