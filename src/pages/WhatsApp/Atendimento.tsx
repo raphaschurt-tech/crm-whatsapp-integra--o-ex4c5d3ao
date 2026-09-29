@@ -46,6 +46,7 @@ import {
   WhatsAppStatus,
   loadWhatsAppConversations,
   markWhatsAppAsRead,
+  normalizePhoneKey,
 } from '@/services/whatsappChat'
 import { useRealtime } from '@/hooks/use-realtime'
 import { sendWhatsAppMessage } from '@/services/quotes'
@@ -63,6 +64,16 @@ export default function WhatsAppAtendimento() {
   const { user } = useAuth()
   const [customers, setCustomers] = useState<WhatsAppCustomer[]>([])
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
+  const [selectedPhone, setSelectedPhone] = useState<string>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        return localStorage.getItem('rpa_whatsapp_last_phone') || ''
+      }
+    } catch {
+      /* ignore */
+    }
+    return ''
+  })
   const [search, setSearch] = useState('')
 
   // Filtro de status persistido no localStorage por usuário
@@ -371,14 +382,58 @@ export default function WhatsAppAtendimento() {
       }
       setCustomersMap(map)
       setCustomers(data)
+
+      const savedPhone = (() => {
+        try {
+          if (typeof window !== 'undefined') {
+            return localStorage.getItem('rpa_whatsapp_last_phone') || ''
+          }
+        } catch {
+          /* ignore */
+        }
+        return ''
+      })()
+
       setSelectedCustomerId((prevId) => {
-        if (!prevId && data.length > 0) {
-          return data[0].id
+        // 1. Se já havia ID e ele ainda existe na nova lista
+        if (prevId) {
+          const matchedById = data.find((c) => c.id === prevId)
+          if (matchedById) {
+            return prevId
+          }
         }
-        if (prevId && data.some((c) => c.id === prevId)) {
-          return prevId
+
+        // 2. Se o ID antigo não existe mais (ex: handoff/IA recriou lead) ou ainda não há ID,
+        // procurar na lista a conversa com o mesmo telefone salvo
+        if (savedPhone) {
+          const normSaved = normalizePhoneKey(savedPhone)
+          const matchedByPhone = data.find((c) => {
+            const cNorm = normalizePhoneKey(c.rawPhone || c.phone)
+            return cNorm === normSaved || (c.rawPhone && c.rawPhone === savedPhone)
+          })
+          if (matchedByPhone) {
+            return matchedByPhone.id
+          }
         }
-        return data.length > 0 ? data[0].id : ''
+
+        // 3. Primeira carga sem telefone salvo no localStorage: seleciona a primeira conversa
+        if (!prevId && !savedPhone && data.length > 0) {
+          const firstCustomer = data[0]
+          const targetPhone = firstCustomer.rawPhone || firstCustomer.phone
+          if (targetPhone) {
+            setSelectedPhone(targetPhone)
+            try {
+              localStorage.setItem('rpa_whatsapp_last_phone', targetPhone)
+            } catch {
+              /* ignore */
+            }
+          }
+          return firstCustomer.id
+        }
+
+        // 4. Caso a conversa selecionada não seja encontrada E não haja match por telefone,
+        // NÃO saltar para data[0] — manter desmarcado (painel direito com estado vazio)
+        return ''
       })
     } catch (err) {
       console.error('Erro ao carregar conversas do WhatsApp:', err)
@@ -495,7 +550,26 @@ export default function WhatsAppAtendimento() {
     return () => clearInterval(interval)
   }, [fetchData])
 
-  const activeCustomer = customers.find((c) => c.id === selectedCustomerId) || customers[0]
+  const activeCustomer = (() => {
+    // 1. Procurar por ID se tiver selectedCustomerId
+    if (selectedCustomerId) {
+      const byId = customers.find((c) => c.id === selectedCustomerId)
+      if (byId) return byId
+    }
+
+    // 2. Fallback por telefone se o ID mudou ou não existe mais
+    if (selectedPhone) {
+      const normSaved = normalizePhoneKey(selectedPhone)
+      const byPhone = customers.find((c) => {
+        const cNorm = normalizePhoneKey(c.rawPhone || c.phone)
+        return cNorm === normSaved || (c.rawPhone && c.rawPhone === selectedPhone)
+      })
+      if (byPhone) return byPhone
+    }
+
+    // 3. NÃO saltar para customers[0] se não encontrar match
+    return undefined
+  })()
 
   // Unifica mensagens e orçamentos em uma timeline cronológica única de eventos
   type ChatTimelineItem =
@@ -520,6 +594,20 @@ export default function WhatsAppAtendimento() {
         ),
       ].sort((a, b) => a.timestamp - b.timestamp)
     : []
+
+  // Sincronizar selectedPhone e localStorage se activeCustomer existir e for diferente
+  useEffect(() => {
+    if (!activeCustomer) return
+    const custPhone = activeCustomer.rawPhone || activeCustomer.phone
+    if (custPhone && custPhone !== selectedPhone) {
+      setSelectedPhone(custPhone)
+      try {
+        localStorage.setItem('rpa_whatsapp_last_phone', custPhone)
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [activeCustomer?.id, activeCustomer?.rawPhone, activeCustomer?.phone, selectedPhone])
 
   // Persistir leitura sempre que uma conversa for selecionada / aberta
   useEffect(() => {
@@ -1270,10 +1358,18 @@ export default function WhatsAppAtendimento() {
                     key={customer.id}
                     onClick={() => {
                       setSelectedCustomerId(customer.id)
+                      const targetPhone = customer.rawPhone || customer.phone
+                      if (targetPhone) {
+                        setSelectedPhone(targetPhone)
+                        try {
+                          localStorage.setItem('rpa_whatsapp_last_phone', targetPhone)
+                        } catch {
+                          /* ignore */
+                        }
+                      }
                       const cMsgs = customer.messages || []
                       const clickedLastMsg = cMsgs.length > 0 ? cMsgs[cMsgs.length - 1] : undefined
                       if (clickedLastMsg) {
-                        const targetPhone = customer.rawPhone || customer.phone
                         setCustomers((prev) =>
                           prev.map((c) =>
                             c.id === customer.id
@@ -1995,7 +2091,7 @@ export default function WhatsAppAtendimento() {
           <div className="flex-1 flex items-center justify-center p-8 text-center text-slate-400">
             <div className="max-w-xs space-y-2">
               <MessageCircle className="w-12 h-12 mx-auto text-slate-300" />
-              <p className="font-semibold text-slate-600">Nenhuma conversa selecionada</p>
+              <p className="font-semibold text-slate-600">Selecione uma conversa</p>
               <p className="text-xs text-slate-400">
                 Selecione um cliente na barra lateral para visualizar as mensagens e responder.
               </p>
