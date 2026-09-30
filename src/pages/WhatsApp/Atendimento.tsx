@@ -746,12 +746,27 @@ export default function WhatsAppAtendimento() {
       if (typeFilter !== 'ALL' && c.type !== typeFilter) return false
 
       // Busca por texto
-      if (
-        search &&
-        !(c.name || '').toLowerCase().includes(search.toLowerCase()) &&
-        !(c.phone || '').includes(search) &&
-        !(c.company || '').toLowerCase().includes(search.toLowerCase())
-      ) {
+      if (search) {
+        const term = search.toLowerCase()
+        const matchesBasic =
+          (c.name || '').toLowerCase().includes(term) ||
+          (c.phone || '').includes(search) ||
+          (c.company || '').toLowerCase().includes(term)
+
+        if (matchesBasic) {
+          return true
+        }
+
+        // Se o termo tem 3+ caracteres e não casou em nome/telefone/empresa, busca nas mensagens
+        if (search.length >= 3) {
+          const matchesMessage = (c.messages || []).some((m) =>
+            (m.text || '').toLowerCase().includes(term),
+          )
+          if (matchesMessage) {
+            return true
+          }
+        }
+
         return false
       }
       return true
@@ -1421,28 +1436,82 @@ export default function WhatsAppAtendimento() {
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs text-slate-500 truncate flex-1">
-                          {lastMsg ? (
-                            <>
-                              {lastMsg.sender === 'agent' && (
-                                <span className="font-medium text-slate-700">Você: </span>
-                              )}
-                              {lastMsg.sender === 'ai' && (
-                                <span className="font-medium text-emerald-700">IA: </span>
-                              )}
-                              {lastMsg.text}
-                            </>
-                          ) : (
-                            'Sem mensagens'
-                          )}
-                        </p>
-                        {customer.unreadCount ? (
-                          <span className="bg-emerald-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">
-                            {customer.unreadCount}
-                          </span>
-                        ) : null}
-                      </div>
+                      {(() => {
+                        // Snippet opcional quando o filtro casou por mensagem (e não por nome/telefone/empresa)
+                        const term = search.trim().toLowerCase()
+                        const matchedBasic =
+                          !term ||
+                          (customer.name || '').toLowerCase().includes(term) ||
+                          (customer.phone || '').includes(search.trim()) ||
+                          (customer.company || '').toLowerCase().includes(term)
+
+                        let matchedMsgSnippet: {
+                          before: string
+                          match: string
+                          after: string
+                        } | null = null
+
+                        if (!matchedBasic && term.length >= 3) {
+                          const msgs = customer.messages || []
+                          // Pega a mensagem mais recente que contém o termo
+                          for (let i = msgs.length - 1; i >= 0; i--) {
+                            const txt = msgs[i]?.text || ''
+                            const idx = txt.toLowerCase().indexOf(term)
+                            if (idx !== -1) {
+                              const start = Math.max(0, idx - 20)
+                              const end = Math.min(txt.length, idx + term.length + 30)
+                              const prefix = start > 0 ? '…' : ''
+                              const suffix = end < txt.length ? '…' : ''
+                              matchedMsgSnippet = {
+                                before: prefix + txt.slice(start, idx),
+                                match: txt.slice(idx, idx + term.length),
+                                after: txt.slice(idx + term.length, end) + suffix,
+                              }
+                              break
+                            }
+                          }
+                        }
+
+                        return (
+                          <>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs text-slate-500 truncate flex-1">
+                                {lastMsg ? (
+                                  <>
+                                    {lastMsg.sender === 'agent' && (
+                                      <span className="font-medium text-slate-700">Você: </span>
+                                    )}
+                                    {lastMsg.sender === 'ai' && (
+                                      <span className="font-medium text-emerald-700">IA: </span>
+                                    )}
+                                    {lastMsg.text}
+                                  </>
+                                ) : (
+                                  'Sem mensagens'
+                                )}
+                              </p>
+                              {customer.unreadCount ? (
+                                <span className="bg-emerald-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">
+                                  {customer.unreadCount}
+                                </span>
+                              ) : null}
+                            </div>
+
+                            {matchedMsgSnippet && (
+                              <div className="mt-1 text-[11px] text-slate-600 bg-amber-50/80 border border-amber-200/70 rounded px-1.5 py-0.5 truncate flex items-center gap-1">
+                                <Search className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                                <span className="truncate">
+                                  {matchedMsgSnippet.before}
+                                  <mark className="bg-yellow-200 text-slate-900 font-semibold px-0.5 rounded-xs">
+                                    {matchedMsgSnippet.match}
+                                  </mark>
+                                  {matchedMsgSnippet.after}
+                                </span>
+                              </div>
+                            )}
+                          </>
+                        )
+                      })()}
 
                       <div className="mt-1 flex items-center gap-2">
                         {getStatusBadge(customer.status)}
