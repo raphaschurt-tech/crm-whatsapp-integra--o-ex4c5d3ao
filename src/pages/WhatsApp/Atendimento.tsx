@@ -52,6 +52,7 @@ import { useRealtime } from '@/hooks/use-realtime'
 import { sendWhatsAppMessage } from '@/services/quotes'
 import { ProductQuoteModal } from '@/components/WhatsApp/ProductQuoteModal'
 import { CustomerQuoteHistory } from '@/components/WhatsApp/CustomerQuoteHistory'
+import { CustomerAvatar } from '@/components/WhatsApp/CustomerAvatar'
 import { createCustomer, getCustomers, updateCustomer } from '@/services/customers'
 import { useAuth } from '@/hooks/use-auth'
 import { Customer } from '@/types/crm'
@@ -1392,19 +1393,11 @@ export default function WhatsAppAtendimento() {
                     }`}
                   >
                     {/* Avatar do cliente */}
-                    <div
-                      className={`w-11 h-11 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
-                        customer.type === 'PJ'
-                          ? 'bg-blue-100 text-blue-700'
-                          : 'bg-emerald-100 text-emerald-700'
-                      }`}
-                    >
-                      {customer.type === 'PJ' ? (
-                        <Building2 className="w-5 h-5" />
-                      ) : (
-                        <User className="w-5 h-5" />
-                      )}
-                    </div>
+                    <CustomerAvatar
+                      phone={customer.rawPhone || customer.phone}
+                      name={customer.name}
+                      type={customer.type}
+                    />
 
                     {/* Dados do cliente e última mensagem */}
                     <div className="flex-1 min-w-0">
@@ -1498,19 +1491,12 @@ export default function WhatsAppAtendimento() {
             {/* Header do Chat */}
             <div className="p-3.5 bg-white border-b border-slate-200 flex items-center justify-between gap-3 shadow-xs z-10">
               <div className="flex items-center gap-3 min-w-0">
-                <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
-                    activeCustomer.type === 'PJ'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-emerald-100 text-emerald-700'
-                  }`}
-                >
-                  {activeCustomer.type === 'PJ' ? (
-                    <Building2 className="w-5 h-5" />
-                  ) : (
-                    <User className="w-5 h-5" />
-                  )}
-                </div>
+                <CustomerAvatar
+                  phone={activeCustomer.rawPhone || activeCustomer.phone}
+                  name={activeCustomer.name}
+                  type={activeCustomer.type}
+                  className="w-10 h-10"
+                />
                 <div className="truncate">
                   <div className="flex items-center gap-2">
                     <h2 className="font-bold text-slate-900 text-sm truncate">
