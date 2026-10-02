@@ -772,28 +772,19 @@ export default function WhatsAppAtendimento() {
       return true
     })
     .sort((a, b) => {
-      const getArrivalTimestamp = (conv: WhatsAppCustomer): number => {
-        const msgs = conv.messages || []
-        if (msgs.length > 0 && msgs[0]) {
-          return msgs[0].timestamp || 0
-        }
-        return conv.lastTimestamp || 0
-      }
-
       const getLastTimestamp = (conv: WhatsAppCustomer): number => {
         const msgs = conv.messages || []
-        if (msgs.length > 0 && msgs[msgs.length - 1]) {
-          return msgs[msgs.length - 1].timestamp || 0
-        }
-        return conv.lastTimestamp || 0
+        const msgTs =
+          msgs.length > 0 && msgs[msgs.length - 1] ? msgs[msgs.length - 1].timestamp || 0 : 0
+        return Math.max(conv.lastTimestamp || 0, msgTs)
       }
 
       switch (statusFilter) {
         case 'todos':
         case 'novo': {
-          // Ordenar por chegada: mais recente → mais antiga
-          const tA = getArrivalTimestamp(a)
-          const tB = getArrivalTimestamp(b)
+          // Ordenar por atividade mais recente: mais recente → mais antiga (descendente)
+          const tA = getLastTimestamp(a)
+          const tB = getLastTimestamp(b)
           return tB - tA
         }
         case 'nao_lidos': {
@@ -827,15 +818,15 @@ export default function WhatsAppAtendimento() {
           return tB - tA
         }
         default:
-          return b.lastTimestamp - a.lastTimestamp
+          return getLastTimestamp(b) - getLastTimestamp(a)
       }
     })
 
-  // Manipulação de seleção de arquivo
-  const handleClipClick = async () => {
+  // Processamento comum de anexo (clique no clipe ou colar via clipboard)
+  const processAttachmentFile = async (file: File) => {
     if (!activeCustomer) return
 
-    // Checar conexão do WhatsApp antes de abrir seletor ou permitir envio
+    // Checar conexão do WhatsApp antes de abrir modal ou permitir envio
     const connected = await checkConnectionStatus()
     if (!connected) {
       toast({
@@ -846,16 +837,6 @@ export default function WhatsAppAtendimento() {
       })
       return
     }
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-      fileInputRef.current.click()
-    }
-  }
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
 
     const MAX_SIZE_MB = 15
     const MAX_BYTES = MAX_SIZE_MB * 1024 * 1024
@@ -885,6 +866,54 @@ export default function WhatsAppAtendimento() {
       })
     }
     reader.readAsDataURL(file)
+  }
+
+  // Manipulação de seleção de arquivo
+  const handleClipClick = async () => {
+    if (!activeCustomer) return
+
+    // Checar conexão do WhatsApp antes de abrir seletor ou permitir envio
+    const connected = await checkConnectionStatus()
+    if (!connected) {
+      toast({
+        title: 'WhatsApp Desconectado',
+        description:
+          'O envio de anexos só funciona com o WhatsApp conectado à Z-API. Conecte o WhatsApp nas configurações.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+      fileInputRef.current.click()
+    }
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    processAttachmentFile(file)
+  }
+
+  const handleChatPaste = (e: React.ClipboardEvent) => {
+    const files = e.clipboardData?.files
+    if (!files || files.length === 0) {
+      // Nenhum arquivo colado (é texto puro): não interceptar
+      return
+    }
+
+    // Há arquivo(s) colados: previne comportamento padrão de colar
+    e.preventDefault()
+
+    if (files.length > 1) {
+      toast({
+        title: 'Apenas 1 anexo por mensagem',
+        description: 'Foi anexado o primeiro arquivo. O WhatsApp suporta 1 anexo por mensagem.',
+      })
+    }
+
+    processAttachmentFile(files[0])
   }
 
   const handleSendAttachment = async () => {
@@ -1556,7 +1585,10 @@ export default function WhatsAppAtendimento() {
 
         {/* LADO DIREITO: Área do Chat WhatsApp */}
         {activeCustomer ? (
-          <div className="flex-1 flex flex-col bg-[#efeae2]/40 relative min-w-0">
+          <div
+            onPaste={handleChatPaste}
+            className="flex-1 flex flex-col bg-[#efeae2]/40 relative min-w-0"
+          >
             {/* Header do Chat */}
             <div className="p-3.5 bg-white border-b border-slate-200 flex items-center justify-between gap-3 shadow-xs z-10">
               <div className="flex items-center gap-3 min-w-0">
@@ -2115,6 +2147,7 @@ export default function WhatsAppAtendimento() {
                 <Input
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
+                  onPaste={handleChatPaste}
                   placeholder={`Responder a ${activeCustomer.name}...`}
                   className="flex-1 bg-slate-50 border-slate-200 focus:bg-white text-sm h-9"
                 />
