@@ -193,22 +193,31 @@ export default function PipelineCompras() {
       const items = normalizePurchaseItems(req)
 
       // Filtro por cliente
-      if (customerFilter !== 'ALL' && req.customer !== customerFilter) {
-        return false
-      }
-
-      // Filtro por fornecedor: verifica fornecedor mestre e fornecedores em qualquer item
-      if (supplierFilter !== 'ALL') {
-        const hasSupplierInItems = items.some((it) => it.supplier_id === supplierFilter)
-        if (req.supplier !== supplierFilter && !hasSupplierInItems) {
+      if (customerFilter !== 'ALL') {
+        if (customerFilter === 'ESTOQUE') {
+          if (req.customer) return false
+        } else if (req.customer !== customerFilter) {
           return false
         }
       }
 
+      // Filtro por fornecedor: verifica fornecedor mestre e fornecedores em qualquer item
+      if (supplierFilter !== 'ALL') {
+        const hasSupplierInItems = items.some(
+          (it) =>
+            it.supplier_id === supplierFilter ||
+            (it.supplier_ids && it.supplier_ids.includes(supplierFilter)),
+        )
+        if (req.supplier !== supplierFilter && !hasSupplierInItems) {
+          return false
+        }
+      }
       // Busca por texto: OS, itens, fornecedor, cliente, veículo, observações
       if (search.trim()) {
         const s = search.toLowerCase()
-        const customerName = (req.expand?.customer?.name || '').toLowerCase()
+        const customerName = (
+          req.expand?.customer?.name || (!req.customer ? 'estoque' : '')
+        ).toLowerCase()
         const legacySupplierName = (
           req.expand?.supplier?.name ||
           req.expand?.supplier?.company ||
@@ -596,11 +605,12 @@ export default function PipelineCompras() {
                 className="bg-transparent text-xs font-medium text-slate-700 focus:outline-none cursor-pointer max-w-[140px] truncate"
               >
                 <option value="ALL">Todos os clientes</option>
+                <option value="ESTOQUE">📦 Estoque (Sem cliente)</option>
                 {customers.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.name}
+                    {c.name} {c.phone ? `(${c.phone})` : ''}
                   </option>
-                ))}
+                ))}{' '}
               </select>
             </div>
 

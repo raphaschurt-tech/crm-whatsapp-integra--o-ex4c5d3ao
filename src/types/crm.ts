@@ -213,6 +213,7 @@ export interface PurchaseItem {
   quantity: number
   supplier_id?: string
   supplier_name?: string
+  supplier_ids?: string[]
   cost_price?: number
   sell_price?: number
 }

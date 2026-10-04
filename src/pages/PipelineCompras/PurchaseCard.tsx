@@ -41,7 +41,8 @@ export const PurchaseCard: React.FC<PurchaseCardProps> = ({
   onDelete,
   onGenerateQuote,
 }) => {
-  const customerName = card.expand?.customer?.name || 'Cliente não identificado'
+  const customerName =
+    card.expand?.customer?.name || (card.customer ? 'Cliente não identificado' : 'Estoque')
 
   const items = normalizePurchaseItems(card)
   const totalItemsCount = getTotalItemQuantity(card)

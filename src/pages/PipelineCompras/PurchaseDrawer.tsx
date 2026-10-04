@@ -66,6 +66,7 @@ interface FormItemState {
   vehicle: string
   quantity: number
   supplier_id?: string
+  supplier_ids?: string[]
   cost_price?: string
   margin_percent?: string
   sell_price?: string
@@ -86,7 +87,15 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
   const [catalogProducts, setCatalogProducts] = useState<Product[]>(initialProducts || [])
   const [itemFamilies, setItemFamilies] = useState<ItemFamily[]>(initialFamilies || [])
   const [items, setItems] = useState<FormItemState[]>([
-    { part_name: '', vehicle: '', quantity: 1, supplier_id: '', cost_price: '', sell_price: '' },
+    {
+      part_name: '',
+      vehicle: '',
+      quantity: 1,
+      supplier_id: '',
+      supplier_ids: [],
+      cost_price: '',
+      sell_price: '',
+    },
   ])
   const [osNumber, setOsNumber] = useState('')
   const [customerId, setCustomerId] = useState('')
@@ -166,11 +175,19 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
               initialMarginPct = formatPercentDisplay(calculated)
             }
           }
+          const sIds =
+            it.supplier_ids && it.supplier_ids.length > 0
+              ? it.supplier_ids
+              : it.supplier_id
+                ? [it.supplier_id]
+                : []
+
           return {
             part_name: it.part_name || '',
             vehicle: it.vehicle || '',
             quantity: it.quantity || 1,
-            supplier_id: it.supplier_id || '',
+            supplier_id: sIds[0] || it.supplier_id || '',
+            supplier_ids: sIds,
             cost_price: costVal !== undefined ? String(costVal) : '',
             margin_percent: initialMarginPct,
             sell_price: sellVal !== undefined ? String(sellVal) : '',
@@ -195,6 +212,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
           vehicle: card.vehicle || '',
           quantity: 1,
           supplier_id: card.supplier || '',
+          supplier_ids: card.supplier ? [card.supplier] : [],
           cost_price: legacyCost !== undefined ? String(legacyCost) : '',
           margin_percent: initialMarginPct,
           sell_price: legacySell !== undefined ? String(legacySell) : '',
@@ -422,6 +440,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
         vehicle: '',
         quantity: 1,
         supplier_id: '',
+        supplier_ids: [],
         cost_price: '',
         margin_percent: '',
         sell_price: '',
@@ -434,9 +453,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
     setItems((prev) => prev.filter((_, idx) => idx !== index))
   }
 
-  const hasInvalidItems = items.some(
-    (item) => !item.part_name.trim() || !item.vehicle.trim() || (item.quantity || 1) < 1,
-  )
+  const hasInvalidItems = items.some((item) => !item.part_name.trim() || (item.quantity || 1) < 1)
 
   // Avaliação de elegibilidade para GERAR ORÇAMENTO em tempo real
   const currentFormPurchase: Partial<PurchaseRequest> = {
@@ -518,15 +535,22 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
       const cleanedItems: PurchaseItem[] = items.map((it) => {
         const costNum = it.cost_price ? parseFloat(it.cost_price) : undefined
         const sellNum = it.sell_price ? parseFloat(it.sell_price) : undefined
-        const sup = suppliers.find((s) => s.id === it.supplier_id)
+        const sIds =
+          it.supplier_ids && it.supplier_ids.length > 0
+            ? it.supplier_ids
+            : it.supplier_id
+              ? [it.supplier_id]
+              : []
+        const primarySup = sIds[0] || it.supplier_id
+        const sup = suppliers.find((s) => s.id === primarySup)
         const supplierName = sup ? sup.name || sup.company || undefined : undefined
-
         return {
           part_name: it.part_name.trim(),
-          vehicle: it.vehicle.trim(),
+          vehicle: (it.vehicle || '').trim(),
           quantity: Math.max(1, Number(it.quantity) || 1),
-          supplier_id: it.supplier_id || undefined,
+          supplier_id: primarySup || undefined,
           supplier_name: supplierName,
+          supplier_ids: sIds,
           cost_price: costNum !== undefined && !isNaN(costNum) ? costNum : undefined,
           sell_price: sellNum !== undefined && !isNaN(sellNum) ? sellNum : undefined,
         }
@@ -596,22 +620,29 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (hasInvalidItems || !customerId) return
+    if (hasInvalidItems) return
 
     setIsSaving(true)
     try {
       const cleanedItems: PurchaseItem[] = items.map((it) => {
         const costNum = it.cost_price ? parseFloat(it.cost_price) : undefined
         const sellNum = it.sell_price ? parseFloat(it.sell_price) : undefined
-        const sup = suppliers.find((s) => s.id === it.supplier_id)
+        const sIds =
+          it.supplier_ids && it.supplier_ids.length > 0
+            ? it.supplier_ids
+            : it.supplier_id
+              ? [it.supplier_id]
+              : []
+        const primarySup = sIds[0] || it.supplier_id
+        const sup = suppliers.find((s) => s.id === primarySup)
         const supplierName = sup ? sup.name || sup.company || undefined : undefined
-
         return {
           part_name: it.part_name.trim(),
-          vehicle: it.vehicle.trim(),
+          vehicle: (it.vehicle || '').trim(),
           quantity: Math.max(1, Number(it.quantity) || 1),
-          supplier_id: it.supplier_id || undefined,
+          supplier_id: primarySup || undefined,
           supplier_name: supplierName,
+          supplier_ids: sIds,
           cost_price: costNum !== undefined && !isNaN(costNum) ? costNum : undefined,
           sell_price: sellNum !== undefined && !isNaN(sellNum) ? sellNum : undefined,
         }
@@ -859,13 +890,11 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
             />
           </div>
 
-          {/* Cliente Vinculado */}
+          {/* Cliente Vinculado (Opcional - Estoque) */}
           <div className="bg-slate-50/70 p-3.5 rounded-xl border border-slate-200">
             <div className="flex items-center justify-between mb-1">
-              <label className="text-xs font-bold text-slate-700 block">
-                Cliente Vinculado <span className="text-red-500">*</span>
-              </label>
-              {selectedCustomer && (
+              <label className="text-xs font-bold text-slate-700 block">Cliente Vinculado</label>
+              {selectedCustomer ? (
                 <Link
                   to={`/clientes/${selectedCustomer.id}`}
                   target="_blank"
@@ -873,15 +902,18 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                 >
                   Ver cliente <ExternalLink className="h-3 w-3" />
                 </Link>
+              ) : (
+                <span className="text-[11px] text-slate-500 font-medium">
+                  Compra para <strong>Estoque</strong>
+                </span>
               )}
             </div>
             <select
               value={customerId}
               onChange={(e) => setCustomerId(e.target.value)}
-              required
               className="w-full h-9 rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
-              <option value="">Selecione um cliente...</option>
+              <option value="">Sem cliente (Compra para Estoque)</option>
               {customers.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} {c.phone ? `(${c.phone})` : ''}
@@ -963,14 +995,16 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
                     {/* Linha 2: Veículo e Quantidade (lado a lado) */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start">
                       <div className="sm:col-span-9">
-                        <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                          Veículo <span className="text-red-500">*</span>
-                        </label>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <label className="text-[11px] font-semibold text-slate-600 block">
+                            Veículo
+                          </label>
+                          <span className="text-[10px] text-slate-400">Opcional</span>
+                        </div>
                         <Input
                           value={item.vehicle}
                           onChange={(e) => handleItemChange(index, 'vehicle', e.target.value)}
-                          placeholder="Ex: Kicks 2016..."
-                          required
+                          placeholder="Ex: Kicks 2016... (opcional)"
                           className="h-8 text-xs bg-white"
                         />
                       </div>
@@ -993,25 +1027,42 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
                     {/* Linha 3: Fornecedor Próprio, Custo unitário, Margem %, Venda unitária e Margem do Item */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1 border-t border-slate-100">
-                      {/* Fornecedor Próprio */}
+                      {/* Fornecedor do item: Exibe lista de fornecedores selecionados (somente leitura / chips) */}
                       <div className="sm:col-span-3">
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5 flex items-center gap-1">
-                          <Truck className="h-3 w-3 text-amber-600" /> Fornecedor do item
+                          <Truck className="h-3 w-3 text-amber-600" /> Fornecedores do item
                         </label>
                         {(() => {
-                          const matchedProduct = catalogProducts.find(
-                            (p) =>
-                              p.name.trim().toLowerCase() === item.part_name.trim().toLowerCase(),
-                          )
-                          const suggestedIds = getSuggestedSupplierIdsForProduct(matchedProduct)
+                          const sIds =
+                            item.supplier_ids && item.supplier_ids.length > 0
+                              ? item.supplier_ids
+                              : item.supplier_id
+                                ? [item.supplier_id]
+                                : []
+                          const matchedSuppliers = sIds
+                            .map((id) => suppliers.find((s) => s.id === id))
+                            .filter((s): s is Customer => Boolean(s))
+
+                          if (matchedSuppliers.length === 0) {
+                            return (
+                              <div className="h-8 px-2.5 rounded-md border border-slate-200 bg-slate-50 flex items-center text-xs text-slate-400 italic">
+                                Nenhum fornecedor
+                              </div>
+                            )
+                          }
+
                           return (
-                            <SupplierSearchCombobox
-                              suppliers={suppliers}
-                              value={item.supplier_id || ''}
-                              onChange={(supId) => handleItemChange(index, 'supplier_id', supId)}
-                              suggestedSupplierIds={suggestedIds}
-                              placeholder="Buscar fornecedor..."
-                            />
+                            <div className="min-h-8 p-1 rounded-md border border-slate-200 bg-slate-50 flex flex-wrap items-center gap-1">
+                              {matchedSuppliers.map((s) => (
+                                <span
+                                  key={s.id}
+                                  className="inline-flex items-center gap-1 bg-amber-100/90 text-amber-900 border border-amber-200 rounded px-1.5 py-0.5 text-[10px] font-semibold max-w-[170px]"
+                                  title={`${s.name}${s.phone ? ` • ${s.phone}` : ''}`}
+                                >
+                                  <span className="truncate">{s.name}</span>
+                                </span>
+                              ))}
+                            </div>
                           )
                         })()}
                       </div>
@@ -1250,7 +1301,7 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
               </Button>
               <Button
                 type="submit"
-                disabled={isSaving || hasInvalidItems || !customerId}
+                disabled={isSaving || hasInvalidItems}
                 className="bg-amber-600 hover:bg-amber-700 text-white"
               >
                 <Save className="h-4 w-4 mr-1.5" /> {isSaving ? 'Salvando...' : 'Salvar Alterações'}

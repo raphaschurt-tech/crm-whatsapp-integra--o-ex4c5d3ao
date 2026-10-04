@@ -19,6 +19,14 @@ export const normalizePurchaseItems = (
     return request.items.map((item, index) => {
       const qty = Math.max(1, Number(item.quantity) || 1)
       const supplierId = item.supplier_id || (legacySupplier ? legacySupplier : undefined)
+      // Normaliza lista de fornecedores (até 10)
+      let supplierIds: string[] = []
+      if (Array.isArray(item.supplier_ids) && item.supplier_ids.length > 0) {
+        supplierIds = Array.from(new Set(item.supplier_ids.filter(Boolean))).slice(0, 10)
+      } else if (supplierId) {
+        supplierIds = [supplierId]
+      }
+
       // Se for o 1º item e ele não tiver custo/venda explícito, mas a compra tiver os valores legados, herda
       const cost =
         typeof item.cost_price === 'number'
@@ -37,8 +45,9 @@ export const normalizePurchaseItems = (
         part_name: item.part_name || '',
         vehicle: item.vehicle || '',
         quantity: qty,
-        supplier_id: supplierId,
+        supplier_id: supplierIds[0] || supplierId,
         supplier_name: item.supplier_name,
+        supplier_ids: supplierIds,
         cost_price: cost,
         sell_price: sell,
       }
@@ -52,6 +61,7 @@ export const normalizePurchaseItems = (
         vehicle: request.vehicle || '',
         quantity: 1,
         supplier_id: legacySupplier || undefined,
+        supplier_ids: legacySupplier ? [legacySupplier] : [],
         cost_price: legacyCost,
         sell_price: legacySell,
       },
