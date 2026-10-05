@@ -15,7 +15,7 @@ import {
 import { Quote } from '@/types/crm'
 import pb from '@/lib/pocketbase/client'
 import { formatCurrency, openWhatsApp, buildPaymentLinkMessage } from '@/lib/whatsapp'
-import { findCustomerByPhone } from '@/services/customers'
+import { findCustomerByPhone, getLastKnownCustomer } from '@/services/customers'
 import { withRetry } from '@/lib/retry'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -60,8 +60,15 @@ export function CustomerQuoteHistory({
     try {
       let resolvedCustomerId = customerId
 
-      // Se não temos customerId direto, tentar localizar o cliente pelo helper centralizado
-      // que conta com cache de 10 min, deduplicação in-flight, rate-limit backoff e fallback estável
+      // 1. Tentar resolução instantânea síncrona pelo cache permanente/em memória (SEM chamada ao backend)
+      if (!resolvedCustomerId && customerPhone) {
+        const syncKnown = getLastKnownCustomer(customerPhone)
+        if (syncKnown?.id) {
+          resolvedCustomerId = syncKnown.id
+        }
+      }
+
+      // 2. Se não encontrou síncrono, delegar ao helper centralizado com dedupe in-flight, lote e backoff
       if (!resolvedCustomerId && customerPhone) {
         try {
           const matched = await findCustomerByPhone(customerPhone)
@@ -98,11 +105,11 @@ export function CustomerQuoteHistory({
     }
   }
 
-  // Debounce aumentado para 400ms para evitar disparos em rajada quando props oscilam
+  // Debounce de 500ms para evitar disparos em rajada quando props oscilam ou durante renderizações concorrentes
   useEffect(() => {
     const timer = setTimeout(() => {
       loadCustomerQuotes()
-    }, 400)
+    }, 500)
     return () => clearTimeout(timer)
   }, [customerId, customerPhone, refreshTrigger])
 

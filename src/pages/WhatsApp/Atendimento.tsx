@@ -47,7 +47,11 @@ import {
   loadWhatsAppConversations,
   markWhatsAppAsRead,
   normalizePhoneKey,
+  extractNormalizedPhone,
+  extractMessageText,
+  formatActivityTime,
 } from '@/services/whatsappChat'
+import type { WhatsAppSender } from '@/services/whatsappChat'
 import { useRealtime } from '@/hooks/use-realtime'
 import { sendWhatsAppMessage } from '@/services/quotes'
 import { ProductQuoteModal } from '@/components/WhatsApp/ProductQuoteModal'
@@ -568,21 +572,194 @@ export default function WhatsAppAtendimento() {
     checkConnectionStatus()
   }, [fetchData, checkConnectionStatus])
 
-  // Realtime subscription com debounce e backoff para evitar tempestade de requisições e 429
+  // Debounce (~500ms) para eventos realtime de mensagens/conversas
   const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const debouncedFetchData = useCallback(() => {
+  const triggerDebouncedFetch = useCallback(() => {
     if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current)
     realtimeDebounceRef.current = setTimeout(() => {
       fetchData(true)
-    }, 1200)
+    }, 500)
   }, [fetchData])
 
-  useRealtime('webhook_received', debouncedFetchData)
-  useRealtime('message_processing', debouncedFetchData)
-  useRealtime('whatsapp_read_states', debouncedFetchData)
+  // Handler realtime com atualização incremental (upsert da conversa alterada)
+  // em vez de limpar e recarregar tudo, prevenindo piscares e rajadas de 429
+  const handleRealtimeWebhook = useCallback(
+    (e: any) => {
+      const rec = e.record
+      if (!rec) {
+        triggerDebouncedFetch()
+        return
+      }
+
+      const rawPhone = rec.phone || rec.chat || rec.sender
+      const norm = extractNormalizedPhone(rawPhone)
+      if (!norm) {
+        // Se não identificou telefone direto, aciona fetch com debounce
+        triggerDebouncedFetch()
+        return
+      }
+
+      const key = norm.length === 10 || norm.length === 11 ? `55${norm}` : norm
+      const text = extractMessageText(rec.text)
+      const hasAttachment = Boolean(rec.attachment_url)
+      if (!text && !hasAttachment) {
+        triggerDebouncedFetch()
+        return
+      }
+
+      const msgDate = rec.moment ? new Date(rec.moment * 1000) : new Date(rec.created || Date.now())
+      const timestamp = msgDate.getTime()
+      const timeStr = formatActivityTime(msgDate)
+      const isFromMe = Boolean(rec.fromMe)
+      const sender: WhatsAppSender = isFromMe ? 'agent' : 'client'
+
+      const newMsg: WhatsAppMessage = {
+        id: `wh-${rec.id}`,
+        text: text || (rec.attachment_name ? `Arquivo: ${rec.attachment_name}` : ''),
+        time: timeStr,
+        sender,
+        timestamp,
+        messageId: rec.messageId,
+        isAudio: Boolean(rec.is_audio),
+        audioUrl: rec.audio_url || undefined,
+        attachmentUrl: rec.attachment_url || undefined,
+        attachmentName: rec.attachment_name || undefined,
+        attachmentType:
+          rec.attachment_type === 'image' ||
+          rec.attachment_type === 'video' ||
+          rec.attachment_type === 'document' ||
+          rec.attachment_type === 'audio'
+            ? rec.attachment_type
+            : undefined,
+      }
+
+      // Upsert incremental na lista de conversas sem recarregar tudo
+      setCustomers((prev) => {
+        const index = prev.findIndex((c) => {
+          const cNorm = normalizePhoneKey(c.rawPhone || c.phone)
+          return cNorm === key || (c.rawPhone && c.rawPhone === key)
+        })
+
+        if (index >= 0) {
+          const target = prev[index]
+          // Evita duplicar se já tem a mesma mensagem
+          const alreadyExists = target.messages.some(
+            (m) =>
+              (rec.messageId && m.messageId === rec.messageId) ||
+              m.id === newMsg.id ||
+              (m.sender === sender &&
+                m.text === newMsg.text &&
+                Math.abs(m.timestamp - timestamp) < 5000),
+          )
+          if (alreadyExists) return prev
+
+          const updatedMessages = [...target.messages, newMsg].sort(
+            (a, b) => a.timestamp - b.timestamp,
+          )
+          const isSelected = target.id === selectedCustomerId || target.rawPhone === selectedPhone
+          const isUnread = !isFromMe && !isSelected
+
+          const updatedTarget: WhatsAppCustomer = {
+            ...target,
+            messages: updatedMessages,
+            lastActivity: timeStr,
+            lastTimestamp: timestamp,
+            unreadCount: isUnread ? (target.unreadCount || 0) + 1 : target.unreadCount,
+            status: isUnread && target.status === 'resolvido' ? 'novo' : target.status,
+          }
+
+          const copy = [...prev]
+          copy[index] = updatedTarget
+          // Reordena pelo mais recente sem piscar
+          return copy.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+        }
+
+        // Se a conversa não existe ainda no estado local, programa fetch debounced
+        triggerDebouncedFetch()
+        return prev
+      })
+    },
+    [selectedCustomerId, selectedPhone, triggerDebouncedFetch],
+  )
+
+  const handleRealtimeProcessing = useCallback(
+    (e: any) => {
+      const proc = e.record
+      if (!proc || !proc.phone) {
+        triggerDebouncedFetch()
+        return
+      }
+
+      const norm = extractNormalizedPhone(proc.phone)
+      if (!norm) {
+        triggerDebouncedFetch()
+        return
+      }
+
+      const key = norm.length === 10 || norm.length === 11 ? `55${norm}` : norm
+      const aiReply = (proc.aiReplyText || '').trim()
+
+      if (aiReply && (proc.replySent || proc.status === 'completed')) {
+        const replyDate = new Date(proc.updated || proc.created || Date.now())
+        const timestamp = replyDate.getTime()
+        const timeStr = formatActivityTime(replyDate)
+
+        const aiMsg: WhatsAppMessage = {
+          id: `proc-ai-${proc.id}`,
+          text: aiReply,
+          time: timeStr,
+          sender: 'ai',
+          timestamp,
+        }
+
+        setCustomers((prev) => {
+          const index = prev.findIndex((c) => {
+            const cNorm = normalizePhoneKey(c.rawPhone || c.phone)
+            return cNorm === key || (c.rawPhone && c.rawPhone === key)
+          })
+
+          if (index >= 0) {
+            const target = prev[index]
+            const alreadyExists = target.messages.some(
+              (m) =>
+                m.id === aiMsg.id ||
+                (m.sender === 'ai' &&
+                  m.text.trim() === aiReply &&
+                  Math.abs(m.timestamp - timestamp) < 10000),
+            )
+            if (alreadyExists) return prev
+
+            const updatedMessages = [...target.messages, aiMsg].sort(
+              (a, b) => a.timestamp - b.timestamp,
+            )
+            const updatedTarget: WhatsAppCustomer = {
+              ...target,
+              messages: updatedMessages,
+              lastActivity: timeStr,
+              lastTimestamp: timestamp,
+            }
+
+            const copy = [...prev]
+            copy[index] = updatedTarget
+            return copy.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+          }
+
+          triggerDebouncedFetch()
+          return prev
+        })
+      } else {
+        triggerDebouncedFetch()
+      }
+    },
+    [triggerDebouncedFetch],
+  )
+
+  useRealtime('webhook_received', handleRealtimeWebhook)
+  useRealtime('message_processing', handleRealtimeProcessing)
+  useRealtime('whatsapp_read_states', triggerDebouncedFetch)
   useRealtime('quotes', () => {
     setHistoryRefreshKey((k) => k + 1)
-    debouncedFetchData()
+    triggerDebouncedFetch()
   })
 
   // Polling moderado a cada 45 segundos (somente se a aba estiver visível) para evitar 429

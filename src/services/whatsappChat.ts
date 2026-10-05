@@ -1,7 +1,12 @@
 import pb from '@/lib/pocketbase/client'
 import { withRetry } from '@/lib/retry'
 import { Customer, Quote } from '@/types/crm'
-import { getCustomers, populateCustomerCache, getLastKnownCustomer } from '@/services/customers'
+import {
+  getCustomers,
+  populateCustomerCache,
+  getLastKnownCustomer,
+  getPhoneVariants,
+} from '@/services/customers'
 import { getQuotes } from '@/services/quotes'
 import { RecordModel } from 'pocketbase'
 
@@ -391,21 +396,15 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       populateCustomerCache(customersList)
     }
 
-    // Mapa de clientes para rápida associação por telefone normalizado
-    // Um cliente pode ter telefone formatado "(11) 96397-0333" ou "11963970333" ou "5511963970333"
+    // Mapa de clientes para rápida associação por telefone cobrindo TODAS as variantes
+    // (com/sem DDI 55, 8 ou 9 dígitos, sufixos canônicos)
     const customerMap = new Map<string, Customer>()
     for (const c of customersList) {
-      const clean = (c.phone || '').replace(/\D/g, '')
-      if (clean) {
-        customerMap.set(clean, c)
-        // Mapear também sem o prefixo 55 ou com prefixo 55
-        if (clean.startsWith('55')) {
-          customerMap.set(clean.slice(2), c)
-        } else {
-          customerMap.set(`55${clean}`, c)
-        }
-        if (clean.length >= 8) {
-          customerMap.set(clean.slice(-8), c)
+      if (!c) continue
+      const variants = getPhoneVariants(c.phone || '')
+      for (const v of variants) {
+        if (!customerMap.has(v)) {
+          customerMap.set(v, c)
         }
       }
     }
@@ -630,8 +629,19 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       if (conv.messages.length === 0) continue
 
       // Verificar se este telefone pertence a algum cliente cadastrado em customers
-      const matchedCustomer =
+      // Testa a chave direta, sem 55, ou qualquer variante gerada
+      let matchedCustomer: Customer | null =
         customerMap.get(conv.phoneKey) || customerMap.get(conv.phoneKey.replace(/^55/, '')) || null
+      if (!matchedCustomer) {
+        const convVariants = getPhoneVariants(conv.phoneKey)
+        for (const cv of convVariants) {
+          const found = customerMap.get(cv)
+          if (found) {
+            matchedCustomer = found
+            break
+          }
+        }
+      }
 
       const lastMsg = conv.messages[conv.messages.length - 1]
       const lastActivity = lastMsg ? lastMsg.time : ''
