@@ -31,6 +31,7 @@ import {
 } from '@/components/Quotes/SupplierSearchCombobox'
 import { generatePurchaseSupplierPdfBase64Async } from '@/services/purchaseSupplierPdfService'
 import { sendWhatsAppMessage } from '@/services/quotes'
+import { getCanonicalPhone } from '@/lib/whatsapp'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -65,6 +66,8 @@ interface FormItemState {
   quantity: number
   supplier_id?: string
   supplier_ids?: string[]
+  product_id?: string
+  reduced_code?: string
   cost_price?: string
   margin_percent?: string
   sell_price?: string
@@ -76,6 +79,8 @@ const emptyItem: FormItemState = {
   quantity: 1,
   supplier_id: '',
   supplier_ids: [],
+  product_id: '',
+  reduced_code: '',
   cost_price: '',
   margin_percent: '',
   sell_price: '',
@@ -111,9 +116,19 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
   const [showSupplierPreview, setShowSupplierPreview] = useState(false)
   const [isTextManuallyEdited, setIsTextManuallyEdited] = useState(false)
 
-  // Consolidação de fornecedores únicos selecionados nos itens
+  // Consolidação de fornecedores por TELEFONE CANÔNICO (Dedupe por número)
+  // Fornecedores com o mesmo telefone canônico (ex: Henrique Dpa e HENRIQUE DPA) viram UM grupo único
+  // com nomes unificados e todos os itens agregados sem duplicidade de mensagem
   const uniqueSelectedSuppliers = useMemo(() => {
-    const supMap = new Map<string, { supplier: Customer; items: FormItemState[] }>()
+    interface SupplierGroupInternal {
+      key: string
+      primarySupplier: Customer
+      allSuppliers: Customer[]
+      items: FormItemState[]
+    }
+
+    const groupMap = new Map<string, SupplierGroupInternal>()
+
     items.forEach((item) => {
       const sIds =
         item.supplier_ids && item.supplier_ids.length > 0
@@ -125,13 +140,58 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
       sIds.forEach((supId) => {
         const found = suppliers.find((s) => s.id === supId)
         if (!found) return
-        if (!supMap.has(supId)) {
-          supMap.set(supId, { supplier: found, items: [] })
+
+        const canonicalPhone = getCanonicalPhone(found.phone)
+        // Se tem telefone canônico válido, a chave é o telefone; caso contrário, usa o ID
+        const groupKey = canonicalPhone ? `phone_${canonicalPhone}` : `id_${found.id}`
+
+        if (!groupMap.has(groupKey)) {
+          groupMap.set(groupKey, {
+            key: groupKey,
+            primarySupplier: found,
+            allSuppliers: [found],
+            items: [],
+          })
+        } else {
+          const group = groupMap.get(groupKey)!
+          if (!group.allSuppliers.some((s) => s.id === found.id)) {
+            group.allSuppliers.push(found)
+            // Se o fornecedor atual tiver telefone e o primary não tiver, promove o que tem telefone
+            if (!group.primarySupplier.phone?.trim() && found.phone?.trim()) {
+              group.primarySupplier = found
+            }
+          }
         }
-        supMap.get(supId)!.items.push(item)
+
+        const group = groupMap.get(groupKey)!
+        // Adiciona o item se ainda não estiver presente nesta lista de itens do grupo
+        if (!group.items.includes(item)) {
+          group.items.push(item)
+        }
       })
     })
-    return Array.from(supMap.values())
+
+    return Array.from(groupMap.values()).map((group) => {
+      // Unifica nomes se houver 2+ cadastros no mesmo grupo
+      const uniqueNames = Array.from(
+        new Set(group.allSuppliers.map((s) => s.name?.trim()).filter(Boolean)),
+      )
+      const unifiedName =
+        uniqueNames.length > 1 ? uniqueNames.join(' / ') : group.primarySupplier.name
+
+      // Monta objeto consolidado do fornecedor preservando id do primary e telefone preenchido
+      const consolidatedSupplier: Customer = {
+        ...group.primarySupplier,
+        name: unifiedName,
+      }
+
+      return {
+        key: group.key,
+        supplier: consolidatedSupplier,
+        allSuppliers: group.allSuppliers,
+        items: group.items,
+      }
+    })
   }, [items, suppliers])
 
   // Inicializa checkboxes (marcados por padrão) e PDFs (desligados por padrão) para fornecedores que entram
@@ -210,7 +270,8 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
     msg += '\n*Itens solicitados para sua cotação:*\n'
     supItems.forEach((it) => {
       const veh = it.vehicle?.trim() ? ` (${it.vehicle.trim()})` : ''
-      msg += `• ${it.quantity}x ${it.part_name.trim()}${veh}\n`
+      const red = it.reduced_code?.trim() ? ` [cod. ${it.reduced_code.trim()}]` : ''
+      msg += `• ${it.quantity}x ${it.part_name.trim()}${red}${veh}\n`
     })
 
     if (notes.trim()) {
@@ -263,6 +324,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
             part_name: it.part_name.trim(),
             vehicle: it.vehicle?.trim() || undefined,
             quantity: Math.max(1, Number(it.quantity) || 1),
+            reduced_code: it.reduced_code?.trim() || undefined,
           }))
           pdfBase64 = await generatePurchaseSupplierPdfBase64Async({
             supplier,
@@ -380,6 +442,8 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
       }
 
       currentItem.part_name = product.name
+      currentItem.product_id = product.id
+      currentItem.reduced_code = product.reduced_code || ''
 
       // Se o item ainda não tem custo unitário e o produto tem custo ou preço, sugere o custo
       if (!currentItem.cost_price) {
@@ -552,7 +616,24 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
 
   const handleAddItem = () => {
     if (items.length >= MAX_ITEMS) return
-    setItems((prev) => [...prev, { ...emptyItem }])
+    setItems((prev) => {
+      const lastItem = prev[prev.length - 1]
+      const inheritedSupplierIds =
+        lastItem && lastItem.supplier_ids && lastItem.supplier_ids.length > 0
+          ? [...lastItem.supplier_ids]
+          : lastItem && lastItem.supplier_id
+            ? [lastItem.supplier_id]
+            : []
+
+      return [
+        ...prev,
+        {
+          ...emptyItem,
+          supplier_ids: inheritedSupplierIds,
+          supplier_id: inheritedSupplierIds[0] || '',
+        },
+      ]
+    })
   }
 
   const handleRemoveItem = (index: number) => {
@@ -628,6 +709,8 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
           supplier_id: primarySup || undefined,
           supplier_name: resolvedSupName,
           supplier_ids: sIds,
+          product_id: it.product_id || undefined,
+          reduced_code: it.reduced_code || undefined,
           cost_price: costNum !== undefined && !isNaN(costNum) ? costNum : undefined,
           sell_price: sellNum !== undefined && !isNaN(sellNum) ? sellNum : undefined,
         }
@@ -762,9 +845,16 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
 
                     {/* Linha 1: Peça (Catálogo SOU.Is / Base) - LARGURA TOTAL do card do item */}
                     <div>
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                        Peça (Catálogo) <span className="text-red-500">*</span>
-                      </label>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[11px] font-semibold text-slate-600 block">
+                          Peça (Catálogo) <span className="text-red-500">*</span>
+                        </label>
+                        {item.reduced_code && (
+                          <span className="text-[11px] font-bold text-amber-800 bg-amber-100/90 border border-amber-300 px-2 py-0.5 rounded">
+                            Cód. Reduzido Fornecedor: <strong>{item.reduced_code}</strong>
+                          </span>
+                        )}
+                      </div>
                       <ProductSearchCombobox
                         products={catalogProducts}
                         value={item.part_name}
@@ -832,6 +922,17 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                                 ? [item.supplier_id]
                                 : []
 
+                          // IDs de outros fornecedores já selecionados nos outros itens da compra
+                          const otherSelectedIds = items
+                            .filter((_, i) => i !== index)
+                            .flatMap((other) =>
+                              other.supplier_ids && other.supplier_ids.length > 0
+                                ? other.supplier_ids
+                                : other.supplier_id
+                                  ? [other.supplier_id]
+                                  : [],
+                            )
+
                           return (
                             <SupplierMultiSelectCombobox
                               suppliers={suppliers}
@@ -849,6 +950,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                                 })
                               }}
                               suggestedSupplierIds={suggestedIds}
+                              alreadySelectedSupplierIds={otherSelectedIds}
                               maxSelections={10}
                               placeholder="Buscar fornecedores (até 10)..."
                             />

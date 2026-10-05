@@ -16,6 +16,24 @@ export function cleanPhoneNumber(phone: string): string {
   return `55${digits}`
 }
 
+/**
+ * Normalização canônica do telefone para dedupe e agrupamento:
+ * 1. Remove tudo que não é dígito;
+ * 2. Se ficar com 12 ou 13 dígitos e começar com 55 (DDI Brasil), remove o 55 (ficando DDD + 8 ou 9 dígitos, ex: 11977236696);
+ * 3. Se tiver 10 ou 11 dígitos, já é o formato canônico nacional (DDD + número).
+ * Fornecedores com o mesmo telefone canônico pertencem ao mesmo contato/fornecedor real.
+ */
+export function getCanonicalPhone(phone?: string | null): string {
+  if (!phone) return ''
+  if (isLidPhoneNumber(phone)) return ''
+  const digits = String(phone).replace(/\D/g, '')
+  if (!digits) return ''
+  if ((digits.length === 12 || digits.length === 13) && digits.startsWith('55')) {
+    return digits.slice(2)
+  }
+  return digits
+}
+
 export function openWhatsApp(phone: string, text: string) {
   const cleaned = cleanPhoneNumber(phone)
   const url = `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`

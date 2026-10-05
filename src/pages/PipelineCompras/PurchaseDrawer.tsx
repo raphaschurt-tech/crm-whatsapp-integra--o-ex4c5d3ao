@@ -36,7 +36,10 @@ import { getProducts } from '@/services/products'
 import { SendQuoteDialog } from '@/components/Quotes/SendQuoteDialog'
 import { SendPaymentLinkDialog } from '@/components/Quotes/SendPaymentLinkDialog'
 import { ProductSearchCombobox } from '@/components/Quotes/ProductSearchCombobox'
-import { SupplierSearchCombobox } from '@/components/Quotes/SupplierSearchCombobox'
+import {
+  SupplierSearchCombobox,
+  SupplierMultiSelectCombobox,
+} from '@/components/Quotes/SupplierSearchCombobox'
 import { getFamilies } from '@/services/families'
 import { Quote, QuoteItem } from '@/types/crm'
 import { Button } from '@/components/ui/button'
@@ -67,6 +70,8 @@ interface FormItemState {
   quantity: number
   supplier_id?: string
   supplier_ids?: string[]
+  product_id?: string
+  reduced_code?: string
   cost_price?: string
   margin_percent?: string
   sell_price?: string
@@ -188,6 +193,8 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
             quantity: it.quantity || 1,
             supplier_id: sIds[0] || it.supplier_id || '',
             supplier_ids: sIds,
+            product_id: it.product_id || '',
+            reduced_code: it.reduced_code || '',
             cost_price: costVal !== undefined ? String(costVal) : '',
             margin_percent: initialMarginPct,
             sell_price: sellVal !== undefined ? String(sellVal) : '',
@@ -213,6 +220,8 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
           quantity: 1,
           supplier_id: card.supplier || '',
           supplier_ids: card.supplier ? [card.supplier] : [],
+          product_id: '',
+          reduced_code: '',
           cost_price: legacyCost !== undefined ? String(legacyCost) : '',
           margin_percent: initialMarginPct,
           sell_price: legacySell !== undefined ? String(legacySell) : '',
@@ -274,6 +283,8 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
       }
 
       currentItem.part_name = product.name
+      currentItem.product_id = product.id
+      currentItem.reduced_code = product.reduced_code || ''
 
       // Se o item ainda não tem custo unitário e o produto tem custo ou preço, sugere o custo
       if (!currentItem.cost_price) {
@@ -433,19 +444,31 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
   const handleAddItem = () => {
     if (items.length >= MAX_ITEMS) return
-    setItems((prev) => [
-      ...prev,
-      {
-        part_name: '',
-        vehicle: '',
-        quantity: 1,
-        supplier_id: '',
-        supplier_ids: [],
-        cost_price: '',
-        margin_percent: '',
-        sell_price: '',
-      },
-    ])
+    setItems((prev) => {
+      const lastItem = prev[prev.length - 1]
+      const inheritedSupplierIds =
+        lastItem && lastItem.supplier_ids && lastItem.supplier_ids.length > 0
+          ? [...lastItem.supplier_ids]
+          : lastItem && lastItem.supplier_id
+            ? [lastItem.supplier_id]
+            : []
+
+      return [
+        ...prev,
+        {
+          part_name: '',
+          vehicle: '',
+          quantity: 1,
+          supplier_id: inheritedSupplierIds[0] || '',
+          supplier_ids: inheritedSupplierIds,
+          product_id: '',
+          reduced_code: '',
+          cost_price: '',
+          margin_percent: '',
+          sell_price: '',
+        },
+      ]
+    })
   }
 
   const handleRemoveItem = (index: number) => {
@@ -551,6 +574,8 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
           supplier_id: primarySup || undefined,
           supplier_name: supplierName,
           supplier_ids: sIds,
+          product_id: it.product_id || undefined,
+          reduced_code: it.reduced_code || undefined,
           cost_price: costNum !== undefined && !isNaN(costNum) ? costNum : undefined,
           sell_price: sellNum !== undefined && !isNaN(sellNum) ? sellNum : undefined,
         }
@@ -643,11 +668,12 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
           supplier_id: primarySup || undefined,
           supplier_name: supplierName,
           supplier_ids: sIds,
+          product_id: it.product_id || undefined,
+          reduced_code: it.reduced_code || undefined,
           cost_price: costNum !== undefined && !isNaN(costNum) ? costNum : undefined,
           sell_price: sellNum !== undefined && !isNaN(sellNum) ? sellNum : undefined,
         }
       })
-
       const firstSupplier = cleanedItems.find((it) => it.supplier_id)?.supplier_id
 
       const payload: Partial<PurchaseRequest> = {
@@ -975,9 +1001,16 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
                     {/* Linha 1: Peça (Catálogo SOU.Is / Base) - LARGURA TOTAL do card do item */}
                     <div>
-                      <label className="text-[11px] font-semibold text-slate-600 block mb-0.5">
-                        Peça (Catálogo) <span className="text-red-500">*</span>
-                      </label>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[11px] font-semibold text-slate-600 block">
+                          Peça (Catálogo) <span className="text-red-500">*</span>
+                        </label>
+                        {item.reduced_code && (
+                          <span className="text-[11px] font-bold text-amber-800 bg-amber-100/90 border border-amber-300 px-2 py-0.5 rounded">
+                            Cód. Reduzido Fornecedor: <strong>{item.reduced_code}</strong>
+                          </span>
+                        )}
+                      </div>
                       <ProductSearchCombobox
                         products={catalogProducts}
                         value={item.part_name}
@@ -1027,42 +1060,56 @@ export const PurchaseDrawer: React.FC<PurchaseDrawerProps> = ({
 
                     {/* Linha 3: Fornecedor Próprio, Custo unitário, Margem %, Venda unitária e Margem do Item */}
                     <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1 border-t border-slate-100">
-                      {/* Fornecedor do item: Exibe lista de fornecedores selecionados (somente leitura / chips) */}
+                      {/* Fornecedores do item */}
                       <div className="sm:col-span-3">
                         <label className="text-[11px] font-semibold text-slate-600 block mb-0.5 flex items-center gap-1">
                           <Truck className="h-3 w-3 text-amber-600" /> Fornecedores do item
                         </label>
                         {(() => {
+                          const currentProduct = catalogProducts.find(
+                            (p) =>
+                              (item.product_id && p.id === item.product_id) ||
+                              p.name === item.part_name,
+                          )
+                          const suggestedIds = getSuggestedSupplierIdsForProduct(currentProduct)
                           const sIds =
                             item.supplier_ids && item.supplier_ids.length > 0
                               ? item.supplier_ids
                               : item.supplier_id
                                 ? [item.supplier_id]
                                 : []
-                          const matchedSuppliers = sIds
-                            .map((id) => suppliers.find((s) => s.id === id))
-                            .filter((s): s is Customer => Boolean(s))
 
-                          if (matchedSuppliers.length === 0) {
-                            return (
-                              <div className="h-8 px-2.5 rounded-md border border-slate-200 bg-slate-50 flex items-center text-xs text-slate-400 italic">
-                                Nenhum fornecedor
-                              </div>
+                          const otherSelectedIds = items
+                            .filter((_, i) => i !== index)
+                            .flatMap((other) =>
+                              other.supplier_ids && other.supplier_ids.length > 0
+                                ? other.supplier_ids
+                                : other.supplier_id
+                                  ? [other.supplier_id]
+                                  : [],
                             )
-                          }
 
                           return (
-                            <div className="min-h-8 p-1 rounded-md border border-slate-200 bg-slate-50 flex flex-wrap items-center gap-1">
-                              {matchedSuppliers.map((s) => (
-                                <span
-                                  key={s.id}
-                                  className="inline-flex items-center gap-1 bg-amber-100/90 text-amber-900 border border-amber-200 rounded px-1.5 py-0.5 text-[10px] font-semibold max-w-[170px]"
-                                  title={`${s.name}${s.phone ? ` • ${s.phone}` : ''}`}
-                                >
-                                  <span className="truncate">{s.name}</span>
-                                </span>
-                              ))}
-                            </div>
+                            <SupplierMultiSelectCombobox
+                              suppliers={suppliers}
+                              values={sIds}
+                              onChange={(newIds) => {
+                                const sliced = newIds.slice(0, 10)
+                                setItems((prev) => {
+                                  const next = [...prev]
+                                  next[index] = {
+                                    ...next[index],
+                                    supplier_ids: sliced,
+                                    supplier_id: sliced[0] || '',
+                                  }
+                                  return next
+                                })
+                              }}
+                              suggestedSupplierIds={suggestedIds}
+                              alreadySelectedSupplierIds={otherSelectedIds}
+                              maxSelections={10}
+                              placeholder="Buscar fornecedores (até 10)..."
+                            />
                           )
                         })()}
                       </div>

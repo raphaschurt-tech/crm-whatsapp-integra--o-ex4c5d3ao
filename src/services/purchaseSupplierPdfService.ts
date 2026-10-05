@@ -6,6 +6,7 @@ export interface PurchaseSupplierPdfItem {
   part_name: string
   vehicle?: string
   quantity: number
+  reduced_code?: string
   unit_price?: number
 }
 
@@ -248,7 +249,9 @@ export function generatePurchaseSupplierPdfBytes(
     s += '0.5 w\n'
     s += `${marginX} ${currentY} m ${marginX + contentWidth} ${currentY} l S\n`
 
-    const prodName = cleanPdfText(item.part_name || `Item ${index + 1}`).slice(0, 52)
+    const rawProdName = cleanPdfText(item.part_name || `Item ${index + 1}`)
+    const reducedCodeText = item.reduced_code ? ` [cod. ${cleanPdfText(item.reduced_code)}]` : ''
+    const prodName = `${rawProdName}${reducedCodeText}`.slice(0, 58)
     const qty = String(item.quantity || 1)
     const veh = cleanPdfText(item.vehicle || '—').slice(0, 24)
 

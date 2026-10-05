@@ -2,15 +2,41 @@ import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { Search, X, ChevronsUpDown, Check, Truck, Sparkles } from 'lucide-react'
 import { Customer } from '@/types/crm'
 import { matchCustomerSearch } from '@/lib/fuzzySearch'
+import { getCanonicalPhone } from '@/lib/whatsapp'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+
+/**
+ * Função utilitária que checa se um fornecedor é "não cotável":
+ * - "SOU.IS" (registro interno do ERP com telefone placeholder 5511000000000)
+ * - "FINANCEIRO Orbital Parts" (contato financeiro, não cota peça)
+ */
+export function isQuotableSupplier(supplier: Customer): boolean {
+  const nameUpper = (supplier.name || '').trim().toUpperCase()
+  const companyUpper = (supplier.company || '').trim().toUpperCase()
+  const source = (supplier.source || '').trim().toLowerCase()
+  const phone = (supplier.phone || '').trim()
+
+  if (nameUpper === 'SOU.IS' || companyUpper === 'SOU.IS' || source === 'erp') {
+    return false
+  }
+  if (phone === '5511000000000') {
+    return false
+  }
+  if (nameUpper.includes('FINANCEIRO ORBITAL') || companyUpper.includes('FINANCEIRO ORBITAL')) {
+    return false
+  }
+
+  return true
+}
 
 export interface SupplierSearchComboboxProps {
   suppliers: Customer[]
   value?: string
   onChange: (supplierId: string) => void
   suggestedSupplierIds?: string[]
+  alreadySelectedSupplierIds?: string[]
   disabled?: boolean
   placeholder?: string
   className?: string
@@ -21,6 +47,7 @@ export function SupplierSearchCombobox({
   value,
   onChange,
   suggestedSupplierIds = [],
+  alreadySelectedSupplierIds = [],
   disabled = false,
   placeholder = 'Buscar fornecedor...',
   className,
@@ -30,20 +57,39 @@ export function SupplierSearchCombobox({
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const quotableSuppliers = useMemo(() => {
+    return suppliers.filter(isQuotableSupplier)
+  }, [suppliers])
+
   const selectedSupplier = useMemo(() => suppliers.find((s) => s.id === value), [suppliers, value])
 
   const suggestedSet = useMemo(() => new Set(suggestedSupplierIds), [suggestedSupplierIds])
 
+  // Mapa de telefone canônico para os fornecedores já selecionados em outros itens ou neste
+  const canonicalPhoneToSelectedSupplier = useMemo(() => {
+    const map = new Map<string, Customer>()
+    alreadySelectedSupplierIds.forEach((id) => {
+      const sup = suppliers.find((s) => s.id === id)
+      if (sup) {
+        const cPhone = getCanonicalPhone(sup.phone)
+        if (cPhone && !map.has(cPhone)) {
+          map.set(cPhone, sup)
+        }
+      }
+    })
+    return map
+  }, [alreadySelectedSupplierIds, suppliers])
+
   // Ordena sugeridos primeiro, depois os demais
   const sortedSuppliers = useMemo(() => {
-    return [...suppliers].sort((a, b) => {
+    return [...quotableSuppliers].sort((a, b) => {
       const aSuggested = suggestedSet.has(a.id)
       const bSuggested = suggestedSet.has(b.id)
       if (aSuggested && !bSuggested) return -1
       if (!aSuggested && bSuggested) return 1
       return (a.name || '').localeCompare(b.name || '')
     })
-  }, [suppliers, suggestedSet])
+  }, [quotableSuppliers, suggestedSet])
 
   // Filtra usando o utilitário matchCustomerSearch (fuzzy / multi-termo tolerante)
   const filteredSuppliers = useMemo(() => {
@@ -149,56 +195,72 @@ export function SupplierSearchCombobox({
                 const isSelected = s.id === value
                 const isSuggested = suggestedSet.has(s.id)
 
+                const sCanonical = getCanonicalPhone(s.phone)
+                const otherWithSamePhone = sCanonical
+                  ? canonicalPhoneToSelectedSupplier.get(sCanonical)
+                  : undefined
+                const showSamePhoneWarning =
+                  otherWithSamePhone && otherWithSamePhone.id !== s.id && !isSelected
+
                 return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => handleSelect(s.id)}
-                    className={cn(
-                      'w-full px-3 py-2 text-left flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors cursor-pointer',
-                      isSelected && 'bg-amber-50/80 text-amber-950 font-medium',
+                  <div key={s.id} className="flex flex-col">
+                    <button
+                      type="button"
+                      onClick={() => handleSelect(s.id)}
+                      className={cn(
+                        'w-full px-3 py-2 text-left flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors cursor-pointer',
+                        isSelected && 'bg-amber-50/80 text-amber-950 font-medium',
+                      )}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className={cn(
+                            'p-1 rounded-full shrink-0',
+                            isSelected
+                              ? 'bg-amber-100 text-amber-700'
+                              : isSuggested
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-slate-100 text-slate-500',
+                          )}
+                        >
+                          {isSuggested ? (
+                            <Sparkles className="h-3 w-3" />
+                          ) : (
+                            <Truck className="h-3 w-3" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-xs text-slate-900 truncate">
+                              {s.name}
+                            </span>
+                            {s.company && (
+                              <span className="text-[10px] text-slate-500 bg-slate-100 px-1 py-0.2 rounded truncate">
+                                {s.company}
+                              </span>
+                            )}
+                            {isSuggested && (
+                              <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded-full inline-flex items-center gap-0.5">
+                                Sugerido da família
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            {s.phone ? s.phone : 'sem telefone cadastrado'}
+                          </div>
+                        </div>
+                      </div>
+                      {isSelected && <Check className="h-4 w-4 text-amber-600 shrink-0" />}
+                    </button>
+                    {showSamePhoneWarning && (
+                      <div className="px-3 py-1 bg-amber-50/70 border-t border-amber-100 text-[10px] text-amber-800 flex items-center gap-1">
+                        <span>
+                          ⚠️ Mesmo telefone de <strong>{otherWithSamePhone.name}</strong> — é o
+                          mesmo número
+                        </span>
+                      </div>
                     )}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div
-                        className={cn(
-                          'p-1 rounded-full shrink-0',
-                          isSelected
-                            ? 'bg-amber-100 text-amber-700'
-                            : isSuggested
-                              ? 'bg-emerald-100 text-emerald-700'
-                              : 'bg-slate-100 text-slate-500',
-                        )}
-                      >
-                        {isSuggested ? (
-                          <Sparkles className="h-3 w-3" />
-                        ) : (
-                          <Truck className="h-3 w-3" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-semibold text-xs text-slate-900 truncate">
-                            {s.name}
-                          </span>
-                          {s.company && (
-                            <span className="text-[10px] text-slate-500 bg-slate-100 px-1 py-0.2 rounded truncate">
-                              {s.company}
-                            </span>
-                          )}
-                          {isSuggested && (
-                            <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded-full inline-flex items-center gap-0.5">
-                              Sugerido da família
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">
-                          {s.phone ? s.phone : 'sem telefone cadastrado'}
-                        </div>
-                      </div>
-                    </div>
-                    {isSelected && <Check className="h-4 w-4 text-amber-600 shrink-0" />}
-                  </button>
+                  </div>
                 )
               })
             )}
@@ -214,6 +276,7 @@ export interface SupplierMultiSelectComboboxProps {
   values: string[]
   onChange: (supplierIds: string[]) => void
   suggestedSupplierIds?: string[]
+  alreadySelectedSupplierIds?: string[]
   maxSelections?: number
   disabled?: boolean
   placeholder?: string
@@ -225,6 +288,7 @@ export function SupplierMultiSelectCombobox({
   values = [],
   onChange,
   suggestedSupplierIds = [],
+  alreadySelectedSupplierIds = [],
   maxSelections = 10,
   disabled = false,
   placeholder = 'Selecionar fornecedores (até 10)...',
@@ -235,8 +299,28 @@ export function SupplierMultiSelectCombobox({
   const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const quotableSuppliers = useMemo(() => {
+    return suppliers.filter(isQuotableSupplier)
+  }, [suppliers])
+
   const selectedSet = useMemo(() => new Set(values), [values])
   const suggestedSet = useMemo(() => new Set(suggestedSupplierIds), [suggestedSupplierIds])
+
+  // Mapa de telefone canônico para fornecedores já selecionados neste item ou em outros itens
+  const canonicalPhoneToSelectedSupplier = useMemo(() => {
+    const map = new Map<string, Customer>()
+    const combinedIds = Array.from(new Set([...values, ...alreadySelectedSupplierIds]))
+    combinedIds.forEach((id) => {
+      const sup = suppliers.find((s) => s.id === id)
+      if (sup) {
+        const cPhone = getCanonicalPhone(sup.phone)
+        if (cPhone && !map.has(cPhone)) {
+          map.set(cPhone, sup)
+        }
+      }
+    })
+    return map
+  }, [values, alreadySelectedSupplierIds, suppliers])
 
   const selectedSuppliers = useMemo(() => {
     return values
@@ -246,14 +330,14 @@ export function SupplierMultiSelectCombobox({
 
   // Ordena sugeridos primeiro, depois os demais
   const sortedSuppliers = useMemo(() => {
-    return [...suppliers].sort((a, b) => {
+    return [...quotableSuppliers].sort((a, b) => {
       const aSuggested = suggestedSet.has(a.id)
       const bSuggested = suggestedSet.has(b.id)
       if (aSuggested && !bSuggested) return -1
       if (!aSuggested && bSuggested) return 1
       return (a.name || '').localeCompare(b.name || '')
     })
-  }, [suppliers, suggestedSet])
+  }, [quotableSuppliers, suggestedSet])
 
   const filteredSuppliers = useMemo(() => {
     const term = searchTerm.trim()
@@ -402,66 +486,82 @@ export function SupplierMultiSelectCombobox({
                 const isSuggested = suggestedSet.has(s.id)
                 const isAtLimit = !isSelected && values.length >= maxSelections
 
+                const sCanonical = getCanonicalPhone(s.phone)
+                const otherWithSamePhone = sCanonical
+                  ? canonicalPhoneToSelectedSupplier.get(sCanonical)
+                  : undefined
+                const showSamePhoneWarning =
+                  otherWithSamePhone && otherWithSamePhone.id !== s.id && !isSelected
+
                 return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    disabled={isAtLimit}
-                    onClick={() => handleToggle(s.id)}
-                    className={cn(
-                      'w-full px-3 py-2 text-left flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors cursor-pointer',
-                      isSelected && 'bg-amber-50/80 text-amber-950 font-medium',
-                      isAtLimit && 'opacity-50 cursor-not-allowed hover:bg-transparent',
-                    )}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div
-                        className={cn(
-                          'p-1 rounded-full shrink-0',
-                          isSelected
-                            ? 'bg-amber-100 text-amber-700'
-                            : isSuggested
-                              ? 'bg-emerald-100 text-emerald-700'
-                              : 'bg-slate-100 text-slate-500',
-                        )}
-                      >
-                        {isSuggested ? (
-                          <Sparkles className="h-3 w-3" />
-                        ) : (
-                          <Truck className="h-3 w-3" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-semibold text-xs text-slate-900 truncate">
-                            {s.name}
-                          </span>
-                          {s.company && (
-                            <span className="text-[10px] text-slate-500 bg-slate-100 px-1 py-0.2 rounded truncate">
-                              {s.company}
-                            </span>
-                          )}
-                          {isSuggested && (
-                            <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded-full inline-flex items-center gap-0.5">
-                              Sugerido da família
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">
-                          {s.phone ? s.phone : 'sem telefone cadastrado'}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {isSelected ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
-                          <Check className="h-3 w-3" /> Selecionado
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-slate-400">Selecionar</span>
+                  <div key={s.id} className="flex flex-col">
+                    <button
+                      type="button"
+                      disabled={isAtLimit}
+                      onClick={() => handleToggle(s.id)}
+                      className={cn(
+                        'w-full px-3 py-2 text-left flex items-center justify-between gap-2 hover:bg-slate-50 transition-colors cursor-pointer',
+                        isSelected && 'bg-amber-50/80 text-amber-950 font-medium',
+                        isAtLimit && 'opacity-50 cursor-not-allowed hover:bg-transparent',
                       )}
-                    </div>
-                  </button>
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div
+                          className={cn(
+                            'p-1 rounded-full shrink-0',
+                            isSelected
+                              ? 'bg-amber-100 text-amber-700'
+                              : isSuggested
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-slate-100 text-slate-500',
+                          )}
+                        >
+                          {isSuggested ? (
+                            <Sparkles className="h-3 w-3" />
+                          ) : (
+                            <Truck className="h-3 w-3" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-xs text-slate-900 truncate">
+                              {s.name}
+                            </span>
+                            {s.company && (
+                              <span className="text-[10px] text-slate-500 bg-slate-100 px-1 py-0.2 rounded truncate">
+                                {s.company}
+                              </span>
+                            )}
+                            {isSuggested && (
+                              <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded-full inline-flex items-center gap-0.5">
+                                Sugerido da família
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            {s.phone ? s.phone : 'sem telefone cadastrado'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isSelected ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                            <Check className="h-3 w-3" /> Selecionado
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">Selecionar</span>
+                        )}
+                      </div>
+                    </button>
+                    {showSamePhoneWarning && (
+                      <div className="px-3 py-1 bg-amber-50/70 border-t border-amber-100 text-[10px] text-amber-800 flex items-center gap-1">
+                        <span>
+                          ⚠️ Mesmo telefone de <strong>{otherWithSamePhone.name}</strong> — é o
+                          mesmo número
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 )
               })
             )}

@@ -214,6 +214,8 @@ export interface PurchaseItem {
   supplier_id?: string
   supplier_name?: string
   supplier_ids?: string[]
+  product_id?: string
+  reduced_code?: string
   cost_price?: number
   sell_price?: number
 }

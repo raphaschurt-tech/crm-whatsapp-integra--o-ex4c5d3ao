@@ -48,6 +48,8 @@ export const normalizePurchaseItems = (
         supplier_id: supplierIds[0] || supplierId,
         supplier_name: item.supplier_name,
         supplier_ids: supplierIds,
+        product_id: item.product_id || undefined,
+        reduced_code: item.reduced_code || undefined,
         cost_price: cost,
         sell_price: sell,
       }
@@ -62,6 +64,8 @@ export const normalizePurchaseItems = (
         quantity: 1,
         supplier_id: legacySupplier || undefined,
         supplier_ids: legacySupplier ? [legacySupplier] : [],
+        product_id: undefined,
+        reduced_code: undefined,
         cost_price: legacyCost,
         sell_price: legacySell,
       },
