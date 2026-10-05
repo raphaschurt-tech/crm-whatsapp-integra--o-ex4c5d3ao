@@ -39,7 +39,7 @@ const maskCNPJ = (val: string) => {
 export default function CustomerForm() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { markDirty } = useTabState()
+  const { markDirty, closeTab } = useTabState()
 
   const [customerType, setCustomerType] = useState<'Cliente' | 'Fornecedor' | 'Ambos'>('Cliente')
   const [type, setType] = useState<CustomerType>('PF')
@@ -196,12 +196,16 @@ export default function CustomerForm() {
               ? 'Cliente/Fornecedor salvo com sucesso!'
               : 'Cliente salvo com sucesso!',
       })
-      navigate('/clientes')
+      closeTab(undefined, true)
     } catch (_) {
       toast({ title: 'Erro ao salvar cliente', variant: 'destructive' })
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleCancel = () => {
+    closeTab(undefined, true)
   }
 
   return (
@@ -540,7 +544,7 @@ export default function CustomerForm() {
         </div>
 
         <div className="flex justify-end gap-3 pt-4 border-t">
-          <Button type="button" variant="outline" onClick={() => navigate('/clientes')}>
+          <Button type="button" variant="outline" onClick={handleCancel}>
             Cancelar
           </Button>
           <Button

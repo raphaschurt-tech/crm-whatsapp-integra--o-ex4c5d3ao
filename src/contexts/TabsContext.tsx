@@ -79,6 +79,37 @@ export function getRouteKey(pathname: string): {
   // Garantir que tiramos query strings se acidentalmente passadas aqui
   const cleanPath = (pathname.split('?')[0] || '').replace(/\/+$/, '') || '/'
 
+  // Rotas de formulário de edição com entidade paramétrica: /clientes/:id/editar, /orcamentos/:id/editar, /produtos/:id/editar
+  const customerEditMatch = cleanPath.match(/^\/?clientes\/([a-zA-Z0-9_-]+)\/editar$/)
+  if (customerEditMatch) {
+    return {
+      routeKey: `clientes:${customerEditMatch[1]}:editar`,
+      entityId: customerEditMatch[1],
+      isEntity: true,
+      isForm: true,
+    }
+  }
+
+  const quoteEditMatch = cleanPath.match(/^\/?orcamentos\/([a-zA-Z0-9_-]+)\/editar$/)
+  if (quoteEditMatch) {
+    return {
+      routeKey: `orcamentos:${quoteEditMatch[1]}:editar`,
+      entityId: quoteEditMatch[1],
+      isEntity: true,
+      isForm: true,
+    }
+  }
+
+  const productEditMatch = cleanPath.match(/^\/?produtos\/([a-zA-Z0-9_-]+)\/editar$/)
+  if (productEditMatch) {
+    return {
+      routeKey: `produtos:${productEditMatch[1]}:editar`,
+      entityId: productEditMatch[1],
+      isEntity: true,
+      isForm: true,
+    }
+  }
+
   // Rotas com entidade paramétrica: /orcamentos/:id, /clientes/:id, /produtos/:id, /pagamento/:id
   const quoteMatch = cleanPath.match(/^\/?orcamentos\/([a-zA-Z0-9_-]+)$/)
   if (quoteMatch && quoteMatch[1] !== 'novo') {
