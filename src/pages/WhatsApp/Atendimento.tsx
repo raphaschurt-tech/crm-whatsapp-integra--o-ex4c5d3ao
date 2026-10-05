@@ -53,7 +53,12 @@ import { sendWhatsAppMessage } from '@/services/quotes'
 import { ProductQuoteModal } from '@/components/WhatsApp/ProductQuoteModal'
 import { CustomerQuoteHistory } from '@/components/WhatsApp/CustomerQuoteHistory'
 import { CustomerAvatar } from '@/components/WhatsApp/CustomerAvatar'
-import { createCustomer, getCustomers, updateCustomer } from '@/services/customers'
+import {
+  createCustomer,
+  getCustomers,
+  updateCustomer,
+  populateCustomerCache,
+} from '@/services/customers'
 import { useAuth } from '@/hooks/use-auth'
 import { Customer } from '@/types/crm'
 import { toast } from '@/hooks/use-toast'
@@ -377,12 +382,51 @@ export default function WhatsAppAtendimento() {
         loadWhatsAppConversations(),
         getCustomers().catch(() => [] as Customer[]),
       ])
+
+      // Se a busca de conversas retornar vazia por falha transitória ou 429,
+      // NUNCA apagar as conversas que já estavam na tela
+      if (data.length === 0 && isSilent) {
+        return
+      }
+
+      if (custList.length > 0) {
+        populateCustomerCache(custList)
+      }
+
       const map = new Map<string, Customer>()
       for (const c of custList) {
         map.set(c.id, c)
       }
-      setCustomersMap(map)
-      setCustomers(data)
+      setCustomersMap((prev) => {
+        // Preserva clientes anteriores no mapa caso a query atual tenha vindo parcial ou vazia
+        const merged = new Map(prev)
+        for (const [k, v] of map) {
+          merged.set(k, v)
+        }
+        return merged
+      })
+      setCustomers((prev) => {
+        if (data.length === 0) return prev
+        // Preserva o nome do cliente anterior se a nova iteração veio temporariamente sem nome
+        return data.map((newCust) => {
+          const oldCust = prev.find(
+            (p) => p.id === newCust.id || (p.rawPhone && p.rawPhone === newCust.rawPhone),
+          )
+          if (
+            oldCust &&
+            oldCust.name &&
+            oldCust.name !== oldCust.phone &&
+            (newCust.name === newCust.phone || !newCust.name)
+          ) {
+            return {
+              ...newCust,
+              name: oldCust.name,
+              customerId: newCust.customerId || oldCust.customerId,
+            }
+          }
+          return newCust
+        })
+      })
 
       const savedPhone = (() => {
         try {
@@ -524,13 +568,13 @@ export default function WhatsAppAtendimento() {
     checkConnectionStatus()
   }, [fetchData, checkConnectionStatus])
 
-  // Realtime subscription com debounce para evitar tempestade de requisições e 429
+  // Realtime subscription com debounce e backoff para evitar tempestade de requisições e 429
   const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const debouncedFetchData = useCallback(() => {
     if (realtimeDebounceRef.current) clearTimeout(realtimeDebounceRef.current)
     realtimeDebounceRef.current = setTimeout(() => {
       fetchData(true)
-    }, 500)
+    }, 1200)
   }, [fetchData])
 
   useRealtime('webhook_received', debouncedFetchData)
@@ -541,13 +585,13 @@ export default function WhatsAppAtendimento() {
     debouncedFetchData()
   })
 
-  // Polling moderado a cada 25 segundos (somente se a aba estiver visível) para evitar 429
+  // Polling moderado a cada 45 segundos (somente se a aba estiver visível) para evitar 429
   useEffect(() => {
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
         fetchData(true)
       }
-    }, 25000)
+    }, 45000)
     return () => clearInterval(interval)
   }, [fetchData])
 

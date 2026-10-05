@@ -1,7 +1,7 @@
 import pb from '@/lib/pocketbase/client'
 import { withRetry } from '@/lib/retry'
 import { Customer, Quote } from '@/types/crm'
-import { getCustomers } from '@/services/customers'
+import { getCustomers, populateCustomerCache, getLastKnownCustomer } from '@/services/customers'
 import { getQuotes } from '@/services/quotes'
 import { RecordModel } from 'pocketbase'
 
@@ -386,6 +386,11 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       quotesByCustomerId.set(q.customer, list)
     }
 
+    // Popula o cache global centralizado de clientes (permite resolução síncrona e fallback estável em toda a aplicação)
+    if (customersList.length > 0) {
+      populateCustomerCache(customersList)
+    }
+
     // Mapa de clientes para rápida associação por telefone normalizado
     // Um cliente pode ter telefone formatado "(11) 96397-0333" ou "11963970333" ou "5511963970333"
     const customerMap = new Map<string, Customer>()
@@ -398,6 +403,9 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
           customerMap.set(clean.slice(2), c)
         } else {
           customerMap.set(`55${clean}`, c)
+        }
+        if (clean.length >= 8) {
+          customerMap.set(clean.slice(-8), c)
         }
       }
     }
@@ -649,24 +657,29 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         status = matchedCustomer.whatsapp_status as WhatsAppStatus
       }
 
-      const displayName = matchedCustomer ? matchedCustomer.name : formatPhoneDisplay(conv.phoneKey)
-      const customerType: 'PF' | 'PJ' = matchedCustomer
-        ? matchedCustomer.type || (matchedCustomer.cnpj ? 'PJ' : 'PF')
+      // Se não encontrou de imediato na lista carregada, tentar o fallback estável do cache histórico
+      const effectiveCustomer = matchedCustomer || getLastKnownCustomer(conv.phoneKey)
+
+      const displayName = effectiveCustomer
+        ? effectiveCustomer.name
+        : formatPhoneDisplay(conv.phoneKey)
+      const customerType: 'PF' | 'PJ' = effectiveCustomer
+        ? effectiveCustomer.type || (effectiveCustomer.cnpj ? 'PJ' : 'PF')
         : 'PF'
 
-      // Orçamentos associados ao cliente (por customerId ou fallback de telefone via matchedCustomer)
-      const customerQuotes = matchedCustomer?.id
-        ? quotesByCustomerId.get(matchedCustomer.id) || []
+      // Orçamentos associados ao cliente (por customerId ou fallback de telefone via effectiveCustomer)
+      const customerQuotes = effectiveCustomer?.id
+        ? quotesByCustomerId.get(effectiveCustomer.id) || []
         : []
 
       result.push({
-        id: matchedCustomer ? matchedCustomer.id : `conv-${conv.phoneKey}`,
-        customerId: matchedCustomer?.id,
+        id: effectiveCustomer ? effectiveCustomer.id : `conv-${conv.phoneKey}`,
+        customerId: effectiveCustomer?.id,
         name: displayName,
         type: customerType,
         phone: formatPhoneDisplay(conv.phoneKey),
         rawPhone: conv.phoneKey,
-        company: matchedCustomer?.company,
+        company: effectiveCustomer?.company,
         status,
         unreadCount,
         lastReadAt,

@@ -61,7 +61,7 @@ export function CustomerQuoteHistory({
       let resolvedCustomerId = customerId
 
       // Se não temos customerId direto, tentar localizar o cliente pelo helper centralizado
-      // que conta com debounce, cache em memória (60s) e in-flight dedup
+      // que conta com cache de 10 min, deduplicação in-flight, rate-limit backoff e fallback estável
       if (!resolvedCustomerId && customerPhone) {
         try {
           const matched = await findCustomerByPhone(customerPhone)
@@ -86,7 +86,7 @@ export function CustomerQuoteHistory({
             sort: '-created',
             expand: 'customer',
           }),
-        { retries: 3, delayMs: 800 },
+        { retries: 1, delayMs: 1200 },
       )
 
       setQuotes(list)
@@ -98,11 +98,11 @@ export function CustomerQuoteHistory({
     }
   }
 
-  // Debounce defensivo para evitar múltiplos disparos rápidos caso props sofram oscilações
+  // Debounce aumentado para 400ms para evitar disparos em rajada quando props oscilam
   useEffect(() => {
     const timer = setTimeout(() => {
       loadCustomerQuotes()
-    }, 150)
+    }, 400)
     return () => clearTimeout(timer)
   }, [customerId, customerPhone, refreshTrigger])
 

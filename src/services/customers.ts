@@ -60,18 +60,53 @@ export const checkDuplicateDocument = async (
   return null
 }
 
-// Cache em memória de busca de cliente por telefone para prevenir rajadas / loops (TTL 60s)
+// Cache em memória de busca de cliente por telefone para prevenir rajadas / loops (TTL 10 minutos)
 interface CustomerCacheEntry {
   customer: Customer | null
   timestamp: number
 }
 const customerPhoneCache = new Map<string, CustomerCacheEntry>()
+// Cache permanente do último contato conhecido (nunca expira, fallback de UI para não sumir nome)
+const lastKnownCustomerByPhone = new Map<string, Customer>()
 const inFlightCustomerLookups = new Map<string, Promise<Customer | null>>()
-const CACHE_TTL_MS = 60 * 1000 // 60 segundos
+const CACHE_TTL_MS = 10 * 60 * 1000 // 10 minutos de cache
+
+// Backoff para 429 Too Many Requests (evita martelar se o backend estiver limitando)
+let rateLimitBackoffUntil = 0
 
 /**
- * Busca cliente por telefone com normalização (variantes 55...), deduplicação in-flight
- * e cache de 60 segundos para evitar 429 Too Many Requests em loops ou keep-alive.
+ * Registra ou atualiza contatos conhecidos no cache em lote (evita N requisições)
+ */
+export function populateCustomerCache(customers: Customer[]): void {
+  const now = Date.now()
+  for (const c of customers) {
+    if (!c) continue
+    const digits = (c.phone || '').replace(/\D/g, '')
+    if (digits.length >= 8) {
+      const canonical = digits.slice(-8)
+      customerPhoneCache.set(canonical, { customer: c, timestamp: now })
+      lastKnownCustomerByPhone.set(canonical, c)
+    }
+    if (digits) {
+      customerPhoneCache.set(digits, { customer: c, timestamp: now })
+      lastKnownCustomerByPhone.set(digits, c)
+    }
+  }
+}
+
+/**
+ * Retorna o último cliente conhecido do cache síncrono para render imediato sem piscar
+ */
+export function getLastKnownCustomer(rawPhone: string): Customer | null {
+  const digits = (rawPhone || '').replace(/\D/g, '')
+  if (!digits) return null
+  const canonical = digits.length >= 8 ? digits.slice(-8) : digits
+  return lastKnownCustomerByPhone.get(canonical) || lastKnownCustomerByPhone.get(digits) || null
+}
+
+/**
+ * Busca cliente por telefone com normalização (variantes 55...), deduplicação in-flight,
+ * proteção contra 429, cache de 10 min e fallback permanente para manter o nome salvo.
  */
 export async function findCustomerByPhone(rawPhone: string): Promise<Customer | null> {
   const digits = (rawPhone || '').replace(/\D/g, '')
@@ -79,9 +114,17 @@ export async function findCustomerByPhone(rawPhone: string): Promise<Customer | 
 
   // Chave canônica para o cache (últimos 8 dígitos ou DDD + número)
   const canonicalKey = digits.length >= 8 ? digits.slice(-8) : digits
-  const cached = customerPhoneCache.get(canonicalKey)
+  const lastKnown =
+    lastKnownCustomerByPhone.get(canonicalKey) || lastKnownCustomerByPhone.get(digits) || null
+
+  const cached = customerPhoneCache.get(canonicalKey) || customerPhoneCache.get(digits)
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.customer
+    return cached.customer ?? lastKnown
+  }
+
+  // Se estamos sob janela de backoff de 429 (Too Many Requests), respeitar e devolver fallback imediatamente
+  if (Date.now() < rateLimitBackoffUntil) {
+    return lastKnown
   }
 
   // Deduplicação in-flight: se já existe uma busca em voo para essa chave, reutilizar a mesma Promise
@@ -103,12 +146,13 @@ export async function findCustomerByPhone(rawPhone: string): Promise<Customer | 
         .map((v) => `phone ~ "${v}"`)
         .join(' || ')
 
+      // Máximo 1 retry com backoff para nunca gerar loop de 429
       const matchedCustomers = await withRetry(
         () =>
           pb.collection<Customer>('customers').getList(1, 5, {
             filter: filterPhoneParts,
           }),
-        { retries: 3, delayMs: 1000 },
+        { retries: 1, delayMs: 1500 },
       )
 
       // Encontrar cliente cujo número limpo case com uma das variantes
@@ -118,18 +162,33 @@ export async function findCustomerByPhone(rawPhone: string): Promise<Customer | 
           return variants.has(cDigits)
         }) || null
 
-      // Salvar no cache
+      // Salvar no cache ativo e no último conhecido
       customerPhoneCache.set(canonicalKey, {
         customer: matched,
         timestamp: Date.now(),
       })
+      if (matched) {
+        lastKnownCustomerByPhone.set(canonicalKey, matched)
+        lastKnownCustomerByPhone.set(digits, matched)
+      }
 
-      return matched
-    } catch (err) {
-      console.warn('[findCustomerByPhone] Falha ao buscar cliente por telefone:', err)
-      // Se já tínhamos algo no cache expirado, devolve em vez de falhar totalmente
-      if (cached) return cached.customer
-      return null
+      return matched ?? lastKnown
+    } catch (err: any) {
+      const is429 =
+        err?.status === 429 ||
+        String(err?.message || '').includes('429') ||
+        String(err?.message || '')
+          .toLowerCase()
+          .includes('too many')
+      if (is429) {
+        // Pausar novas requisições por 5 segundos para respeitar o rate limit do backend
+        rateLimitBackoffUntil = Date.now() + 5000
+        console.warn('[findCustomerByPhone] Rate limit 429 atingido. Ativando backoff de 5s.')
+      } else {
+        console.warn('[findCustomerByPhone] Falha ao buscar cliente por telefone:', err)
+      }
+      // CRÍTICO: sob qualquer falha/429, SEMPRE manter o último cliente conhecido do cache em vez de null
+      return lastKnown
     } finally {
       inFlightCustomerLookups.delete(canonicalKey)
     }
