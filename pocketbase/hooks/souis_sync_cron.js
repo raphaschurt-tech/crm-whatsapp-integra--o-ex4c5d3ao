@@ -82,6 +82,24 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
       const loc2 = loc2Raw !== null && loc2Raw !== undefined ? String(loc2Raw).trim() : ''
       const loc3 = loc3Raw !== null && loc3Raw !== undefined ? String(loc3Raw).trim() : ''
 
+      // Coluna de família na view SOU.IS: NMFAMILIA / nmfamilia / familia / etc.
+      const familyRaw =
+        r.NMFAMILIA !== undefined
+          ? r.NMFAMILIA
+          : r.nmfamilia !== undefined
+            ? r.nmfamilia
+            : r.FAMILIA !== undefined
+              ? r.FAMILIA
+              : r.familia !== undefined
+                ? r.familia
+                : r.NOME_FAMILIA !== undefined
+                  ? r.NOME_FAMILIA
+                  : r.nome_familia !== undefined
+                    ? r.nome_familia
+                    : r.sou_family
+      const familyVal =
+        familyRaw !== null && familyRaw !== undefined ? String(familyRaw).trim() : ''
+
       const brandRaw =
         r.MARCA !== undefined
           ? r.MARCA
@@ -169,7 +187,13 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
           brand: brandVal,
           barcode: barcodeVal,
           reduced_code: reducedCodeVal,
+          sou_family: familyVal,
         }
+      }
+
+      // Consolidação da família: primeira não vazia
+      if (!productsMap[codProd].sou_family && familyVal) {
+        productsMap[codProd].sou_family = familyVal
       }
 
       if (saldo > productsMap[codProd].saldo_prod) {
@@ -255,6 +279,7 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
         brand: p.brand || '',
         barcode: p.barcode || '',
         reduced_code: p.reduced_code || '',
+        sou_family: p.sou_family || '',
       }
     }
 
@@ -406,11 +431,84 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
     'brand',
     'barcode',
     'reduced_code',
+    'sou_family',
+    'is_active',
   ]
+
+  // Leitura das configurações de guarda de integridade
+  let syncIntegrityFloor = 0.8
+  try {
+    const liveSetting = $app.findFirstRecordByFilter('settings', "id != ''")
+    if (liveSetting) {
+      const fl = Number(liveSetting.get('sync_integrity_floor'))
+      if (!isNaN(fl) && fl > 0 && fl <= 1.0) {
+        syncIntegrityFloor = fl
+      }
+    }
+  } catch (_) {}
+
+  // Buscar todos os produtos com external_id existentes para desativação e guarda de integridade
+  let currentActiveExternalProducts = []
+  try {
+    currentActiveExternalProducts = $app.findRecordsByFilter(
+      'products',
+      "external_id != '' && is_active = true",
+      'created',
+      10000,
+      0,
+    )
+  } catch (actErr) {
+    console.log('[SOU.IS Cron Sync] Erro ao buscar produtos ativos atuais:', String(actErr))
+  }
+
+  const totalActiveBefore = currentActiveExternalProducts.length
+  const totalReceivedDistinct = productCodes.length
+
+  // Helper para gerar timestamp no Horário de Brasília (UTC-3 formato -03:00)
+  function getBrasiliaTimestamp() {
+    try {
+      const bDate = new Date(Date.now() - 3 * 3600 * 1000)
+      return bDate.toISOString().replace('Z', '-03:00')
+    } catch (_) {
+      return new Date().toISOString()
+    }
+  }
+
+  // GUARDA DE INTEGRIDADE:
+  // Só inativar produtos ausentes se a sync for ÍNTEGRA:
+  // a view deve retornar volume >= settings.sync_integrity_floor (ex: 80%) do total de produtos ativos atuais com external_id.
+  // Se a sync falhar, retornar 0/vazio ou ficar abaixo do piso, NÃO inativar NADA e logar alerta [SYNC-INTEGRIDADE].
+  let isSyncIntegrityValid = false
+  if (totalActiveBefore === 0) {
+    // Primeiro sync ou sem produtos ativos anteriores: consideramos íntegra se trouxe produtos
+    isSyncIntegrityValid = totalReceivedDistinct > 0
+  } else {
+    const ratio = totalReceivedDistinct / totalActiveBefore
+    if (ratio >= syncIntegrityFloor) {
+      isSyncIntegrityValid = true
+    } else {
+      isSyncIntegrityValid = false
+      console.log(
+        '[SYNC-INTEGRIDADE] ALERTA: Retorno abaixo do piso de integridade!',
+        JSON.stringify({
+          horarioBrasilia: getBrasiliaTimestamp(),
+          totalObtido: totalReceivedDistinct,
+          totalAtivoAtual: totalActiveBefore,
+          ratio: ratio,
+          pisoRequerido: syncIntegrityFloor,
+          acao: 'NENHUM produto sera inativado nesta rodada.',
+        }),
+      )
+    }
+  }
 
   const productsCol = $app.findCollectionByNameOrId('products')
   let createdCount = 0
   let updatedCount = 0
+  let reactivatedCount = 0
+
+  // Mapa de SKUs que vieram na sync para checagem rápida O(1)
+  const receivedSkusMap = {}
 
   for (let j = 0; j < productCodes.length; j++) {
     const p = mappedProducts[productCodes[j]]
@@ -437,10 +535,16 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
       brand: p.brand || '',
       barcode: p.barcode || '',
       reduced_code: p.reduced_code || '',
+      sou_family: p.sou_family || '',
+      is_active: true, // Se veio na sync, fica ativo (ou é reativado)
     }
+
+    receivedSkusMap[sku] = true
 
     try {
       const existing = $app.findFirstRecordByData('products', 'sku', sku)
+      const wasInactive = existing.get('is_active') === false
+
       for (let f = 0; f < ALLOWED_SYNC_FIELDS.length; f++) {
         const fieldName = ALLOWED_SYNC_FIELDS[f]
         if (fieldsToSet[fieldName] !== undefined) {
@@ -448,6 +552,9 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
         }
       }
       $app.save(existing)
+      if (wasInactive) {
+        reactivatedCount++
+      }
       updatedCount++
     } catch (_) {
       const rec = new Record(productsCol)
@@ -465,20 +572,55 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
       rec.set('reserved_quantity', 0)
       rec.set('is_produced', false)
       rec.set('is_component', false)
+      rec.set('is_active', true)
       $app.save(rec)
       createdCount++
+    }
+  }
+
+  // DESATIVAÇÃO AUTOMÁTICA COM GUARDA DE INTEGRIDADE:
+  // Produtos com external_id que NÃO vierem na sync são marcados is_active = false
+  // Apenas se a sync foi íntegra! NUNCA apagar produto SOU.IS (regra permanente — hard delete proibido).
+  let deactivatedCount = 0
+  if (isSyncIntegrityValid) {
+    try {
+      // Buscar todos os produtos com external_id que estão ativos
+      const allActiveExternal = $app.findRecordsByFilter(
+        'products',
+        "external_id != '' && is_active = true",
+        'created',
+        10000,
+        0,
+      )
+      for (let aIdx = 0; aIdx < allActiveExternal.length; aIdx++) {
+        const activeProd = allActiveExternal[aIdx]
+        const prodSku = activeProd.getString('sku')
+        // Se o SKU não veio nesta sync íntegra, inativa
+        if (!receivedSkusMap[prodSku]) {
+          activeProd.set('is_active', false)
+          $app.save(activeProd)
+          deactivatedCount++
+        }
+      }
+    } catch (deactErr) {
+      console.log('[SOU.IS Cron Sync] Erro durante desativação de ausentes:', String(deactErr))
     }
   }
 
   console.log(
     '[SOUIS-SCHEDULED-SYNC-COMPLETE]',
     JSON.stringify({
-      timestamp: new Date().toISOString(),
+      horarioBrasilia: getBrasiliaTimestamp(),
       rawRows: mappedResult.rawRowsCount,
       ignoredRows: mappedResult.ignoredRowsCount,
       distinctProducts: mappedResult.distinctProductsCount,
       created: createdCount,
       updated: updatedCount,
+      reactivated: reactivatedCount,
+      deactivated: deactivatedCount,
+      integrityValid: isSyncIntegrityValid,
+      integrityFloor: syncIntegrityFloor,
+      totalActiveBefore: totalActiveBefore,
       noPriceSkus: mappedResult.noPriceSkus,
     }),
   )

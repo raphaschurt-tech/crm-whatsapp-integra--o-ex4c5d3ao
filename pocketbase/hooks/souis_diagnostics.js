@@ -187,6 +187,23 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
       const loc2 = loc2Raw !== null && loc2Raw !== undefined ? String(loc2Raw).trim() : ''
       const loc3 = loc3Raw !== null && loc3Raw !== undefined ? String(loc3Raw).trim() : ''
 
+      const familyRaw =
+        r.NMFAMILIA !== undefined
+          ? r.NMFAMILIA
+          : r.nmfamilia !== undefined
+            ? r.nmfamilia
+            : r.FAMILIA !== undefined
+              ? r.FAMILIA
+              : r.familia !== undefined
+                ? r.familia
+                : r.NOME_FAMILIA !== undefined
+                  ? r.NOME_FAMILIA
+                  : r.nome_familia !== undefined
+                    ? r.nome_familia
+                    : r.sou_family
+      const familyVal =
+        familyRaw !== null && familyRaw !== undefined ? String(familyRaw).trim() : ''
+
       const brandRaw =
         r.MARCA !== undefined
           ? r.MARCA
@@ -274,7 +291,12 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
           brand: brandVal,
           barcode: barcodeVal,
           reduced_code: reducedCodeVal,
+          sou_family: familyVal,
         }
+      }
+
+      if (!productsMap[codProd].sou_family && familyVal) {
+        productsMap[codProd].sou_family = familyVal
       }
 
       if (saldo > productsMap[codProd].saldo_prod) {
@@ -358,6 +380,7 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
         brand: p.brand || '',
         barcode: p.barcode || '',
         reduced_code: p.reduced_code || '',
+        sou_family: p.sou_family || '',
       }
     }
 
@@ -393,13 +416,77 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
     'brand',
     'barcode',
     'reduced_code',
+    'sou_family',
+    'is_active',
   ]
+
+  // Leitura de settings
+  let syncIntegrityFloor = 0.80
+  try {
+    const liveSetting = $app.findFirstRecordByFilter('settings', "id != ''")
+    if (liveSetting) {
+      const fl = Number(liveSetting.get('sync_integrity_floor'))
+      if (!isNaN(fl) && fl > 0 && fl <= 1.0) {
+        syncIntegrityFloor = fl
+      }
+    }
+  } catch (_) {}
+
+  let currentActiveExternalProducts = []
+  try {
+    currentActiveExternalProducts = $app.findRecordsByFilter(
+      'products',
+      "external_id != '' && is_active = true",
+      'created',
+      10000,
+      0,
+    )
+  } catch (actErr) {
+    console.log('[SOU.IS Sync] Erro ao buscar produtos ativos atuais:', String(actErr))
+  }
+
+  const totalActiveBefore = currentActiveExternalProducts.length
+  const totalReceivedDistinct = productCodes.length
+
+  function getBrasiliaTimestamp() {
+    try {
+      const bDate = new Date(Date.now() - 3 * 3600 * 1000)
+      return bDate.toISOString().replace('Z', '-03:00')
+    } catch (_) {
+      return new Date().toISOString()
+    }
+  }
+
+  let isSyncIntegrityValid = false
+  if (totalActiveBefore === 0) {
+    isSyncIntegrityValid = totalReceivedDistinct > 0
+  } else {
+    const ratio = totalReceivedDistinct / totalActiveBefore
+    if (ratio >= syncIntegrityFloor) {
+      isSyncIntegrityValid = true
+    } else {
+      isSyncIntegrityValid = false
+      console.log(
+        '[SYNC-INTEGRIDADE] ALERTA: Retorno abaixo do piso de integridade!',
+        JSON.stringify({
+          horarioBrasilia: getBrasiliaTimestamp(),
+          totalObtido: totalReceivedDistinct,
+          totalAtivoAtual: totalActiveBefore,
+          ratio: ratio,
+          pisoRequerido: syncIntegrityFloor,
+          acao: 'NENHUM produto sera inativado nesta rodada.',
+        }),
+      )
+    }
+  }
 
   const productsCol = $app.findCollectionByNameOrId('products')
   let createdCount = 0
   let updatedCount = 0
+  let reactivatedCount = 0
   let errorCount = 0
   let firstError = null
+  const receivedSkusMap = {}
 
   for (let j = 0; j < productCodes.length; j++) {
     const p = mappedProducts[productCodes[j]]
@@ -426,7 +513,11 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
       brand: p.brand || '',
       barcode: p.barcode || '',
       reduced_code: p.reduced_code || '',
+      sou_family: p.sou_family || '',
+      is_active: true,
     }
+
+    receivedSkusMap[sku] = true
 
     let existingRecord = null
     try {
@@ -437,6 +528,7 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
 
     if (existingRecord) {
       try {
+        const wasInactive = existingRecord.get('is_active') === false
         for (let f = 0; f < ALLOWED_SYNC_FIELDS.length; f++) {
           const fieldName = ALLOWED_SYNC_FIELDS[f]
           if (fieldsToSet[fieldName] !== undefined) {
@@ -444,6 +536,9 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
           }
         }
         $app.save(existingRecord)
+        if (wasInactive) {
+          reactivatedCount++
+        }
         updatedCount++
       } catch (errUpd) {
         errorCount++
@@ -475,6 +570,8 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
         rec.set('reserved_quantity', 0)
         rec.set('is_produced', false)
         rec.set('is_component', false)
+        rec.set('sou_family', p.sou_family || '')
+        rec.set('is_active', true)
 
         $app.save(rec)
         createdCount++
@@ -492,20 +589,49 @@ routerAdd('POST', '/backend/v1/souis/sync', (e) => {
     }
   }
 
+  let deactivatedCount = 0
+  if (isSyncIntegrityValid) {
+    try {
+      const allActiveExternal = $app.findRecordsByFilter(
+        'products',
+        "external_id != '' && is_active = true",
+        'created',
+        10000,
+        0,
+      )
+      for (let aIdx = 0; aIdx < allActiveExternal.length; aIdx++) {
+        const activeProd = allActiveExternal[aIdx]
+        const prodSku = activeProd.getString('sku')
+        if (!receivedSkusMap[prodSku]) {
+          activeProd.set('is_active', false)
+          $app.save(activeProd)
+          deactivatedCount++
+        }
+      }
+    } catch (deactErr) {
+      console.log('[SOU.IS Sync] Erro durante desativação de ausentes:', String(deactErr))
+    }
+  }
+
   return e.json(200, {
     success: true,
+    horario_brasilia: getBrasiliaTimestamp(),
     total_raw_rows: mappedResult.rawRowsCount,
     ignored_rows: mappedResult.ignoredRowsCount,
     distinct_products: mappedResult.distinctProductsCount,
     created: createdCount,
     updated: updatedCount,
+    reactivated: reactivatedCount,
+    deactivated: deactivatedCount,
+    integrity_valid: isSyncIntegrityValid,
+    integrity_floor: syncIntegrityFloor,
+    total_active_before: totalActiveBefore,
     errors: errorCount,
     first_error: firstError,
     no_price_skus: mappedResult.noPriceSkus,
   })
 })
-routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
-  let bridgeUrl = $os.getenv('SOIS_BRIDGE_URL') || ''
+// Diagnostics: log columns if received in trigger-now as well  let bridgeUrl = $os.getenv('SOIS_BRIDGE_URL') || ''
   let bridgeToken = $os.getenv('SOIS_BRIDGE_TOKEN') || ''
   try {
     const setting = $app.findFirstRecordByFilter('settings', "id != ''")
@@ -559,6 +685,16 @@ routerAdd('GET', '/backend/v1/souis/trigger-now', (e) => {
     }
   } catch (err) {
     return e.json(502, { success: false, error: String(err) })
+  }
+
+  try {
+    let receivedColumns = []
+    if (rows && rows.length > 0 && typeof rows[0] === 'object' && rows[0] !== null) {
+      receivedColumns = Object.keys(rows[0])
+    }
+    console.log('[SOUIS-SYNC-COLUMNS] ' + JSON.stringify(receivedColumns))
+  } catch (colErr) {
+    console.log('[SOUIS-SYNC-COLUMNS] erro ao extrair colunas: ' + String(colErr))
   }
 
   function extractPrice(row) {
