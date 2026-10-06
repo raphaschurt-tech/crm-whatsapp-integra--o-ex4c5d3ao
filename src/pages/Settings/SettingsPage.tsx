@@ -27,7 +27,6 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from '@/hooks/use-toast'
 
 export default function SettingsPage() {
@@ -151,6 +150,9 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
 
     return list
   }, [productsList])
+
+  // Set estável para checagem rápida O(1) de seleção
+  const allowedFamiliesSet = useMemo(() => new Set(allowedFamilies), [allowedFamilies])
 
   const handleToggleFamily = (familyName: string) => {
     setAllowedFamilies((prev) => {
@@ -966,11 +968,10 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-80 overflow-y-auto p-1 border rounded-lg bg-slate-50/40">
                   {familyStats.map((fam) => {
-                    const isSelected = allowedFamilies.includes(fam.name)
+                    const isSelected = allowedFamiliesSet.has(fam.name)
                     return (
-                      <div
+                      <label
                         key={fam.name}
-                        onClick={() => handleToggleFamily(fam.name)}
                         className={`flex items-center justify-between p-2.5 rounded-lg border text-xs cursor-pointer transition-colors select-none ${
                           isSelected
                             ? 'bg-amber-50 border-amber-300 text-amber-950 shadow-xs'
@@ -978,23 +979,19 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                         }`}
                       >
                         <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                          <Checkbox
+                          <input
+                            type="checkbox"
                             checked={isSelected}
-                            onCheckedChange={() => handleToggleFamily(fam.name)}
-                            onClick={(e) => e.stopPropagation()}
-                            id={`fam-${fam.name}`}
+                            onChange={() => handleToggleFamily(fam.name)}
+                            className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600 shrink-0"
                           />
-                          <label
-                            htmlFor={`fam-${fam.name}`}
-                            className="font-medium truncate cursor-pointer"
-                            title={fam.name}
-                          >
+                          <span className="font-medium truncate cursor-pointer" title={fam.name}>
                             {fam.isNoFamily ? (
                               <span className="italic text-slate-500 font-normal">Sem família</span>
                             ) : (
                               fam.name
                             )}
-                          </label>
+                          </span>
                         </div>
                         <Badge
                           variant="secondary"
@@ -1006,7 +1003,7 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                         >
                           {fam.count} {fam.count === 1 ? 'item' : 'itens'}
                         </Badge>
-                      </div>
+                      </label>
                     )
                   })}
                 </div>
