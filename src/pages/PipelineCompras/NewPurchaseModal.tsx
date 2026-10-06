@@ -859,6 +859,7 @@ export const NewPurchaseModal: React.FC<NewPurchaseModalProps> = ({
                         products={catalogProducts}
                         value={item.part_name}
                         displayValue={item.part_name}
+                        mode="compra"
                         onChange={(prodId) => {
                           const found = catalogProducts.find((p) => p.id === prodId)
                           handleSelectProductForItem(index, found || null)

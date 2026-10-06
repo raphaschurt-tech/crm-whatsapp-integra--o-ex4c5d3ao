@@ -13,8 +13,12 @@ import {
   XCircle,
   Loader2,
   Clock,
+  Layers,
+  AlertTriangle,
 } from 'lucide-react'
 import { getSettings, saveSettings } from '@/services/settings'
+import { getProducts } from '@/services/products'
+import { Product } from '@/types/crm'
 import pb from '@/lib/pocketbase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,6 +27,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from '@/hooks/use-toast'
 
 export default function SettingsPage() {
@@ -44,6 +49,9 @@ export default function SettingsPage() {
   const [aiAutoCloseMinutes, setAiAutoCloseMinutes] = useState<number>(60)
   const [aiAutoCloseMessage, setAiAutoCloseMessage] = useState('')
   const [aiExcludedSkus, setAiExcludedSkus] = useState('')
+  const [allowedFamilies, setAllowedFamilies] = useState<string[]>([])
+  const [productsList, setProductsList] = useState<Product[]>([])
+  const [loadingProducts, setLoadingProducts] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -77,7 +85,9 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
   const loadSettingsData = async () => {
     setLoading(true)
     try {
-      const s = await getSettings()
+      setLoadingProducts(true)
+      const [s, prods] = await Promise.all([getSettings(), getProducts()])
+      setProductsList(prods)
       if (s) {
         setWhatsappNumber(s.whatsapp_number || '')
         setStockApiUrl(s.stock_api_url || '')
@@ -103,17 +113,64 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
             'Atendimento encerrado por inatividade. Se precisar de algo, me chame aqui que continuo te ajudando! 🙂',
         )
         setAiExcludedSkus((s as any).ai_excluded_skus || '')
+        setAllowedFamilies(Array.isArray(s.allowed_families) ? s.allowed_families : [])
       }
     } catch (e) {
       console.warn('Erro ao obter configurações:', e)
     } finally {
       setLoading(false)
+      setLoadingProducts(false)
     }
   }
 
   useEffect(() => {
     loadSettingsData()
   }, [])
+
+  // Agrupamento e contagem de produtos por família sou_family, ordenadas por volume decrescente
+  const familyStats = useMemo(() => {
+    const countsMap = new Map<string, number>()
+
+    for (const p of productsList) {
+      const raw = (p.sou_family || '').trim()
+      const famName = raw || 'Sem família'
+      countsMap.set(famName, (countsMap.get(famName) || 0) + 1)
+    }
+
+    const list = Array.from(countsMap.entries()).map(([name, count]) => ({
+      name,
+      count,
+      isNoFamily: name === 'Sem família',
+    }))
+
+    // Ordenação: decrescente por volume de produtos, desempate por nome alfabético
+    list.sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count
+      return a.name.localeCompare(b.name)
+    })
+
+    return list
+  }, [productsList])
+
+  const handleToggleFamily = (familyName: string) => {
+    setAllowedFamilies((prev) => {
+      const exists = prev.includes(familyName)
+      if (exists) {
+        return prev.filter((f) => f !== familyName)
+      } else {
+        return [...prev, familyName]
+      }
+    })
+  }
+
+  const handleSelectAllFamilies = () => {
+    const allNames = familyStats.map((f) => f.name)
+    setAllowedFamilies(allNames)
+  }
+
+  const handleClearAllFamilies = () => {
+    setAllowedFamilies([])
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -135,6 +192,7 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
         ai_auto_close_minutes: Number(aiAutoCloseMinutes) || 0,
         ai_auto_close_message: aiAutoCloseMessage,
         ai_excluded_skus: aiExcludedSkus,
+        allowed_families: allowedFamilies,
       })
       toast({ title: 'Configurações salvas com sucesso!' })
     } catch (_) {
@@ -806,6 +864,154 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
                 Aviso enviado ao WhatsApp do cliente ao reativar a IA por timeout de inatividade.
               </p>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Seção Nova: Famílias Permitidas para Orçamento e IA (Allowlist) */}
+        <Card className="bg-white border-slate-200 shadow-sm">
+          <CardHeader className="pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="h-10 w-10 rounded-xl bg-amber-500 flex items-center justify-center text-white shadow-sm">
+                  <Layers className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-lg font-bold text-slate-900">
+                      Famílias Disponíveis para Orçamento (Allowlist)
+                    </CardTitle>
+                    <Badge
+                      variant="outline"
+                      className={
+                        allowedFamilies.length > 0
+                          ? 'bg-amber-50 text-amber-800 border-amber-300'
+                          : 'bg-slate-100 text-slate-600 border-slate-200'
+                      }
+                    >
+                      {allowedFamilies.length > 0
+                        ? `${allowedFamilies.length} selecionada(s)`
+                        : 'Lista Vazia (Todas liberadas)'}
+                    </Badge>
+                  </div>
+                  <CardDescription className="text-xs text-slate-500">
+                    Define quais famílias de peças da SOU.IS podem ser ofertadas pela IA no WhatsApp
+                    e selecionadas em propostas comerciais. O módulo de compras permanece livre para
+                    insumos e inativos.
+                  </CardDescription>
+                </div>
+              </div>
+
+              {familyStats.length > 0 && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSelectAllFamilies}
+                    className="text-xs h-8"
+                  >
+                    Marcar todas
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleClearAllFamilies}
+                    className="text-xs h-8"
+                  >
+                    Limpar
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-4 pt-0">
+            {/* Aviso destacado quando a lista de famílias está vazia */}
+            {allowedFamilies.length === 0 && (
+              <div className="p-3.5 rounded-xl border border-amber-300 bg-amber-50/80 text-amber-900 flex items-start gap-3 animate-in fade-in">
+                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="space-y-1 text-xs">
+                  <p className="font-bold text-sm text-amber-950">
+                    Configure as famílias disponíveis para orçamento
+                  </p>
+                  <p className="leading-relaxed text-amber-800">
+                    Nenhuma família está selecionada no momento. Por segurança (guarda da lista
+                    vazia), o sistema mantém o comportamento padrão liberando todos os produtos
+                    ativos (exceto os SKUs bloqueados em ai_excluded_skus). Selecione abaixo as
+                    famílias permitidas para restringir o catálogo de venda e IA.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {loadingProducts ? (
+              <div className="py-8 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+                Carregando famílias do catálogo SOU.IS...
+              </div>
+            ) : familyStats.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-lg border border-slate-200">
+                Nenhum produto cadastrado no catálogo para extrair famílias.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-500 px-1 font-medium">
+                  <span>
+                    Total de famílias encontradas: <strong>{familyStats.length}</strong> (
+                    {productsList.length} produtos no catálogo)
+                  </span>
+                  <span>Ordenadas por volume decrescente</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-80 overflow-y-auto p-1 border rounded-lg bg-slate-50/40">
+                  {familyStats.map((fam) => {
+                    const isSelected = allowedFamilies.includes(fam.name)
+                    return (
+                      <div
+                        key={fam.name}
+                        onClick={() => handleToggleFamily(fam.name)}
+                        className={`flex items-center justify-between p-2.5 rounded-lg border text-xs cursor-pointer transition-colors select-none ${
+                          isSelected
+                            ? 'bg-amber-50 border-amber-300 text-amber-950 shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => handleToggleFamily(fam.name)}
+                            onClick={(e) => e.stopPropagation()}
+                            id={`fam-${fam.name}`}
+                          />
+                          <label
+                            htmlFor={`fam-${fam.name}`}
+                            className="font-medium truncate cursor-pointer"
+                            title={fam.name}
+                          >
+                            {fam.isNoFamily ? (
+                              <span className="italic text-slate-500 font-normal">Sem família</span>
+                            ) : (
+                              fam.name
+                            )}
+                          </label>
+                        </div>
+                        <Badge
+                          variant="secondary"
+                          className={`text-[10px] shrink-0 font-mono ${
+                            isSelected
+                              ? 'bg-amber-200 text-amber-900 border-amber-300'
+                              : 'bg-slate-100 text-slate-600'
+                          }`}
+                        >
+                          {fam.count} {fam.count === 1 ? 'item' : 'itens'}
+                        </Badge>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

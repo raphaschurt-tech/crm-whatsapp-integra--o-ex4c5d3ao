@@ -786,8 +786,11 @@ onRecordAfterCreateSuccess((e) => {
       const rawTerm = String(termo || '').trim()
       if (!rawTerm) return { total: 0, produtos: [] }
 
-      // Leitura dinâmica ao vivo de SKUs excluídos (sem cache) gravados em settings.ai_excluded_skus
+      // Leitura dinâmica ao vivo de configurações (SKUs excluídos e Famílias permitidas)
       let excludedSkusSet = {}
+      let allowedFamiliesList = []
+      let hasAllowedFamiliesFilter = false
+
       try {
         const liveSetting = $app.findFirstRecordByFilter('settings', "id != ''")
         if (liveSetting) {
@@ -801,9 +804,43 @@ onRecordAfterCreateSuccess((e) => {
               }
             }
           }
+
+          // allowed_families pode ser armazenado como JSON string (array) ou string separada por vírgula
+          const rawAllowedFamilies = liveSetting.get('allowed_families')
+          if (rawAllowedFamilies) {
+            if (Array.isArray(rawAllowedFamilies)) {
+              allowedFamiliesList = rawAllowedFamilies.map((f) => String(f).trim()).filter(Boolean)
+            } else if (typeof rawAllowedFamilies === 'string' && rawAllowedFamilies.trim()) {
+              const strTrimmed = rawAllowedFamilies.trim()
+              if (strTrimmed.startsWith('[') && strTrimmed.endsWith(']')) {
+                try {
+                  const parsed = JSON.parse(strTrimmed)
+                  if (Array.isArray(parsed)) {
+                    allowedFamiliesList = parsed.map((f) => String(f).trim()).filter(Boolean)
+                  }
+                } catch (_) {
+                  allowedFamiliesList = strTrimmed
+                    .replace(/^\[|\]$/g, '')
+                    .split(',')
+                    .map((f) => f.trim().replace(/^['"]|['"]$/g, ''))
+                    .filter(Boolean)
+                }
+              } else {
+                allowedFamiliesList = strTrimmed
+                  .split(',')
+                  .map((f) => f.trim())
+                  .filter(Boolean)
+              }
+            }
+          }
+
+          // GUARDA DA LISTA VAZIA:
+          // Se allowed_families estiver vazio -> hasAllowedFamiliesFilter = false (comportamento atual mantido)
+          // Se tiver ao menos uma família -> hasAllowedFamiliesFilter = true
+          hasAllowedFamiliesFilter = allowedFamiliesList.length > 0
         }
       } catch (exErr) {
-        console.log('[AI-EXCLUDED-SKUS-READ-ERR]', String(exErr))
+        console.log('[AI-SETTINGS-READ-ERR]', String(exErr))
       }
 
       // Lista de stopwords estritas em português conforme especificação
@@ -1143,9 +1180,30 @@ onRecordAfterCreateSuccess((e) => {
         const rec = candidates[ci]
         const pSku = String(rec.getString('sku') || '').toLowerCase()
 
-        // Excluir SKUs configurados em ai_excluded_skus (insumos puros)
+        // 1. Filtrar produtos inativos: só produtos is_active !== false (se is_active for undefined/null em legados manuais, aceita, mas se is_active === false descarta)
+        const isActive = rec.get('is_active')
+        if (isActive === false) {
+          continue
+        }
+
+        // 2. Excluir SKUs configurados em ai_excluded_skus (insumos puros — prevalece sobre allowlist)
         if (excludedSkusSet[pSku] || excludedSkusSet[pSku.trim()]) {
           continue
+        }
+
+        // 3. GUARDA DA LISTA VAZIA: se allowed_families preenchida, só produtos cuja sou_family está na lista
+        if (hasAllowedFamiliesFilter) {
+          const pFamily = String(rec.getString('sou_family') || '').trim()
+          let familyAllowed = false
+          for (let afi = 0; afi < allowedFamiliesList.length; afi++) {
+            if (pFamily.toLowerCase() === allowedFamiliesList[afi].toLowerCase()) {
+              familyAllowed = true
+              break
+            }
+          }
+          if (!familyAllowed) {
+            continue
+          }
         }
 
         const pName = String(rec.getString('name') || '').toLowerCase()

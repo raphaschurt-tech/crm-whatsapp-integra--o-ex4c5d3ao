@@ -67,6 +67,8 @@ export interface Product extends RecordModel {
   brand?: string
   barcode?: string
   reduced_code?: string
+  sou_family?: string
+  is_active?: boolean
 }
 
 export interface ItemFamily extends RecordModel {
@@ -181,6 +183,8 @@ export interface Settings extends RecordModel {
   ai_auto_close_minutes?: number
   ai_auto_close_message?: string
   ai_excluded_skus?: string
+  allowed_families?: string[]
+  sync_integrity_floor?: number
 }
 
 export type MessageProcessingStatus = 'received' | 'processing' | 'completed' | 'failed'

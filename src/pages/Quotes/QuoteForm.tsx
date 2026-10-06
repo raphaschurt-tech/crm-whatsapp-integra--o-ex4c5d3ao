@@ -4,6 +4,7 @@ import { useTabState } from '@/hooks/use-tab-state'
 import { Plus, Trash2, AlertCircle, Save, MessageCircle, RefreshCw, Send } from 'lucide-react'
 import { getCustomers, createCustomer, updateCustomer } from '@/services/customers'
 import { getProducts } from '@/services/products'
+import { getSettings } from '@/services/settings'
 import {
   getQuote,
   getQuoteItems,
@@ -46,6 +47,7 @@ export default function QuoteForm() {
 
   const [customers, setCustomers] = useState<Customer[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [allowedFamilies, setAllowedFamilies] = useState<string[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState(searchParams.get('customerId') || '')
   const [items, setItems] = useState<ItemRow[]>([])
   const [discount, setDiscount] = useState<number>(0)
@@ -78,7 +80,11 @@ export default function QuoteForm() {
     setLoading(true)
     setLoadError(null)
     try {
-      const [allCusts, pList] = await Promise.all([getCustomers(), getProducts()])
+      const [allCusts, pList, appSettings] = await Promise.all([
+        getCustomers(),
+        getProducts(),
+        getSettings(),
+      ])
       // Seleção de cliente deve listar APENAS contatos com customer_type = Cliente ou Ambos
       const cList = allCusts.filter((c) => {
         const t = (c.customer_type || '').toLowerCase()
@@ -86,6 +92,9 @@ export default function QuoteForm() {
       })
       setCustomers(cList)
       setProducts(pList)
+      if (appSettings?.allowed_families) {
+        setAllowedFamilies(appSettings.allowed_families)
+      }
 
       if (id) {
         const q = await getQuote(id)
@@ -403,6 +412,8 @@ export default function QuoteForm() {
                           value={item.product}
                           onChange={(val) => handleProductChange(index, val)}
                           placeholder="Buscar por nome, descrição ou código/SKU..."
+                          mode="venda"
+                          allowedFamilies={allowedFamilies}
                           className="static"
                         />
                       </div>

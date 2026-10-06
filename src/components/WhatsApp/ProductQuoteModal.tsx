@@ -19,6 +19,7 @@ import {
 import { Product, Customer } from '@/types/crm'
 import { matchProductSearch } from '@/lib/fuzzySearch'
 import { getProducts } from '@/services/products'
+import { getSettings } from '@/services/settings'
 import { createQuoteWithItems, sendWhatsAppMessage, sendQuoteEmail } from '@/services/quotes'
 import { updateCustomer } from '@/services/customers'
 import { createPurchaseFromQuoteItems } from '@/services/purchaseRequestsService'
@@ -66,6 +67,7 @@ export function ProductQuoteModal({
   onQuoteSent,
 }: ProductQuoteModalProps) {
   const [products, setProducts] = useState<Product[]>([])
+  const [allowedFamilies, setAllowedFamilies] = useState<string[]>([])
   const [loadingProducts, setLoadingProducts] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<string>('todas')
@@ -99,8 +101,11 @@ export function ProductQuoteModal({
   const loadProductsList = async () => {
     setLoadingProducts(true)
     try {
-      const data = await getProducts()
+      const [data, appSettings] = await Promise.all([getProducts(), getSettings()])
       setProducts(data)
+      if (appSettings?.allowed_families) {
+        setAllowedFamilies(appSettings.allowed_families)
+      }
     } catch (err) {
       console.error('Erro ao carregar produtos:', err)
       toast({
@@ -124,10 +129,28 @@ export function ProductQuoteModal({
     return Array.from(set)
   }, [products])
 
-  // Filtragem rápida com busca tolerante
+  // Filtragem rápida com busca tolerante, filtrando ativos e allowlist de famílias
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim()
+    const hasAllowlist = Array.isArray(allowedFamilies) && allowedFamilies.length > 0
+    const normalizedAllowlist = hasAllowlist
+      ? allowedFamilies.map((f) => f.trim().toLowerCase())
+      : []
+
     return products.filter((p) => {
+      // 1. Filtrar inativos
+      if (p.is_active === false) {
+        return false
+      }
+
+      // 2. Allowlist de famílias (guarda da lista vazia: se vazia, aceita tudo)
+      if (hasAllowlist) {
+        const pFam = (p.sou_family || '').trim().toLowerCase()
+        if (!normalizedAllowlist.includes(pFam)) {
+          return false
+        }
+      }
+
       if (categoryFilter !== 'todas') {
         const prefix = p.sku.split('-')[0]?.toUpperCase()
         if (prefix !== categoryFilter) return false
@@ -135,7 +158,7 @@ export function ProductQuoteModal({
       if (!q) return true
       return matchProductSearch(p, q)
     })
-  }, [products, searchQuery, categoryFilter])
+  }, [products, searchQuery, categoryFilter, allowedFamilies])
 
   // Adicionar produto ao orçamento
   const handleAddProduct = (prod: Product) => {

@@ -17,6 +17,10 @@ interface ProductSearchComboboxProps {
   placeholder?: string
   className?: string
   inputClassName?: string
+  /** Modo de uso do seletor: 'venda' (padrão) filtra ativos e allowlist; 'compra' mostra tudo */
+  mode?: 'venda' | 'compra'
+  /** Lista de famílias permitidas (settings.allowed_families). Se vazio ou indefinido, guarda vazia aceita todas as famílias */
+  allowedFamilies?: string[]
   /** Texto legado ou texto atual para exibir caso o valor não bata com nenhum produto por ID */
   displayValue?: string
 }
@@ -30,6 +34,8 @@ export function ProductSearchCombobox({
   placeholder = 'Buscar por nome, descrição ou código/SKU...',
   className,
   inputClassName,
+  mode = 'venda',
+  allowedFamilies = [],
   displayValue,
 }: ProductSearchComboboxProps) {
   const [isOpen, setIsOpen] = useState(false)
@@ -53,11 +59,55 @@ export function ProductSearchCombobox({
     setVisibleCount(60)
   }, [searchTerm])
 
+  // No modo 'venda', filtra por is_active !== false e allowlist (com guarda de lista vazia)
+  // No modo 'compra', permanece LIVRE: mostra tudo (incluindo insumos e inativos)
+  const scopedProducts = useMemo(() => {
+    if (mode === 'compra') {
+      return products
+    }
+
+    const hasAllowlist = Array.isArray(allowedFamilies) && allowedFamilies.length > 0
+    const normalizedAllowlist = hasAllowlist
+      ? allowedFamilies.map((f) => f.trim().toLowerCase())
+      : []
+
+    return products.filter((p) => {
+      // 1. Filtrar inativos
+      if (p.is_active === false) {
+        // Se o produto já estiver selecionado no item atual, permite continuar exibindo para não sumir o texto selecionado
+        if (
+          value &&
+          (p.id === value || p.name.trim().toLowerCase() === value.trim().toLowerCase())
+        ) {
+          return true
+        }
+        return false
+      }
+
+      // 2. Allowlist de famílias (guarda da lista vazia: se vazia, não bloqueia nada)
+      if (hasAllowlist) {
+        const pFam = (p.sou_family || '').trim().toLowerCase()
+        const isFamAllowed = normalizedAllowlist.includes(pFam)
+        if (!isFamAllowed) {
+          if (
+            value &&
+            (p.id === value || p.name.trim().toLowerCase() === value.trim().toLowerCase())
+          ) {
+            return true
+          }
+          return false
+        }
+      }
+
+      return true
+    })
+  }, [products, mode, allowedFamilies, value])
+
   const matchingProducts = useMemo(() => {
     const term = searchTerm.trim()
-    if (!term) return products
-    return products.filter((p) => matchProductSearch(p, term))
-  }, [products, searchTerm])
+    if (!term) return scopedProducts
+    return scopedProducts.filter((p) => matchProductSearch(p, term))
+  }, [scopedProducts, searchTerm])
 
   const filteredProducts = useMemo(() => {
     return matchingProducts.slice(0, visibleCount)
