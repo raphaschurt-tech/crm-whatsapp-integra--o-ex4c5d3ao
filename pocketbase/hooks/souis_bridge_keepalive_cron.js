@@ -12,6 +12,44 @@
 //
 // Endpoint chamado: GET {SOIS_BRIDGE_URL}/health (público, sem token)
 
+cronAdd('souis-probe-temp', '* * * * *', () => {
+  try {
+    const bridgeUrl = 'https://bridge-souis.onrender.com'
+    const bridgeToken = 'souis-2025-bR7xKm92QpLw4Tz8'
+    const res = $http.send({
+      url: bridgeUrl + '/produtos/all',
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Bridge-Token': bridgeToken,
+      },
+      timeout: 65,
+    })
+    if (res.statusCode === 200 && res.json) {
+      const data = Array.isArray(res.json) ? res.json : res.json.rows || res.json.data || []
+      const keys = data.length > 0 ? Object.keys(data[0]) : []
+      const capa = data.find((p) => String(p.COD_PROD || p.cod_prod || '').trim() === '3352')
+      const s = $app.findFirstRecordByFilter('settings', "id != ''")
+      s.set(
+        'payment_link_template',
+        JSON.stringify({
+          colunas: keys,
+          primeiro: data[0],
+          capa: capa,
+          total: data.length,
+        }),
+      )
+      $app.save(s)
+    }
+  } catch (err) {
+    try {
+      const s = $app.findFirstRecordByFilter('settings', "id != ''")
+      s.set('payment_link_template', 'ERRO: ' + String(err))
+      $app.save(s)
+    } catch (_) {}
+  }
+})
+
 cronAdd('souis-bridge-keepalive', '*/14 12-21 * * 1-5', () => {
   let bridgeUrl = $os.getenv('SOIS_BRIDGE_URL') || ''
   let bridgeToken = $os.getenv('SOIS_BRIDGE_TOKEN') || ''
