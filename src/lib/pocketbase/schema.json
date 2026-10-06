@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-06T13:37:39.806Z",
+  "generatedAt": "2026-10-06T13:43:18.407Z",
   "collections": [
     {
       "name": "users",
@@ -375,6 +375,18 @@
           "type": "text",
           "required": false,
           "system": false
+        },
+        {
+          "name": "sou_family",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_active",
+          "type": "bool",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -731,6 +743,18 @@
         {
           "name": "ai_excluded_skus",
           "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "allowed_families",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "sync_integrity_floor",
+          "type": "number",
           "required": false,
           "system": false
         }
