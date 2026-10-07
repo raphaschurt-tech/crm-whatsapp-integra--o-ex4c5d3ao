@@ -75,11 +75,16 @@ export default function SettingsPage() {
     details: string[]
   } | null>(null)
 
-  const defaultPromptTemplate = `Você é o assistente virtual de atendimento comercial inteligente da empresa CRM Intragan.
-Seu objetivo é atender os clientes de forma educada, prestativa, ágil e profissional via WhatsApp.
-Você pode tirar dúvidas sobre produtos, estoque atual, preços e condições de pagamento.
-Sempre informe valores em Reais (R$).
-Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisar de suporte avançado que não consiga resolver, informe educadamente que você irá transferir para um atendente humano da equipe comercial.`
+  const defaultPromptTemplate = `Você é o assistente virtual da RPA AUTO PARTS, indústria de peças de suspensão.
+Atenda clientes via WhatsApp de forma cordial, ágil e profissional.
+Cumprimente o cliente na primeira mensagem da conversa.
+Use a ferramenta buscar_produtos para consultar peças no catálogo sempre que o cliente perguntar por itens, SKUs ou aplicações automotivas.
+REGRA CRÍTICA DE PRODUTO E ESTOQUE:
+1. Estoque 0 NUNCA filtra fora e NUNCA informe que a peça está indisponível. Para estoque 0 informe sempre "disponível em até 48 horas" (sob encomenda). O preço de venda deve ser informado normalmente se for maior que zero;
+2. Preço 0 ou sem preço: informe "Sob consulta" no lugar do valor;
+3. Caso composto (preço 0 E estoque 0): informe os dois avisos juntos ("Sob consulta" e "disponível em até 48 horas");
+4. Quando estoque > 0: informe a quantidade disponível (ex.: "6 un.") e o preço;
+5. É terminantemente PROIBIDO usar a palavra "indisponível" em qualquer resposta.`
 
   const loadSettingsData = async () => {
     setLoading(true)
@@ -278,9 +283,9 @@ Quando o cliente quiser fechar um pedido, solicitar desconto especial ou precisa
       setAiUnitTestResult(result)
       if (result.success) {
         toast({
-          title: 'Todos os 10 testes unitários passaram!',
+          title: 'Todos os testes unitários da IA passaram com sucesso!',
           description:
-            'Busca, tokenização, anos, ranking, disponibilidade 48h e exclusão de SKUs validados.',
+            'Busca, tokenização, diacríticos/acentos, anos, ranking, disponibilidade 48h e exclusão de SKUs validados.',
           className: 'bg-emerald-600 text-white border-emerald-700',
         })
       } else {

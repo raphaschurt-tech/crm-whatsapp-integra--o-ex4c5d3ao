@@ -48,8 +48,15 @@ const STOP_WORDS_SET: Record<string, boolean> = {
   pro: true,
 }
 
+export function removeAccents(str: string | null | undefined): string {
+  if (!str) return ''
+  return String(str)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
 export function extractAiTokensAndYears(rawTerm: string) {
-  const rawWords = String(rawTerm || '')
+  const rawWords = removeAccents(rawTerm)
     .toLowerCase()
     .replace(/[?!,;:()[\]{}"'\\/]/g, ' ')
     .split(/\s+/)
@@ -153,26 +160,22 @@ export const TOKEN_ALIASES_MAP: Record<string, string[]> = {
   inferior: ['inf'],
   inferiores: ['inf'],
   inf: ['inferior'],
+  facao: ['facao'],
   direcao: ['dir'],
-  direção: ['dir'],
-  dir: ['direcao', 'direção'],
+  dir: ['direcao'],
   articulacao: ['artic'],
-  articulação: ['artic'],
   articulador: ['artic'],
-  artic: ['articulacao', 'articulação', 'articulador'],
+  artic: ['articulacao', 'articulador'],
   hidraulica: ['hidr'],
-  hidráulica: ['hidr'],
   hidraulico: ['hidr'],
-  hidráulico: ['hidr'],
-  hidr: ['hidraulica', 'hidráulica', 'hidraulico', 'hidráulico'],
+  hidr: ['hidraulica', 'hidraulico'],
   esquerda: ['esq'],
   esquerdo: ['esq'],
   esq: ['esquerda', 'esquerdo'],
   direita: ['dir'],
   direito: ['dir'],
   homocinetica: ['homoc'],
-  homocinética: ['homoc'],
-  homoc: ['homocinetica', 'homocinética'],
+  homoc: ['homocinetica'],
   travessa: ['trav'],
   trav: ['travessa'],
   tensor: ['tens'],
@@ -216,9 +219,10 @@ export function twoPhaseProductSearch(
   const tokenGroups = searchTokens.slice(0, 8).map(getEquivalentsForToken)
 
   const matchesGroup = (prod: MockProduct, variants: string[]) => {
-    const full =
-      `${prod.name} ${prod.sku} ${prod.brand} ${prod.barcode} ${prod.description}`.toLowerCase()
-    return variants.some((v) => full.includes(v.toLowerCase()))
+    const full = removeAccents(
+      `${prod.name} ${prod.sku} ${prod.brand} ${prod.barcode} ${prod.description}`,
+    ).toLowerCase()
+    return variants.some((v) => full.includes(removeAccents(v).toLowerCase()))
   }
 
   // Fase 1: AND estrito entre conceitos
@@ -242,9 +246,9 @@ export function twoPhaseProductSearch(
 
   // Fallback se nada foi encontrado
   if (results.length === 0 && rawTerm.length >= 2) {
-    const rt = rawTerm.toLowerCase()
+    const rt = removeAccents(rawTerm).toLowerCase()
     const fallback = products.filter((p) =>
-      `${p.name} ${p.sku} ${p.brand} ${p.barcode}`.toLowerCase().includes(rt),
+      removeAccents(`${p.name} ${p.sku} ${p.brand} ${p.barcode}`).toLowerCase().includes(rt),
     )
     results.push(...fallback.slice(0, 20))
   }
@@ -279,10 +283,10 @@ export function scoreAndRankProducts(
   for (let ci = 0; ci < products.length; ci++) {
     const rec = products[ci]
     const pSku = String(rec.sku || '').toLowerCase()
-    const pName = String(rec.name || '').toLowerCase()
-    const pBrand = String(rec.brand || '').toLowerCase()
-    const pBarcode = String(rec.barcode || '').toLowerCase()
-    const pDesc = String(rec.description || '').toLowerCase()
+    const pName = removeAccents(rec.name || '').toLowerCase()
+    const pBrand = removeAccents(rec.brand || '').toLowerCase()
+    const pBarcode = removeAccents(rec.barcode || '').toLowerCase()
+    const pDesc = removeAccents(rec.description || '').toLowerCase()
     const fullSearchable = pName + ' ' + pSku + ' ' + pBrand + ' ' + pBarcode + ' ' + pDesc
     const nameSkuSearchable = pName + ' ' + pSku
 
@@ -314,24 +318,18 @@ export function scoreAndRankProducts(
       }
     }
 
-    // Filtro de relevância mínima: quando o termo tiver 2 ou mais tokens,
-    // descarta produtos com menos de 2 tokens casados no nome/SKU
-    if (tokenGroups.length >= 2 && matchedNameSkuCount < 2) {
-      continue
-    }
-
     if (matchedTokenCount === 0 && tokenGroups.length > 0) continue
 
     // Ordem do score:
     // 1º Número de tokens casados (peso dominante 1000)
-    // 2º Bônus stock_quantity > 0 (+20)
+    // 2º Bônus stock_quantity > 0 (+20 para desempate)
     // 3º Bônus faixa de anos (+10)
     let score = matchedTokenCount * 1000
 
     if (matchedTokenCount === tokenGroups.length && tokenGroups.length > 1) {
       score += 100
     }
-    if (pSku === rawTerm.toLowerCase()) {
+    if (pSku === removeAccents(rawTerm).toLowerCase()) {
       score += 5000
     }
 
@@ -364,10 +362,26 @@ export function scoreAndRankProducts(
     if (b.score !== a.score) return b.score - a.score
     if (b.matchedTokenCount !== a.matchedTokenCount)
       return b.matchedTokenCount - a.matchedTokenCount
-    if (b.rec.stock_quantity !== a.rec.stock_quantity)
-      return b.rec.stock_quantity - a.rec.stock_quantity
+    const stockA = Number(a.rec.stock_quantity) || 0
+    const stockB = Number(b.rec.stock_quantity) || 0
+    if (stockB !== stockA) return stockB - stockA
     return a.rec.name.localeCompare(b.rec.name)
   })
 
-  return scoredCandidates.slice(0, 5)
+  // GUARDA DO DESCARTE E FALLBACK:
+  // A regra de descarte (menos de 2 termos) só se aplica se houver 2+ termos significativos.
+  // Se gerar menos de 3 resultados, inclui fallback com 1 termo ao final.
+  const tokenGroupsCount = searchTokens.length
+  let filteredRanked = scoredCandidates
+  if (tokenGroupsCount >= 2) {
+    const strictMatch = scoredCandidates.filter((item) => item.matchedNameSkuCount >= 2)
+    if (strictMatch.length >= 3) {
+      filteredRanked = strictMatch
+    } else {
+      const partialMatch = scoredCandidates.filter((item) => item.matchedNameSkuCount < 2)
+      filteredRanked = strictMatch.concat(partialMatch)
+    }
+  }
+
+  return filteredRanked.slice(0, 5)
 }

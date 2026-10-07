@@ -459,18 +459,18 @@ onRecordAfterCreateSuccess((e) => {
     '\n\n[FERRAMENTAS DE CONSULTA E REGRAS DE PREÇO/ESTOQUE/DISPONIBILIDADE]\n' +
     'Você possui ferramentas (function calling) para buscar produtos no catálogo e consultar estoque em tempo real:\n' +
     '1. buscar_produtos: use sempre que o cliente perguntar sobre qualquer peça, modelo, bucha, amortecedor, aplicação automotiva ou SKU. ' +
-    'Pesquise por termos-chave relevantes (ex: "bucha d21", "amortecedor d21", SKU ou código de barras).\n' +
+    'Pesquise por termos-chave relevantes (ex: "bucha d21", "amortecedor d21", "bucha facão ix35", SKU ou código de barras).\n' +
     '2. consultar_estoque_ao_vivo: use para obter o estoque atualizado em tempo real caso tenha o SKU do produto.\n' +
-    "3. REGRA CRÍTICA DE APRESENTAÇÃO: Quando a busca encontrar produtos, SEMPRE cite as opções encontradas na resposta, com o nome completo (incluindo a faixa de anos, ex.: '88/97') e a descrição/aplicação de cada uma — mesmo quando estiverem com estoque 0 ou sem preço. Se faltar informação essencial (ano/modelo do veículo, qual peça ou posição), pergunte ao cliente antes de buscar — nunca chute. Cumprimente o cliente na primeira mensagem da conversa.\n" +
+    "3. REGRA CRÍTICA DE APRESENTAÇÃO: Quando a busca encontrar produtos, SEMPRE cite as opções encontradas na resposta, com o nome completo (incluindo a faixa de anos, ex.: '88/97') e a descrição/aplicação de cada uma — mesmo quando estiverem com estoque 0 ou com preço 0. Produtos com estoque 0 NÃO devem ser omitidos nem marcados como indisponíveis. Se faltar informação essencial (ano/modelo do veículo, qual peça ou posição), pergunte ao cliente antes de buscar — nunca chute. Cumprimente o cliente na primeira mensagem da conversa.\n" +
     'FORMATO OBRIGATÓRIO para apresentar produtos: apresente CADA produto em bloco separado, com linha em branco entre eles, usando este modelo —\n' +
     "'1. *Nome completo do produto (com a faixa de anos)*\n" +
-    "Marca: X | Valor: Sob consulta | Disponibilidade: disponível em até 48 horas'.\n" +
+    "Marca: X | Valor: R$ 160,00 (ou 'Sob consulta') | Disponibilidade: disponível em até 48 horas (ou '6 un.')'.\n" +
     'Máximo de 3 produtos por mensagem; se houver mais, apresente os 3 mais relevantes e diga que há outras opções. Nunca escreva dois produtos na mesma linha. Separe a resposta em: lista de produtos, e depois UMA frase de fechamento ou pergunta.\n' +
     '4. TABELA DE DISPONIBILIDADE E PREÇOS (OBRIGATÓRIO):\n' +
-    '- Estoque 0: NUNCA use a palavra "indisponível" ou "sem estoque". Responda sempre: "disponível em até 48 horas" (pedido sob encomenda);\n' +
-    '- Preço 0 ou sem preço: informe "Sob consulta";\n' +
-    '- Estoque 0 E Preço 0: informe "Sob consulta" e "disponível em até 48 horas";\n' +
-    '- Estoque > 0 e Preço > 0: informe o preço em R$ e a quantidade ("X un.");\n' +
+    '- Estoque 0 (ou sem estoque): NUNCA use a palavra "indisponível" ou "sem estoque". Responda sempre: "disponível em até 48 horas" (pedido sob encomenda). O preço de venda deve ser informado normalmente se price > 0;\n' +
+    '- Preço 0 ou sem preço: informe "Sob consulta" no lugar do valor;\n' +
+    '- Caso composto (Preço 0 E Estoque 0): os dois avisos saem juntos: "Sob consulta" e "disponível em até 48 horas";\n' +
+    '- Estoque > 0 e Preço > 0: informe o preço em R$ e a quantidade (ex.: "6 un.");\n' +
     '- REGRA PERMANENTE: É PROIBIDO USAR A PALAVRA "indisponível" EM QUALQUER RESPOSTA.\n' +
     '5. FLUXO DE INTERESSE DE COMPRA (Gatilho -> Coleta -> Confirmação -> Handoff):\n' +
     '- GATILHO: Dispare APENAS quando o cliente declarar expressamente a intenção de comprar/fechar (ex.: "quero o item 1 e 2", "vou ficar com o 1", "fechar", "me manda", "quero levar"). Perguntas de curiosidade ou mera cotação de preço ("quanto custa?", "tem?") NÃO disparam este fluxo.\n' +
@@ -876,9 +876,17 @@ onRecordAfterCreateSuccess((e) => {
         pro: true,
       }
 
-      // Normalização e extração de tokens
+      // Normalização de diacríticos/acentos e extração de tokens
+      // Remove acentos (facão -> facao, tração -> tracao, elétrico -> eletrico)
       // Mantém letras, números e remove pontuação como ?, !, ,, ;, :, etc.
-      const rawWords = rawTerm
+      const removeAccents = (str) => {
+        if (!str) return ''
+        return String(str)
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+      }
+
+      const rawWords = removeAccents(rawTerm)
         .toLowerCase()
         .replace(/[?!,;:()[\]{}"'\\/]/g, ' ')
         .split(/\s+/)
@@ -974,26 +982,23 @@ onRecordAfterCreateSuccess((e) => {
         inferior: ['inf'],
         inferiores: ['inf'],
         inf: ['inferior'],
+        facao: ['facao'],
+        facao: ['facao'],
         direcao: ['dir'],
-        direção: ['dir'],
-        dir: ['direcao', 'direção'],
+        dir: ['direcao'],
         articulacao: ['artic'],
-        articulação: ['artic'],
         articulador: ['artic'],
-        artic: ['articulacao', 'articulação', 'articulador'],
+        artic: ['articulacao', 'articulador'],
         hidraulica: ['hidr'],
-        hidráulica: ['hidr'],
         hidraulico: ['hidr'],
-        hidráulico: ['hidr'],
-        hidr: ['hidraulica', 'hidráulica', 'hidraulico', 'hidráulico'],
+        hidr: ['hidraulica', 'hidraulico'],
         esquerda: ['esq'],
         esquerdo: ['esq'],
         esq: ['esquerda', 'esquerdo'],
         direita: ['dir'],
         direito: ['dir'],
         homocinetica: ['homoc'],
-        homocinética: ['homoc'],
-        homoc: ['homocinetica', 'homocinética'],
+        homoc: ['homocinetica'],
         travessa: ['trav'],
         trav: ['travessa'],
         tensor: ['tens'],
@@ -1072,7 +1077,7 @@ onRecordAfterCreateSuccess((e) => {
           const phase1Candidates = $app.findRecordsByFilter(
             'products',
             andFilterExpr,
-            '-stock_quantity,name',
+            'name',
             50,
             0,
             bindParams,
@@ -1096,7 +1101,7 @@ onRecordAfterCreateSuccess((e) => {
           const phase2Candidates = $app.findRecordsByFilter(
             'products',
             orFilterExpr,
-            '-stock_quantity,name',
+            'name',
             200,
             0,
             bindParams,
@@ -1206,10 +1211,10 @@ onRecordAfterCreateSuccess((e) => {
           }
         }
 
-        const pName = String(rec.getString('name') || '').toLowerCase()
-        const pBrand = String(rec.getString('brand') || '').toLowerCase()
-        const pBarcode = String(rec.getString('barcode') || '').toLowerCase()
-        const pDesc = String(rec.getString('description') || '').toLowerCase()
+        const pName = removeAccents(rec.getString('name') || '').toLowerCase()
+        const pBrand = removeAccents(rec.getString('brand') || '').toLowerCase()
+        const pBarcode = removeAccents(rec.getString('barcode') || '').toLowerCase()
+        const pDesc = removeAccents(rec.getString('description') || '').toLowerCase()
         const fullSearchable = pName + ' ' + pSku + ' ' + pBrand + ' ' + pBarcode + ' ' + pDesc
         const nameSkuSearchable = pName + ' ' + pSku
 
@@ -1240,13 +1245,6 @@ onRecordAfterCreateSuccess((e) => {
           }
         }
 
-        // Filtro de relevância mínima: quando o termo de busca tiver 2 ou mais tokens,
-        // descartar candidatos com menos de 2 tokens casados no nome/SKU (elimina falsos positivos
-        // como "Bucha Braco Tensor Uno..." numa busca de 3 tokens)
-        if (tokenGroups.length >= 2 && matchedNameSkuCount < 2) {
-          continue
-        }
-
         // Se o produto não casou com nenhum conceito, desconsidera
         if (matchedTokenCount === 0 && tokenGroups.length > 0) continue
 
@@ -1259,11 +1257,11 @@ onRecordAfterCreateSuccess((e) => {
         }
 
         // Bônus de SKU exato
-        if (pSku === rawTerm.toLowerCase()) {
+        if (pSku === removeAccents(rawTerm).toLowerCase()) {
           score += 5000
         }
 
-        // Bônus se o estoque é positivo (critério secundário: vem após número de tokens)
+        // Bônus se o estoque é positivo (critério secundário de desempate: vem após número de tokens)
         const stockQty = Number(rec.get('stock_quantity')) || 0
         if (stockQty > 0) {
           score += 20
@@ -1287,6 +1285,7 @@ onRecordAfterCreateSuccess((e) => {
           rec: rec,
           score: score,
           matchedTokenCount: matchedTokenCount,
+          matchedNameSkuCount: matchedNameSkuCount,
           yearMatched: yearMatched,
         })
       }
@@ -1294,7 +1293,7 @@ onRecordAfterCreateSuccess((e) => {
       // Ordenar decrescente:
       // 1. score total (onde matchedTokenCount domina por ter peso 1000, depois stockQty bônus 20, depois yearMatched 10)
       // 2. desempate: matchedTokenCount
-      // 3. desempate: stock_quantity
+      // 3. desempate: stock_quantity (>0 antes de <=0)
       // 4. desempate: nome alfabético
       scoredCandidates.sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score
@@ -1306,8 +1305,26 @@ onRecordAfterCreateSuccess((e) => {
         return a.rec.getString('name').localeCompare(b.rec.getString('name'))
       })
 
+      // GUARDA DO DESCARTE E FALLBACK:
+      // A regra "descartar quem casa com menos de 2 termos significativos" só vale
+      // quando a busca TEM 2+ termos significativos (tokenGroups.length >= 2).
+      // Se a busca tem apenas 1 termo significativo, mantém todos os casamentos ordenados por relevância.
+      // Além disso, se o filtro de 2+ termos resultar em MENOS de 3 produtos, usar fallback:
+      // incluir também os candidatos que casaram com 1 termo (ao final da lista), em vez de devolver resposta vazia.
+      let filteredRanked = scoredCandidates
+      if (tokenGroups.length >= 2) {
+        const strictMatch = scoredCandidates.filter((item) => item.matchedNameSkuCount >= 2)
+        if (strictMatch.length >= 3) {
+          filteredRanked = strictMatch
+        } else {
+          // Fallback: produtos com 2+ termos primeiro, complementados pelos com 1 termo ao final
+          const partialMatch = scoredCandidates.filter((item) => item.matchedNameSkuCount < 2)
+          filteredRanked = strictMatch.concat(partialMatch)
+        }
+      }
+
       // Limitar aos top 5
-      const topSelected = scoredCandidates.slice(0, 5)
+      const topSelected = filteredRanked.slice(0, 5)
 
       // Montar contrato atual de retorno com description e years enriquecidos
       const results = topSelected.map((item) => {

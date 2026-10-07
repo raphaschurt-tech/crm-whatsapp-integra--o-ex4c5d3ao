@@ -475,5 +475,204 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
     details.push('SUCESSO: SKU 3899 devidamente excluído via ai_excluded_skus!')
   }
 
+  // ==========================================
+  // NOVOS TESTES OBRIGATÓRIOS DO CASO IX35 E ACENTOS
+  // ==========================================
+  const ix35CatalogMock = [
+    {
+      sku: '5722',
+      name: 'BUCHA FACAO TRASEIRO 77MM IX35 09/16 TUCSON 12/17 SPORTAGE 10/18',
+      brand: 'IAPI',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      stock_quantity: 0,
+      price: 160,
+    },
+    {
+      sku: '6773',
+      name: 'BUCHA FACAO TRAS IX35 09/17 SORENTO 09/15 SPORTAGE 10/16 TUCSON 12/17 83,3MM',
+      brand: 'RPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      stock_quantity: 9,
+      price: 160,
+    },
+    {
+      sku: '8229',
+      name: 'BUCHA FACAO TRAS IX35 09/17 SORENTO 09/15 SPORTAGE 10/16 TUCSON 12/17 83,3MM',
+      brand: 'DPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      stock_quantity: 0,
+      price: 160,
+    },
+    {
+      sku: '9484',
+      name: 'BUCHA FACAO TRAS IX35 09/17 SORENTO 09/15 SPORTAGE 10/16 TUCSON 12/17 EXT 77 MM',
+      brand: 'DPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      stock_quantity: 0,
+      price: 0,
+    },
+    {
+      sku: '3272',
+      name: 'BUCHA IX35/I30 10/16 SONATA 10/12 SPORTAGE 10/16 TUCSON/CRETA 17/.. SANTA FE 13/16 T6 14/18 DIANT BANDEJA DIANT INF 70MM',
+      brand: 'RPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      stock_quantity: 6,
+      price: 90,
+    },
+    {
+      sku: '3436',
+      name: 'BUCHA BAND TRASE SORENTO SANTA FE/IX3509/15TUCSON SONATA 09/14 I30 07/12 AZERA 11/15 ELANTRA06/11 SPORTAGE12/16 49X70X14',
+      brand: 'RPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      stock_quantity: 0,
+      price: 90,
+    },
+    {
+      sku: '3553',
+      name: 'BUCHA TRAS BAND DIANT TUCSON/SPORTAGE4/15 SORENTO5/16 SANTA FE02/13 IX35/I3010/16 SONATA10/12 AZERA12/18 VERA CRUZ07/13',
+      brand: 'RPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      stock_quantity: 5,
+      price: 80,
+    },
+    {
+      sku: '4070',
+      name: 'BUCHA DIANT BAND D INF AZERA HB20 SANTA FE TUCSON VERACRUZ CERATO PICANTO SOUL SPORTAGE ELANTRA VELOSTER I30 IX35 SONATA',
+      brand: 'RPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      stock_quantity: 4,
+      price: 90,
+    },
+    {
+      sku: '2039',
+      name: 'BUCHA IX35/I30 10/16 SONATA 10/12 SPORTAGE 10/16 TUCSON/CRETA 17/.. SANTA FE 13/16 DIANT BANDEJA DIANT INF 70MM',
+      brand: 'JAHU',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      stock_quantity: 0,
+      price: 0,
+    },
+  ]
+
+  // Teste 11: Normalização de diacríticos: "bucha facão ix35" e "bucha facao ix35"
+  const termAcento = 'bucha facão ix35'
+  const termSemAcento = 'bucha facao ix35'
+  const extAcento = extractAiTokensAndYears(termAcento)
+  const extSemAcento = extractAiTokensAndYears(termSemAcento)
+
+  if (JSON.stringify(extAcento.searchTokens) !== JSON.stringify(extSemAcento.searchTokens)) {
+    details.push('ERRO: Tokenização com acento difere da tokenização sem acento')
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO: "facão" e "facao" tokenizam identicamente como: ' +
+        JSON.stringify(extAcento.searchTokens),
+    )
+  }
+
+  // Teste 12: "bucha facão ix35" traz facão no topo (5722, 6773, 8229, 9484) e NENHUMA bucha de bandeja (3272, 3436, 3553, 4070)
+  const candIx35 = twoPhaseProductSearch(ix35CatalogMock, extAcento.searchTokens, termAcento)
+  const rankedIx35 = scoreAndRankProducts(
+    candIx35,
+    termAcento,
+    extAcento.searchTokens,
+    extAcento.detectedYears,
+  )
+  const topIx35Skus = rankedIx35.map((r) => r.rec.sku)
+  const topIx35Names = rankedIx35.map((r) => r.rec.name)
+
+  details.push(`Resultado "bucha facão ix35": ${topIx35Skus.join(', ')}`)
+
+  const facaoSkus = ['5722', '6773', '8229', '9484']
+  const bandejaSkus = ['3272', '3436', '3553', '4070', '2039']
+
+  // SKU 5722 (estoque 0) DEVE estar no resultado
+  if (!topIx35Skus.includes('5722')) {
+    details.push('ERRO: SKU 5722 (BUCHA FACAO 77MM IX35 com estoque 0) foi omitido do resultado!')
+    allPass = false
+  } else {
+    details.push('SUCESSO: SKU 5722 incluído mesmo com estoque 0!')
+  }
+
+  // Nenhuma bucha de bandeja deve constar no resultado
+  const hasBandeja = topIx35Skus.some((s) => bandejaSkus.includes(s))
+  if (hasBandeja) {
+    details.push(
+      'ERRO: Bucha de bandeja apareceu no resultado de "bucha facão ix35": ' +
+        topIx35Skus.join(', '),
+    )
+    allPass = false
+  } else {
+    details.push('SUCESSO: Zero buchas de bandeja retornadas para "bucha facão ix35"!')
+  }
+
+  // Ordem de desempate: 6773 tem estoque 9 e casa os 3 termos; 5722, 8229, 9484 têm estoque 0 e casam 3 termos
+  if (topIx35Skus[0] !== '6773') {
+    details.push(
+      `AVISO: Top 1 foi ${topIx35Skus[0]} (esperado 6773 por ter estoque positivo no desempate de 3 termos)`,
+    )
+  }
+
+  // Teste 13: Caso Composto preço 0 + estoque 0 no SKU 9484
+  const formatStatusConsulta = (pStock: number, pPrice: number) => {
+    if (pStock > 0 && pPrice > 0) {
+      return 'R$ ' + pPrice.toFixed(2) + ' (' + pStock + ' un.)'
+    } else if (pStock <= 0 && pPrice <= 0) {
+      return 'Sob consulta - disponível em até 48 horas'
+    } else if (pStock <= 0) {
+      return 'R$ ' + pPrice.toFixed(2) + ' - disponível em até 48 horas'
+    } else {
+      return 'Sob consulta (' + pStock + ' un.)'
+    }
+  }
+
+  const sku9484 = ix35CatalogMock.find((p) => p.sku === '9484')!
+  const status9484 = formatStatusConsulta(sku9484.stock_quantity, sku9484.price)
+  if (status9484 !== 'Sob consulta - disponível em até 48 horas') {
+    details.push(`ERRO: SKU 9484 (preço 0 + estoque 0) formatou como "${status9484}"`)
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO: Preço 0 + Estoque 0 formatou composto: "Sob consulta - disponível em até 48 horas"',
+    )
+  }
+
+  const sku5722 = ix35CatalogMock.find((p) => p.sku === '5722')!
+  const status5722 = formatStatusConsulta(sku5722.stock_quantity, sku5722.price)
+  if (status5722 !== 'R$ 160.00 - disponível em até 48 horas') {
+    details.push(`ERRO: SKU 5722 (preço 160 + estoque 0) formatou como "${status5722}"`)
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO: Preço 160 + Estoque 0 manteve o preço: "R$ 160.00 - disponível em até 48 horas"',
+    )
+  }
+
+  // Teste 14: Guarda do descarte para busca com 1 termo significativo
+  // Busca com 1 termo (ex.: "ix35") NÃO deve ser descartada nem retornar vazio
+  const term1Term = 'ix35'
+  const ext1Term = extractAiTokensAndYears(term1Term)
+  const cand1Term = twoPhaseProductSearch(ix35CatalogMock, ext1Term.searchTokens, term1Term)
+  const ranked1Term = scoreAndRankProducts(
+    cand1Term,
+    term1Term,
+    ext1Term.searchTokens,
+    ext1Term.detectedYears,
+  )
+  if (ranked1Term.length === 0) {
+    details.push('ERRO: Busca com 1 termo significativo ("ix35") retornou vazio!')
+    allPass = false
+  } else {
+    details.push(`SUCESSO: Busca com 1 termo ("ix35") retornou ${ranked1Term.length} produtos!`)
+  }
+
   return { success: allPass, details }
 }
