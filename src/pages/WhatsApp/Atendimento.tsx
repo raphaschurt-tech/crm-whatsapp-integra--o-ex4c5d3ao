@@ -24,6 +24,7 @@ import {
   AlertTriangle,
   Square,
   Trash2,
+  UserPlus,
 } from 'lucide-react'
 import {
   Dialog,
@@ -50,6 +51,7 @@ import {
   extractNormalizedPhone,
   extractMessageText,
   formatActivityTime,
+  formatPhoneDisplay,
 } from '@/services/whatsappChat'
 import type { WhatsAppSender } from '@/services/whatsappChat'
 import { useRealtime } from '@/hooks/use-realtime'
@@ -62,6 +64,8 @@ import {
   getCustomers,
   updateCustomer,
   populateCustomerCache,
+  findCustomerByPhone,
+  getPhoneVariants,
 } from '@/services/customers'
 import { useAuth } from '@/hooks/use-auth'
 import { Customer } from '@/types/crm'
@@ -111,6 +115,7 @@ export default function WhatsAppAtendimento() {
   const [inputText, setInputText] = useState('')
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isStartingConversation, setIsStartingConversation] = useState(false)
   const [hasUnreadBelow, setHasUnreadBelow] = useState(false)
 
   // Divisor arrastável (redimensionamento da lista de conversas)
@@ -969,6 +974,9 @@ export default function WhatsAppAtendimento() {
       // Busca por texto
       if (search) {
         const term = search.toLowerCase()
+        const searchClean = cleanPhoneNumber(search)
+        const custClean = cleanPhoneNumber(c.rawPhone || c.phone)
+
         const matchesBasic =
           (c.name || '').toLowerCase().includes(term) ||
           (c.phone || '').includes(search) ||
@@ -976,6 +984,22 @@ export default function WhatsAppAtendimento() {
 
         if (matchesBasic) {
           return true
+        }
+
+        // Se a busca contiver dígitos (busca por telefone), comparar números limpos e variantes
+        if (searchClean.length >= 4) {
+          if (custClean.includes(searchClean) || searchClean.includes(custClean)) {
+            return true
+          }
+          const variants = getPhoneVariants(searchClean)
+          if (
+            variants.some(
+              (v) =>
+                custClean.includes(cleanPhoneNumber(v)) || cleanPhoneNumber(v).includes(custClean),
+            )
+          ) {
+            return true
+          }
         }
 
         // Se o termo tem 3+ caracteres e não casou em nome/telefone/empresa, busca nas mensagens
@@ -1300,6 +1324,131 @@ export default function WhatsAppAtendimento() {
     }
   }
 
+  // Inicia conversa com número buscado que não possui histórico ou cliente
+  const handleStartConversationWithPhone = async (inputPhone: string) => {
+    const rawClean = cleanPhoneNumber(inputPhone)
+    if (rawClean.length < 8) return
+
+    // Obter variantes canônicas para resolução precisa
+    const variants = getPhoneVariants(rawClean)
+    // Se o número tiver 10 ou 11 dígitos, adicionamos variante internacional 55 se aplicável
+    let standardPhone = rawClean
+    if (
+      !standardPhone.startsWith('55') &&
+      (standardPhone.length === 10 || standardPhone.length === 11)
+    ) {
+      standardPhone = `55${standardPhone}`
+    }
+
+    setIsStartingConversation(true)
+    try {
+      // 1. Verificar se já existe conversa carregada na memória com esse telefone ou variante
+      const existingInList = customers.find((c) => {
+        const cPhoneClean = cleanPhoneNumber(c.rawPhone || c.phone)
+        return (
+          cPhoneClean === rawClean ||
+          cPhoneClean === standardPhone ||
+          variants.some((v) => cleanPhoneNumber(v) === cPhoneClean)
+        )
+      })
+
+      if (existingInList) {
+        setSelectedCustomerId(existingInList.id)
+        const target = existingInList.rawPhone || existingInList.phone
+        setSelectedPhone(target)
+        try {
+          localStorage.setItem('rpa_whatsapp_last_phone', target)
+        } catch {
+          /* ignore */
+        }
+        setSearch('')
+        toast({
+          title: 'Conversa selecionada',
+          description: `Conversa com ${existingInList.name || formatPhoneDisplay(target)} aberta.`,
+        })
+        return
+      }
+
+      // 2. Procurar se o cliente já existe na base de dados de customers
+      let existingCustomer: Customer | null = null
+      try {
+        existingCustomer = await findCustomerByPhone(rawClean)
+        if (!existingCustomer && standardPhone !== rawClean) {
+          existingCustomer = await findCustomerByPhone(standardPhone)
+        }
+      } catch (err) {
+        console.warn('Erro ao consultar cliente por telefone:', err)
+      }
+
+      let customerId = existingCustomer?.id || ''
+      let customerName = existingCustomer?.name || formatPhoneDisplay(standardPhone)
+      let customerType = existingCustomer?.type || 'PF'
+      let customerCompany = existingCustomer?.company || ''
+
+      // Se cliente não existe, criar novo cliente com status novo
+      if (!existingCustomer) {
+        try {
+          const createdCust = await createCustomer({
+            name: customerName,
+            phone: standardPhone,
+            type: customerType,
+            whatsapp_status: 'novo',
+          })
+          customerId = createdCust.id
+          customerName = createdCust.name
+          customerType = createdCust.type
+        } catch (err: any) {
+          console.warn('Erro ao criar cliente para nova conversa:', err)
+        }
+      }
+
+      // 3. Montar a estrutura da nova conversa
+      const now = new Date()
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+      const newConvId = `conv-new-${standardPhone}`
+
+      const newConversation: WhatsAppCustomer = {
+        id: newConvId,
+        customerId: customerId,
+        name: customerName,
+        phone: formatPhoneDisplay(standardPhone),
+        rawPhone: standardPhone,
+        type: customerType,
+        company: customerCompany,
+        status: 'novo',
+        lastActivity: timeStr,
+        lastTimestamp: now.getTime(),
+        unreadCount: 0,
+        messages: [],
+      }
+
+      // Adiciona na lista no topo e seleciona
+      setCustomers((prev) => [newConversation, ...prev.filter((c) => c.id !== newConvId)])
+      setSelectedCustomerId(newConvId)
+      setSelectedPhone(standardPhone)
+      try {
+        localStorage.setItem('rpa_whatsapp_last_phone', standardPhone)
+      } catch {
+        /* ignore */
+      }
+      setSearch('')
+
+      toast({
+        title: 'Conversa iniciada',
+        description: `Conversa iniciada com ${customerName}. Você já pode enviar mensagens.`,
+      })
+    } catch (err: any) {
+      console.error('Erro ao iniciar conversa com número:', err)
+      toast({
+        title: 'Erro ao iniciar conversa',
+        description: err?.message || 'Não foi possível iniciar o atendimento.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsStartingConversation(false)
+    }
+  }
+
   // Garante que o cliente selecionado tenha um customerId no banco para vincular orçamentos
   const handleOpenProductQuote = async () => {
     if (!activeCustomer) return
@@ -1610,8 +1759,45 @@ export default function WhatsAppAtendimento() {
                 <span>Carregando conversas do WhatsApp...</span>
               </div>
             ) : filteredCustomers.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-500">
-                Nenhuma conversa encontrada.
+              <div className="p-6 text-center text-xs text-slate-500 space-y-4">
+                <p>Nenhuma conversa encontrada.</p>
+                {(() => {
+                  const cleaned = cleanPhoneNumber(search)
+                  if (cleaned.length >= 8) {
+                    const formatted = formatPhoneDisplay(cleaned)
+                    return (
+                      <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-left space-y-2.5">
+                        <div className="text-xs text-slate-700 font-medium flex items-center gap-1.5">
+                          <UserPlus className="w-4 h-4 text-emerald-600" />
+                          <span>Número não cadastrado</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Deseja abrir um novo atendimento para <strong>{formatted}</strong>?
+                        </p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={isStartingConversation}
+                          onClick={() => handleStartConversationWithPhone(search)}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs h-8 font-medium shadow-xs"
+                        >
+                          {isStartingConversation ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                              Iniciando conversa...
+                            </>
+                          ) : (
+                            <>
+                              <MessageCircle className="w-3.5 h-3.5 mr-1.5" />
+                              Iniciar conversa com {formatted}
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
               </div>
             ) : (
               filteredCustomers.map((customer) => {
