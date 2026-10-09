@@ -61,6 +61,20 @@ export interface LoadWhatsAppConversationsOptions {
    * Cursor congelado T0 para reusar entre cargas sucessivas (ex: carga sob demanda mantendo estabilidade)
    */
   frozenT0Iso?: string
+  /**
+   * Limite temporal superior exclusivo ou inclusivo para carga de páginas mais antigas que a janela.
+   * Se informado, busca registros com created < olderThanIso (ou created <= olderThanIso).
+   */
+  olderThanIso?: string
+  /**
+   * Indica se esta chamada é uma extensão sob demanda (além da janela inicial)
+   */
+  isDemandExtension?: boolean
+  /**
+   * Limite de páginas ou tamanho de página para extensão incremental sob demanda
+   */
+  limitPages?: number
+  pageSize?: number
 }
 
 /**
@@ -125,7 +139,9 @@ export function mergeWhatsAppCustomers(
 
     const lastMsg = mergedMessages[mergedMessages.length - 1]
     const lastActivity = lastMsg ? lastMsg.time : existing.lastActivity || incoming.lastActivity
-    const lastTimestamp = lastMsg ? lastMsg.timestamp : Math.max(existing.lastTimestamp || 0, incoming.lastTimestamp || 0)
+    const lastTimestamp = lastMsg
+      ? lastMsg.timestamp
+      : Math.max(existing.lastTimestamp || 0, incoming.lastTimestamp || 0)
 
     // Preserva o nome de cliente cadastrado caso uma iteração traga apenas o número de telefone
     const isExistingPhoneOnly = existing.name === existing.phone || !existing.name
@@ -478,25 +494,30 @@ async function fetchPagedCollectionWithFrozenCursor<T extends RecordModel>(
   t0Iso: string,
   extraFilter = '',
   pageSize = 500,
+  maxPagesToFetch?: number,
+  sortDirection: 'asc' | 'desc' = 'asc',
 ): Promise<T[]> {
   const baseFilterParts = [`created <= "${t0Iso}"`]
   if (extraFilter && extraFilter.trim()) {
     baseFilterParts.push(`(${extraFilter.trim()})`)
   }
   const fullFilter = baseFilterParts.join(' && ')
+  const sort = sortDirection === 'desc' ? '-created' : 'created'
 
   // 1. Obter a primeira página e o total esperado no momento do congelamento
   const firstPageRes = await withRetry(
     () =>
       pb.collection<T>(collectionName).getList(1, pageSize, {
         filter: fullFilter,
-        sort: 'created',
+        sort,
       }),
     { retries: 3, delayMs: 600 },
   )
 
   const expectedTotal = firstPageRes.totalItems
   const totalPages = firstPageRes.totalPages
+  const pagesToLoad =
+    maxPagesToFetch && maxPagesToFetch > 0 ? Math.min(totalPages, maxPagesToFetch) : totalPages
 
   // 2. Armazenar em Map para merge estritamente idempotente (conjunto, nunca duplica nem pula por ID)
   const itemsById = new Map<string, T>()
@@ -505,14 +526,14 @@ async function fetchPagedCollectionWithFrozenCursor<T extends RecordModel>(
   }
 
   // Se tem mais páginas, carregar sequencialmente/paralelamente de forma resiliente
-  if (totalPages > 1) {
-    for (let page = 2; page <= totalPages; page++) {
+  if (pagesToLoad > 1) {
+    for (let page = 2; page <= pagesToLoad; page++) {
       try {
         const pageRes = await withRetry(
           () =>
             pb.collection<T>(collectionName).getList(page, pageSize, {
               filter: fullFilter,
-              sort: 'created',
+              sort,
             }),
           { retries: 3, delayMs: 500 },
         )
@@ -526,17 +547,18 @@ async function fetchPagedCollectionWithFrozenCursor<T extends RecordModel>(
   }
 
   // 3. Validação de integridade (2ª linha de defesa):
-  // Se o total carregado for menor que o esperado, verificar lacunas e rebuscar uma vez
-  if (itemsById.size < expectedTotal) {
+  // Se o total carregado for menor que o esperado para as páginas requisitadas, rebuscar páginas faltantes
+  const targetExpected = pagesToLoad === totalPages ? expectedTotal : pagesToLoad * pageSize
+  if (itemsById.size < targetExpected && pagesToLoad === totalPages) {
     console.warn(
       `[CONV-LOAD] [${collectionName}] Lacuna detectada: carregados ${itemsById.size} de ${expectedTotal} esperados. Rebuscando páginas faltantes...`,
     )
-    for (let page = 1; page <= totalPages; page++) {
+    for (let page = 1; page <= pagesToLoad; page++) {
       // Se não atingiu o total, faz uma repassagem
       try {
         const retryRes = await pb.collection<T>(collectionName).getList(page, pageSize, {
           filter: fullFilter,
-          sort: 'created',
+          sort,
         })
         for (const item of retryRes.items) {
           itemsById.set(item.id, item)
@@ -727,15 +749,29 @@ export async function loadWhatsAppConversations(
   options: LoadWhatsAppConversationsOptions = {},
 ): Promise<WhatsAppCustomer[]> {
   try {
-    const { daysWindow, searchQuery, phoneFilter, frozenT0Iso } = options
+    const {
+      daysWindow,
+      searchQuery,
+      phoneFilter,
+      frozenT0Iso,
+      olderThanIso,
+      isDemandExtension,
+      limitPages,
+      pageSize = 500,
+    } = options
 
     // Captura o cursor congelado T0 no início exato da carga ou reusa o T0 fornecido
     const t0Iso = frozenT0Iso && frozenT0Iso.trim() ? frozenT0Iso.trim() : new Date().toISOString()
     const t0Date = new Date(t0Iso)
 
-    // Construção do filtro temporal se janela for informada e não houver busca sob demanda ampla
+    // Construção do filtro temporal:
+    // Caso 1: Carga normal janelada (ex: últimos 60 dias a partir de T0)
+    // Caso 2: Carga sob demanda anterior à janela (olderThanIso informado)
+    // Caso 3: Carga sob demanda por busca (searchQuery informada sem restrição de 60 dias)
     let timeFilter = ''
-    if (daysWindow && daysWindow > 0 && !searchQuery) {
+    if (olderThanIso && olderThanIso.trim()) {
+      timeFilter = `created < "${olderThanIso.trim()}"`
+    } else if (daysWindow && daysWindow > 0 && !searchQuery) {
       const windowStartDate = new Date(t0Date.getTime() - daysWindow * 24 * 60 * 60 * 1000)
       const windowStartIso = windowStartDate.toISOString()
       timeFilter = `created >= "${windowStartIso}"`
@@ -795,10 +831,7 @@ export async function loadWhatsAppConversations(
         }
 
         const webhookConditions = [`text ~ "${cleanTerm}"`]
-        const procConditions = [
-          `incomingText ~ "${cleanTerm}"`,
-          `aiReplyText ~ "${cleanTerm}"`,
-        ]
+        const procConditions = [`incomingText ~ "${cleanTerm}"`, `aiReplyText ~ "${cleanTerm}"`]
 
         if (custPhoneVariants.size > 0) {
           const varArray = Array.from(custPhoneVariants).slice(0, 30)
@@ -821,6 +854,9 @@ export async function loadWhatsAppConversations(
           'webhook_received',
           t0Iso,
           extraFilterWebhook,
+          pageSize,
+          limitPages,
+          olderThanIso ? 'desc' : 'asc',
         ).catch((err) => {
           console.warn('Erro ao carregar webhook_received com cursor congelado:', err)
           return [] as WebhookReceivedRecord[]
@@ -829,6 +865,9 @@ export async function loadWhatsAppConversations(
           'message_processing',
           t0Iso,
           extraFilterProc,
+          pageSize,
+          limitPages,
+          olderThanIso ? 'desc' : 'asc',
         ).catch((err) => {
           console.warn('Erro ao carregar message_processing com cursor congelado:', err)
           return [] as MessageProcessingRecord[]
@@ -1126,6 +1165,16 @@ export async function loadWhatsAppConversations(
 
     // 4. Ordenar a lista na lateral pela conversa mais recente (lastTimestamp desc)
     result.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+
+    // Log de integridade da carga sob demanda conforme critério de aceitação 4
+    if (isDemandExtension || Boolean(searchQuery && searchQuery.trim()) || Boolean(olderThanIso)) {
+      const totalRawRecords = webhookList.length + processingList.length
+      console.log(
+        `[CONV-LOAD] demanda: +${result.length} conversas (+${totalRawRecords} registros) além da janela${
+          searchQuery ? ` [busca: "${searchQuery.trim()}"]` : ''
+        }${olderThanIso ? ` [olderThan: ${olderThanIso}]` : ''}`,
+      )
+    }
 
     return result
   } catch (error) {

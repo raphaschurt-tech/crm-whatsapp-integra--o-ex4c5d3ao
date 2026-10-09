@@ -118,6 +118,8 @@ export default function WhatsAppAtendimento() {
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [isSearchingHistory, setIsSearchingHistory] = useState(false)
+  const [isLoadingOlderConversations, setIsLoadingOlderConversations] = useState(false)
+  const [hasReachedOldestHistory, setHasReachedOldestHistory] = useState(false)
   const [frozenT0Iso, setFrozenT0Iso] = useState<string>('')
   const [isStartingConversation, setIsStartingConversation] = useState(false)
   const [hasUnreadBelow, setHasUnreadBelow] = useState(false)
@@ -815,6 +817,7 @@ export default function WhatsAppAtendimento() {
         const historyResults = await loadWhatsAppConversations({
           searchQuery: trimmed,
           frozenT0Iso: frozenT0Iso || undefined,
+          isDemandExtension: true,
         })
 
         if (historyResults.length > 0) {
@@ -833,6 +836,82 @@ export default function WhatsAppAtendimento() {
       }
     }
   }, [search, frozenT0Iso])
+
+  // Carga sob demanda ao rolar a lista de conversas até o fim
+  const isLoadingOlderRef = useRef(false)
+  const handleLoadOlderConversations = useCallback(async () => {
+    if (isLoadingOlderRef.current || hasReachedOldestHistory || loading) return
+
+    isLoadingOlderRef.current = true
+    setIsLoadingOlderConversations(true)
+
+    try {
+      // Determina a fronteira mais antiga atualmente carregada ou a janela de 60 dias a partir de T0
+      const currentT0 = frozenT0Iso || new Date().toISOString()
+      const t0Time = new Date(currentT0).getTime()
+      const default60DaysAgo = new Date(
+        t0Time - DEFAULT_WHATSAPP_DAYS_WINDOW * 24 * 60 * 60 * 1000,
+      ).toISOString()
+
+      // Encontrar a mensagem/atividade mais antiga entre todos os clientes carregados
+      let oldestTimestamp = Infinity
+      for (const c of customers) {
+        for (const m of c.messages || []) {
+          if (m.timestamp && m.timestamp < oldestTimestamp) {
+            oldestTimestamp = m.timestamp
+          }
+        }
+      }
+
+      let olderThanIso = default60DaysAgo
+      if (oldestTimestamp < Infinity && oldestTimestamp > 0) {
+        const oldestIso = new Date(oldestTimestamp).toISOString()
+        // Usa a data mais antiga para continuar paginando para trás
+        if (oldestIso < default60DaysAgo) {
+          olderThanIso = oldestIso
+        }
+      }
+
+      const olderResults = await loadWhatsAppConversations({
+        olderThanIso,
+        frozenT0Iso: currentT0,
+        isDemandExtension: true,
+        limitPages: 2,
+        pageSize: 300,
+      })
+
+      if (olderResults.length === 0) {
+        setHasReachedOldestHistory(true)
+      } else {
+        setCustomers((prev) => {
+          const merged = mergeWhatsAppCustomers(prev, olderResults)
+          // Se o número de conversas ou mensagens não expandiu, marcamos o fim
+          if (merged.length === prev.length) {
+            const prevTotalMsgs = prev.reduce((acc, c) => acc + (c.messages?.length || 0), 0)
+            const newTotalMsgs = merged.reduce((acc, c) => acc + (c.messages?.length || 0), 0)
+            if (newTotalMsgs === prevTotalMsgs) {
+              setHasReachedOldestHistory(true)
+            }
+          }
+          return merged
+        })
+      }
+    } catch (err) {
+      console.warn('[ATENDIMENTO-SCROLL] Erro ao carregar histórico anterior sob demanda:', err)
+    } finally {
+      isLoadingOlderRef.current = false
+      setIsLoadingOlderConversations(false)
+    }
+  }, [frozenT0Iso, hasReachedOldestHistory, loading, customers])
+
+  const handleConversationListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget
+    const threshold = 150
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (distanceToBottom <= threshold) {
+      handleLoadOlderConversations()
+    }
+  }
 
   const activeCustomer = (() => {
     // 1. Procurar por ID se tiver selectedCustomerId
@@ -1834,7 +1913,10 @@ export default function WhatsAppAtendimento() {
           </div>
 
           {/* Lista de Clientes com scroll */}
-          <div className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white">
+          <div
+            onScroll={handleConversationListScroll}
+            className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white"
+          >
             {loading ? (
               <div className="p-8 text-center text-xs text-slate-500 flex flex-col items-center justify-center gap-2">
                 <RefreshCw className="h-5 w-5 animate-spin text-emerald-600" />
@@ -2043,6 +2125,14 @@ export default function WhatsAppAtendimento() {
                   </div>
                 )
               })
+            )}
+
+            {/* Indicador de carregamento sob demanda ao rolar até o fim */}
+            {isLoadingOlderConversations && (
+              <div className="p-3 text-center text-xs text-emerald-700 bg-emerald-50/50 flex items-center justify-center gap-2 border-t border-emerald-100">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <span>Carregando conversas anteriores (&gt;60 dias)...</span>
+              </div>
             )}
           </div>
         </div>
