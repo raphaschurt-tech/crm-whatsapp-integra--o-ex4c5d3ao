@@ -57,6 +57,105 @@ export interface LoadWhatsAppConversationsOptions {
    * Filtrar por telefone específico
    */
   phoneFilter?: string
+  /**
+   * Cursor congelado T0 para reusar entre cargas sucessivas (ex: carga sob demanda mantendo estabilidade)
+   */
+  frozenT0Iso?: string
+}
+
+/**
+ * Janela temporal padrão em dias para a carga inicial do Atendimento (60 dias)
+ */
+export const DEFAULT_WHATSAPP_DAYS_WINDOW = 60
+
+/**
+ * Realiza o merge estritamente idempotente de duas listas de conversas do WhatsApp (por id / rawPhone),
+ * preservando dados mais completos (nome de cadastro, mensagens sem duplicação e ordenadas por tempo,
+ * status mais recente e unreadCount).
+ */
+export function mergeWhatsAppCustomers(
+  baseList: WhatsAppCustomer[],
+  incomingList: WhatsAppCustomer[],
+): WhatsAppCustomer[] {
+  const map = new Map<string, WhatsAppCustomer>()
+
+  const getKey = (c: WhatsAppCustomer) => {
+    const raw = c.rawPhone || c.phone
+    const norm = normalizePhoneKey(raw)
+    return norm || c.id
+  }
+
+  // Insere baseList
+  for (const item of baseList) {
+    map.set(getKey(item), item)
+  }
+
+  // Faz o merge com incomingList
+  for (const incoming of incomingList) {
+    const key = getKey(incoming)
+    const existing = map.get(key)
+    if (!existing) {
+      map.set(key, incoming)
+      continue
+    }
+
+    // Merge de mensagens deduplicando por id / messageId / (sender + text + timestamp aproximado)
+    const seenMsgIds = new Set<string>()
+    const mergedMessages: WhatsAppMessage[] = []
+
+    const pushMsg = (m: WhatsAppMessage) => {
+      const uniqueKey = m.messageId ? `mid-${m.messageId}` : m.id
+      if (seenMsgIds.has(uniqueKey)) return
+      seenMsgIds.add(uniqueKey)
+
+      const isDupe = mergedMessages.some(
+        (prev) =>
+          prev.sender === m.sender &&
+          prev.text.trim() === m.text.trim() &&
+          Math.abs(prev.timestamp - m.timestamp) < 5000,
+      )
+      if (!isDupe) {
+        mergedMessages.push(m)
+      }
+    }
+
+    for (const m of existing.messages || []) pushMsg(m)
+    for (const m of incoming.messages || []) pushMsg(m)
+    mergedMessages.sort((a, b) => a.timestamp - b.timestamp)
+
+    const lastMsg = mergedMessages[mergedMessages.length - 1]
+    const lastActivity = lastMsg ? lastMsg.time : existing.lastActivity || incoming.lastActivity
+    const lastTimestamp = lastMsg ? lastMsg.timestamp : Math.max(existing.lastTimestamp || 0, incoming.lastTimestamp || 0)
+
+    // Preserva o nome de cliente cadastrado caso uma iteração traga apenas o número de telefone
+    const isExistingPhoneOnly = existing.name === existing.phone || !existing.name
+    const isIncomingPhoneOnly = incoming.name === incoming.phone || !incoming.name
+    let chosenName = incoming.name
+    if (isIncomingPhoneOnly && !isExistingPhoneOnly) {
+      chosenName = existing.name
+    }
+
+    const merged: WhatsAppCustomer = {
+      ...existing,
+      ...incoming,
+      id: existing.customerId || incoming.customerId || existing.id || incoming.id,
+      customerId: existing.customerId || incoming.customerId,
+      name: chosenName || existing.name || incoming.name,
+      company: existing.company || incoming.company,
+      messages: mergedMessages,
+      lastActivity,
+      lastTimestamp,
+      lastReadAt: Math.max(existing.lastReadAt || 0, incoming.lastReadAt || 0),
+      unreadCount: Math.max(existing.unreadCount || 0, incoming.unreadCount || 0),
+      quotes: incoming.quotes && incoming.quotes.length > 0 ? incoming.quotes : existing.quotes,
+    }
+
+    map.set(key, merged)
+  }
+
+  const result = Array.from(map.values())
+  result.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+  return result
 }
 export interface WhatsAppReadStateRecord extends RecordModel {
   phone: string
@@ -628,11 +727,11 @@ export async function loadWhatsAppConversations(
   options: LoadWhatsAppConversationsOptions = {},
 ): Promise<WhatsAppCustomer[]> {
   try {
-    const { daysWindow, searchQuery, phoneFilter } = options
+    const { daysWindow, searchQuery, phoneFilter, frozenT0Iso } = options
 
-    // Captura o cursor congelado T0 no início exato da carga
-    const t0Date = new Date()
-    const t0Iso = t0Date.toISOString()
+    // Captura o cursor congelado T0 no início exato da carga ou reusa o T0 fornecido
+    const t0Iso = frozenT0Iso && frozenT0Iso.trim() ? frozenT0Iso.trim() : new Date().toISOString()
+    const t0Date = new Date(t0Iso)
 
     // Construção do filtro temporal se janela for informada e não houver busca sob demanda ampla
     let timeFilter = ''
@@ -642,7 +741,7 @@ export async function loadWhatsAppConversations(
       timeFilter = `created >= "${windowStartIso}"`
     }
 
-    // Se houver busca sob demanda por texto ou telefone, montar extraFilter
+    // Se houver busca sob demanda por texto, nome ou telefone, montar extraFilter
     let extraFilterWebhook = timeFilter
     let extraFilterProc = timeFilter
 
@@ -659,21 +758,60 @@ export async function loadWhatsAppConversations(
       extraFilterProc = extraFilterProc ? `(${extraFilterProc}) && (${fProc})` : fProc
     } else if (searchQuery && searchQuery.trim()) {
       const cleanTerm = searchQuery.trim().replace(/["\\]/g, '')
-      // Se for dígito puro (telefone)
-      const isDigitsOnly = /^\d+$/.test(cleanTerm)
-      if (isDigitsOnly) {
-        const norm = extractNormalizedPhone(cleanTerm)
-        const variants = norm ? getPhoneVariants(norm) : [cleanTerm]
-        const fWebhook = variants
-          .map((v) => `phone ~ "${v}" || chat ~ "${v}" || sender ~ "${v}"`)
-          .join(' || ')
-        const fProc = variants.map((v) => `phone ~ "${v}"`).join(' || ')
-        extraFilterWebhook = fWebhook
-        extraFilterProc = fProc
+      const cleanDigits = cleanTerm.replace(/\D/g, '')
+
+      // 1. Se tem dígitos suficientes para ser telefone
+      if (cleanDigits.length >= 4) {
+        const norm = extractNormalizedPhone(cleanDigits) || cleanDigits
+        const variants = getPhoneVariants(norm)
+        const phoneWebhookParts = variants.map(
+          (v) => `phone ~ "${v}" || chat ~ "${v}" || sender ~ "${v}"`,
+        )
+        const phoneProcParts = variants.map((v) => `phone ~ "${v}"`)
+
+        // Pode ser busca mista (ex: texto que tem números ou telefone direto)
+        const textWebhook = `text ~ "${cleanTerm}"`
+        const textProc = `incomingText ~ "${cleanTerm}" || aiReplyText ~ "${cleanTerm}"`
+
+        extraFilterWebhook = `(${phoneWebhookParts.join(' || ')}) || (${textWebhook})`
+        extraFilterProc = `(${phoneProcParts.join(' || ')}) || (${textProc})`
       } else {
-        // Busca por texto na mensagem
-        extraFilterWebhook = `text ~ "${cleanTerm}"`
-        extraFilterProc = `incomingText ~ "${cleanTerm}" || aiReplyText ~ "${cleanTerm}"`
+        // 2. Busca textual pura: texto da mensagem no webhook ou message_processing
+        // Também pode casar com clientes cujo nome contenha o termo (carregamos clientes e seus telefones abaixo)
+        const matchedCusts = await pb
+          .collection<Customer>('customers')
+          .getList(1, 50, {
+            filter: `name ~ "${cleanTerm}" || company ~ "${cleanTerm}"`,
+          })
+          .catch(() => ({ items: [] as Customer[] }))
+
+        const custPhoneVariants = new Set<string>()
+        for (const cust of matchedCusts.items) {
+          if (cust.phone) {
+            const n = extractNormalizedPhone(cust.phone)
+            const vars = n ? getPhoneVariants(n) : [cust.phone]
+            for (const v of vars) custPhoneVariants.add(v)
+          }
+        }
+
+        const webhookConditions = [`text ~ "${cleanTerm}"`]
+        const procConditions = [
+          `incomingText ~ "${cleanTerm}"`,
+          `aiReplyText ~ "${cleanTerm}"`,
+        ]
+
+        if (custPhoneVariants.size > 0) {
+          const varArray = Array.from(custPhoneVariants).slice(0, 30)
+          const phoneWParts = varArray.map(
+            (v) => `phone ~ "${v}" || chat ~ "${v}" || sender ~ "${v}"`,
+          )
+          const phonePParts = varArray.map((v) => `phone ~ "${v}"`)
+          webhookConditions.push(...phoneWParts)
+          procConditions.push(...phonePParts)
+        }
+
+        extraFilterWebhook = webhookConditions.join(' || ')
+        extraFilterProc = procConditions.join(' || ')
       }
     }
 

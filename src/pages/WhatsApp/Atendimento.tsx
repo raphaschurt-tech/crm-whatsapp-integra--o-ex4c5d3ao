@@ -45,7 +45,9 @@ import {
   WhatsAppCustomer,
   WhatsAppMessage,
   WhatsAppStatus,
+  DEFAULT_WHATSAPP_DAYS_WINDOW,
   loadWhatsAppConversations,
+  mergeWhatsAppCustomers,
   markWhatsAppAsRead,
   normalizePhoneKey,
   extractNormalizedPhone,
@@ -115,6 +117,8 @@ export default function WhatsAppAtendimento() {
   const [inputText, setInputText] = useState('')
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isSearchingHistory, setIsSearchingHistory] = useState(false)
+  const [frozenT0Iso, setFrozenT0Iso] = useState<string>('')
   const [isStartingConversation, setIsStartingConversation] = useState(false)
   const [hasUnreadBelow, setHasUnreadBelow] = useState(false)
 
@@ -387,8 +391,15 @@ export default function WhatsAppAtendimento() {
   const fetchData = useCallback(async (isSilent = false) => {
     if (!isSilent) setIsRefreshing(true)
     try {
+      // Captura T0 no início ou preserva
+      const currentT0 = new Date().toISOString()
+      setFrozenT0Iso(currentT0)
+
       const [data, custList] = await Promise.all([
-        loadWhatsAppConversations(),
+        loadWhatsAppConversations({
+          daysWindow: DEFAULT_WHATSAPP_DAYS_WINDOW,
+          frozenT0Iso: currentT0,
+        }),
         getCustomers().catch(() => [] as Customer[]),
       ])
 
@@ -777,6 +788,52 @@ export default function WhatsAppAtendimento() {
     return () => clearInterval(interval)
   }, [fetchData])
 
+  // Busca sob demanda além da janela de 60 dias (com debounce de 400ms, mesmo cursor T0 e merge idempotente)
+  const lastSearchTermRef = useRef<string>('')
+  const searchDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const trimmed = search.trim()
+    if (!trimmed || trimmed.length < 2) {
+      lastSearchTermRef.current = ''
+      setIsSearchingHistory(false)
+      if (searchDebounceTimerRef.current) {
+        clearTimeout(searchDebounceTimerRef.current)
+      }
+      return
+    }
+
+    if (searchDebounceTimerRef.current) {
+      clearTimeout(searchDebounceTimerRef.current)
+    }
+
+    searchDebounceTimerRef.current = setTimeout(async () => {
+      lastSearchTermRef.current = trimmed
+      setIsSearchingHistory(true)
+
+      try {
+        const historyResults = await loadWhatsAppConversations({
+          searchQuery: trimmed,
+          frozenT0Iso: frozenT0Iso || undefined,
+        })
+
+        if (historyResults.length > 0) {
+          setCustomers((prev) => mergeWhatsAppCustomers(prev, historyResults))
+        }
+      } catch (searchErr) {
+        console.warn('[ATENDIMENTO-BUSCA] Erro na busca sob demanda além de 60 dias:', searchErr)
+      } finally {
+        setIsSearchingHistory(false)
+      }
+    }, 400)
+
+    return () => {
+      if (searchDebounceTimerRef.current) {
+        clearTimeout(searchDebounceTimerRef.current)
+      }
+    }
+  }, [search, frozenT0Iso])
+
   const activeCustomer = (() => {
     // 1. Procurar por ID se tiver selectedCustomerId
     if (selectedCustomerId) {
@@ -944,42 +1001,49 @@ export default function WhatsAppAtendimento() {
 
   const filteredCustomers = customers
     .filter((c) => {
-      // Filtro de status customizado com 6 botões
-      if (statusFilter === 'todos') {
-        if (c.customerId) {
-          const linkedCust = customersMap.get(c.customerId)
-          if (linkedCust?.pipeline_status === 'perdido') {
-            return false
+      const trimmedSearch = search.trim()
+
+      // Quando o usuário está buscando ativamente (por nome, telefone ou mensagem),
+      // a busca sobrepõe os filtros de abas para que conversas antigas (>60 dias) ou resolvidas
+      // NUNCA fiquem invisíveis ou inacessíveis para o operador
+      if (!trimmedSearch) {
+        // Filtro de status customizado com 6 botões (apenas quando não há busca ativa)
+        if (statusFilter === 'todos') {
+          if (c.customerId) {
+            const linkedCust = customersMap.get(c.customerId)
+            if (linkedCust?.pipeline_status === 'perdido') {
+              return false
+            }
           }
+        } else if (statusFilter === 'novo') {
+          // "Novos": todas as conversas sem filtro de status
+        } else if (statusFilter === 'nao_lidos') {
+          if (!(c.unreadCount && c.unreadCount > 0)) return false
+        } else if (statusFilter === 'em_atendimento') {
+          if (c.status !== 'em_atendimento') return false
+        } else if (statusFilter === 'antigos') {
+          const msgs = c.messages || []
+          const lastMsgTime =
+            c.lastTimestamp || (msgs.length > 0 ? msgs[msgs.length - 1]?.timestamp || 0 : 0)
+          const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000
+          if (!lastMsgTime || lastMsgTime > sevenDaysAgo) return false
+        } else if (statusFilter === 'inativos') {
+          if (c.status !== 'resolvido') return false
         }
-      } else if (statusFilter === 'novo') {
-        // "Novos": todas as conversas sem filtro de status
-      } else if (statusFilter === 'nao_lidos') {
-        if (!(c.unreadCount && c.unreadCount > 0)) return false
-      } else if (statusFilter === 'em_atendimento') {
-        if (c.status !== 'em_atendimento') return false
-      } else if (statusFilter === 'antigos') {
-        const msgs = c.messages || []
-        const lastMsgTime =
-          c.lastTimestamp || (msgs.length > 0 ? msgs[msgs.length - 1]?.timestamp || 0 : 0)
-        const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000
-        if (!lastMsgTime || lastMsgTime > sevenDaysAgo) return false
-      } else if (statusFilter === 'inativos') {
-        if (c.status !== 'resolvido') return false
+
+        // Filtro PF / PJ (apenas quando não há busca ativa)
+        if (typeFilter !== 'ALL' && c.type !== typeFilter) return false
       }
 
-      // Filtro PF / PJ
-      if (typeFilter !== 'ALL' && c.type !== typeFilter) return false
-
-      // Busca por texto
-      if (search) {
-        const term = search.toLowerCase()
-        const searchClean = cleanPhoneNumber(search)
+      // Busca por texto, nome ou telefone
+      if (trimmedSearch) {
+        const term = trimmedSearch.toLowerCase()
+        const searchClean = cleanPhoneNumber(trimmedSearch)
         const custClean = cleanPhoneNumber(c.rawPhone || c.phone)
 
         const matchesBasic =
           (c.name || '').toLowerCase().includes(term) ||
-          (c.phone || '').includes(search) ||
+          (c.phone || '').includes(trimmedSearch) ||
           (c.company || '').toLowerCase().includes(term)
 
         if (matchesBasic) {
@@ -1002,8 +1066,8 @@ export default function WhatsAppAtendimento() {
           }
         }
 
-        // Se o termo tem 3+ caracteres e não casou em nome/telefone/empresa, busca nas mensagens
-        if (search.length >= 3) {
+        // Se o termo tem 2+ caracteres e não casou em nome/telefone/empresa, busca nas mensagens
+        if (trimmedSearch.length >= 2) {
           const matchesMessage = (c.messages || []).some((m) =>
             (m.text || '').toLowerCase().includes(term),
           )
@@ -1635,12 +1699,30 @@ export default function WhatsAppAtendimento() {
             <div className="relative">
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
               <Input
-                placeholder="Buscar cliente, telefone..."
+                placeholder="Buscar cliente, telefone, mensagem..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 h-9 text-xs bg-slate-50 border-slate-200"
+                className="pl-9 pr-8 h-9 text-xs bg-slate-50 border-slate-200"
               />
+              {isSearchingHistory ? (
+                <RefreshCw className="absolute right-2.5 top-2.5 h-4 w-4 text-emerald-600 animate-spin" />
+              ) : search ? (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                  title="Limpar busca"
+                >
+                  ×
+                </button>
+              ) : null}
             </div>
+            {isSearchingHistory && (
+              <div className="flex items-center gap-1.5 px-1 text-[11px] text-emerald-700">
+                <RefreshCw className="w-3 h-3 animate-spin shrink-0" />
+                <span>Buscando no histórico completo (&gt;60 dias)...</span>
+              </div>
+            )}
 
             {/* Filtros de Tipo e Status */}
             <div className="flex items-center justify-between gap-2 pt-1">
