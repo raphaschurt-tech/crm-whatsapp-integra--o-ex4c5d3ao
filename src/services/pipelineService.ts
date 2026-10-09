@@ -110,7 +110,7 @@ function normalizeDigits(phone?: string): string {
 export function deriveAutoStatus(
   customer: Customer,
   customerQuotes: Quote[],
-  whatsappConv: WhatsAppCustomer | null,
+  whatsappConv?: WhatsAppCustomer | null,
 ): PipelineColumnId {
   // 0. Se for fornecedor, fica na coluna de fornecedores e nunca participa das transições automáticas de lead
   if (customer.customer_type === 'fornecedor') {
@@ -144,8 +144,10 @@ export function deriveAutoStatus(
   // Se tem apenas rascunho de orçamento, também pode ser considerado em atendimento
   const hasAnyQuote = customerQuotes.length > 0
 
-  // 4. Se tem interação de WhatsApp (atendente respondeu, IA interagiu ou mensagem recebida)
-  const hasInteraction = (whatsappConv && whatsappConv.messages.length > 0) || hasAnyQuote
+  // 4. Se tem interação de WhatsApp (campo persistido no card/contato ou conversa em memória)
+  const hasPersistedMessage = Boolean(customer.first_message_at || customer.last_interaction_at)
+  const hasConvMessage = Boolean(whatsappConv && whatsappConv.messages.length > 0)
+  const hasInteraction = hasPersistedMessage || hasConvMessage || hasAnyQuote
 
   if (hasInteraction) {
     return 'em_atendimento'
@@ -156,7 +158,8 @@ export function deriveAutoStatus(
 }
 
 /**
- * Carrega e monta o pipeline completo cruzando Customers + Quotes + WhatsApp + Users
+ * Carrega e monta o pipeline otimizado utilizando os campos persistidos do customer (first_message_at, last_interaction_at)
+ * Aposenta a varredura completa de ~10 mil mensagens do WhatsApp a cada abertura do funil.
  */
 export async function loadPipelineBoardData(): Promise<{
   cards: PipelineCardData[]
@@ -165,7 +168,8 @@ export async function loadPipelineBoardData(): Promise<{
   whatsappConversations: WhatsAppCustomer[]
 }> {
   // Executa as consultas com backoff e retries aumentados para absorver limites de taxa
-  const [customers, quotes, whatsappConversations, purchaseRequests] = await Promise.all([
+  // Não carrega mais todas as 11+ páginas de mensagens do WhatsApp aqui
+  const [customers, quotes, purchaseRequests] = await Promise.all([
     withRetry(() => getCustomers(), { retries: 4, delayMs: 1000 }).catch((err) => {
       console.warn('Erro ao carregar customers para o Pipeline:', err)
       return [] as Customer[]
@@ -173,10 +177,6 @@ export async function loadPipelineBoardData(): Promise<{
     withRetry(() => getQuotes(), { retries: 4, delayMs: 1000 }).catch((err) => {
       console.warn('Erro ao carregar quotes para o Pipeline:', err)
       return [] as Quote[]
-    }),
-    withRetry(() => loadWhatsAppConversations(), { retries: 3, delayMs: 1000 }).catch((err) => {
-      console.warn('Erro ao carregar whatsappConversations para o Pipeline:', err)
-      return [] as WhatsAppCustomer[]
     }),
     withRetry(
       () => pb.collection('purchase_requests').getFullList({ filter: 'status != "entregue"' }),
@@ -196,25 +196,6 @@ export async function loadPipelineBoardData(): Promise<{
     activePurchasesByCustomer.set(pr.customer, list)
   }
 
-  // Mapear conversas de WhatsApp por customerId ou por telefone normalizado
-  const convByCustomerId = new Map<string, WhatsAppCustomer>()
-  const convByPhone = new Map<string, WhatsAppCustomer>()
-
-  for (const conv of whatsappConversations) {
-    if (conv.customerId) {
-      convByCustomerId.set(conv.customerId, conv)
-    }
-    const cleanP = normalizeDigits(conv.rawPhone)
-    if (cleanP) {
-      convByPhone.set(cleanP, conv)
-      if (cleanP.startsWith('55')) {
-        convByPhone.set(cleanP.slice(2), conv)
-      } else {
-        convByPhone.set(`55${cleanP}`, conv)
-      }
-    }
-  }
-
   // Agrupar orçamentos por customerId
   const quotesByCustomer = new Map<string, Quote[]>()
   for (const q of quotes) {
@@ -226,16 +207,13 @@ export async function loadPipelineBoardData(): Promise<{
 
   // Regra: Contatos importados criados sem pipeline_status não entram no Pipeline.
   // Somente clientes com pipeline_status preenchido (ou com orçamentos/interações reais) devem aparecer no Pipeline.
+  // Clientes com interação > 60 dias continuam 100% elegíveis para o funil através de first_message_at / last_interaction_at.
   // E clientes com deleted=true nunca aparecem no Pipeline.
   const activeCustomers = customers.filter((c) => {
     if (c.deleted) return false
     const rawStatus = (c.pipeline_status || '').trim()
     const hasQuotes = (quotesByCustomer.get(c.id) || []).length > 0
-    const cleanPhone = normalizeDigits(c.phone)
-    const hasMessages = Boolean(
-      (convByCustomerId.get(c.id)?.messages.length || 0) > 0 ||
-      (convByPhone.get(cleanPhone)?.messages.length || 0) > 0,
-    )
+    const hasMessages = Boolean(c.first_message_at || c.last_interaction_at)
     // Se o cliente não tem pipeline_status e também não tem interação/orçamento (ex: acabou de ser importado), fica fora do funil
     if (!rawStatus && !hasQuotes && !hasMessages) {
       return false
@@ -248,26 +226,19 @@ export async function loadPipelineBoardData(): Promise<{
     // Ordenar orçamentos do cliente por data mais recente
     custQuotes.sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime())
 
-    // Encontrar conversa do WhatsApp
-    const cleanCustPhone = normalizeDigits(customer.phone)
-    const whatsappConv =
-      convByCustomerId.get(customer.id) ||
-      convByPhone.get(cleanCustPhone) ||
-      (cleanCustPhone.startsWith('55')
-        ? convByPhone.get(cleanCustPhone.slice(2))
-        : convByPhone.get(`55${cleanCustPhone}`)) ||
-      null
-
     // Determinar última interação (data e timestamp)
     let lastInteractionTimestamp = new Date(customer.created).getTime()
     let lastInteractionDate: Date = new Date(customer.created)
     let lastInteractionText = formatActivityTime(customer.created)
 
-    // Se houver mensagem mais recente no WhatsApp
-    if (whatsappConv && whatsappConv.lastTimestamp > lastInteractionTimestamp) {
-      lastInteractionTimestamp = whatsappConv.lastTimestamp
-      lastInteractionDate = new Date(whatsappConv.lastTimestamp)
-      lastInteractionText = formatActivityTime(lastInteractionDate)
+    // Se houver interação gravada no contato (WhatsApp)
+    if (customer.last_interaction_at) {
+      const persistedInteractionTime = new Date(customer.last_interaction_at).getTime()
+      if (persistedInteractionTime > lastInteractionTimestamp) {
+        lastInteractionTimestamp = persistedInteractionTime
+        lastInteractionDate = new Date(persistedInteractionTime)
+        lastInteractionText = formatActivityTime(lastInteractionDate)
+      }
     }
 
     // Se houver orçamento mais recente
@@ -291,7 +262,7 @@ export async function loadPipelineBoardData(): Promise<{
     const isManualOverride = isValidManual && rawManualStatus.length > 0
     let columnId: PipelineColumnId = isManualOverride
       ? (rawManualStatus as PipelineColumnId)
-      : deriveAutoStatus(customer, custQuotes, whatsappConv)
+      : deriveAutoStatus(customer, custQuotes, null)
 
     // Fornecedores nunca devem cair em etapas de vendas automáticas.
     // Se não tiver override manual, ou se tiver override inválido, fica em 'fornecedores'.
@@ -305,7 +276,7 @@ export async function loadPipelineBoardData(): Promise<{
     // - Para fechado: data em que o orçamento pago foi aprovado/pago (updated do quote pago)
     // - Para aguardando_pagamento: data em que o link foi gerado ou quote aprovado
     // - Para orcamento_enviado: data do envio do orçamento (created ou updated do quote enviado)
-    // - Para em_atendimento: timestamp da primeira interação ou orçamento que causou a transição para em_atendimento
+    // - Para em_atendimento: timestamp da primeira mensagem real (first_message_at) ou primeiro orçamento
     // - Para novo_lead ou fornecedores: data de cadastro/criação do cliente
     let stageEnteredTimestamp = new Date(customer.updated || customer.created).getTime()
     if (!isManualOverride) {
@@ -330,12 +301,12 @@ export async function loadPipelineBoardData(): Promise<{
           stageEnteredTimestamp = new Date(sentQuote.updated || sentQuote.created).getTime()
         }
       } else if (columnId === 'em_atendimento') {
-        // Momento em que entrou em atendimento: primeira mensagem do WhatsApp ou primeiro orçamento
+        // Momento em que entrou em atendimento: primeira mensagem real do WhatsApp (first_message_at) ou primeiro orçamento
         let firstInteraction = new Date(customer.created).getTime()
-        if (whatsappConv && whatsappConv.messages.length > 0) {
-          const firstMsg = whatsappConv.messages[0]
-          if (firstMsg?.timestamp) {
-            firstInteraction = firstMsg.timestamp
+        if (customer.first_message_at) {
+          const firstMsgTime = new Date(customer.first_message_at).getTime()
+          if (firstMsgTime > 0) {
+            firstInteraction = firstMsgTime
           }
         }
         if (custQuotes.length > 0) {
@@ -364,7 +335,7 @@ export async function loadPipelineBoardData(): Promise<{
       activeQuote,
       allQuotes: custQuotes,
       totalQuoteAmount,
-      whatsappConversation: whatsappConv,
+      whatsappConversation: null,
       activePurchaseCount: custPurchases.length,
       firstActivePurchaseId: custPurchases[0]?.id,
     }
@@ -374,7 +345,7 @@ export async function loadPipelineBoardData(): Promise<{
     cards,
     customers,
     quotes,
-    whatsappConversations,
+    whatsappConversations: [],
   }
 }
 

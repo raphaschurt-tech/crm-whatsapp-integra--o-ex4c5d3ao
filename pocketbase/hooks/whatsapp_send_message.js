@@ -304,6 +304,7 @@ routerAdd(
 
     // Gravar no webhook_received com fromMe=true para que apareça de imediato no histórico do chat
     const messageId = 'agent_' + Date.now() + '_' + $security.randomString(6)
+    const nowIsoAgent = new Date().toISOString()
     try {
       const colWebhook = $app.findCollectionByNameOrId('webhook_received')
       const rec = new Record(colWebhook)
@@ -335,6 +336,30 @@ routerAdd(
       }
 
       $app.save(rec)
+
+      // Atualizar last_interaction_at do customer
+      try {
+        let withoutDdiAgent = cleanPhone
+        if (withoutDdiAgent.startsWith('55') && withoutDdiAgent.length >= 12) {
+          withoutDdiAgent = withoutDdiAgent.slice(2)
+        }
+        const custMatches = $app.findRecordsByFilter(
+          'customers',
+          'phone ~ {:p1} || phone ~ {:p2}',
+          '-created',
+          1,
+          0,
+          { p1: cleanPhone, p2: withoutDdiAgent },
+        )
+        if (custMatches && custMatches.length > 0) {
+          const cRec = custMatches[0]
+          cRec.set('last_interaction_at', nowIsoAgent)
+          if (!cRec.getString('first_message_at')) {
+            cRec.set('first_message_at', nowIsoAgent)
+          }
+          $app.save(cRec)
+        }
+      } catch (_) {}
     } catch (dbErr) {
       console.log('[AGENT-SEND-PERSIST-ERR]', dbErr.message || String(dbErr))
     }

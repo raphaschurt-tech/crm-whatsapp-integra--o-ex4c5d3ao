@@ -36,6 +36,8 @@ export interface Customer extends RecordModel {
   item_families?: string[]
   whatsapp_status?: 'novo' | 'em_atendimento' | 'resolvido' | string
   lead_viewed?: boolean
+  first_message_at?: string
+  last_interaction_at?: string
   expand?: {
     item_families?: ItemFamily[]
     [key: string]: any

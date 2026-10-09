@@ -28,7 +28,7 @@ export interface WhatsAppMessage {
 }
 
 export interface WhatsAppCustomer {
-  id: string // pode ser o phone normalizado ou o customer.id
+  id: string
   customerId?: string
   name: string
   type: 'PF' | 'PJ'
@@ -37,13 +37,27 @@ export interface WhatsAppCustomer {
   company?: string
   status: WhatsAppStatus
   unreadCount?: number
+  lastReadAt?: number
   lastActivity: string
   lastTimestamp: number
-  lastReadAt?: number
   messages: WhatsAppMessage[]
-  quotes?: import('@/types/crm').Quote[]
+  quotes?: Quote[]
 }
 
+export interface LoadWhatsAppConversationsOptions {
+  /**
+   * Janela em dias para carga inicial (ex: 60 dias). Se omitido ou <= 0, carrega todo o histórico.
+   */
+  daysWindow?: number
+  /**
+   * Termo de busca para puxar sob demanda do banco (texto, nome ou telefone) além da janela
+   */
+  searchQuery?: string
+  /**
+   * Filtrar por telefone específico
+   */
+  phoneFilter?: string
+}
 export interface WhatsAppReadStateRecord extends RecordModel {
   phone: string
   lastReadAt: number
@@ -346,35 +360,339 @@ async function persistReadStateRecord(key: string, readTimestamp: number): Promi
 }
 
 /**
- * Carrega todas as conversas reais do WhatsApp do banco de dados PocketBase:
- * 1. Busca mensagens de `webhook_received`
- * 2. Busca respostas da IA de `message_processing`
- * 3. Busca lista de clientes cadastrados em `customers` para cruzar por telefone
- * 4. Agrupa por cliente/número de telefone, unifica o histórico em ordem cronológica
- * 5. Ordena as conversas pela mensagem mais recente
+ * Busca registros paginados com Cursor Congelado (created <= T0) e merge idempotente.
+ * Valida a integridade (total carregado vs total esperado) e reexecuta páginas faltantes se houver lacuna.
+ *
+ * NOTA DE DIAGNÓSTICO DE SORT:
+ * O sort utilizado na paginação é 'created' (ascendente).
+ * No sort ascendente (created), se novas mensagens chegassem concorrentemente durante a paginação,
+ * o número total aumentaria, mas os itens novos entrariam no FINAL do dataset;
+ * porém sem filtro de limite temporal superior (T0), a variação do total e os limites de página
+ * geravam inconsistência entre as coleções ou perda de fronteira.
+ * Com sort '-created' (decrescente), uma mensagem nova inserida desloca o ÍNDICE ZERO (o início de todas as páginas),
+ * fazendo o offset pular registros da página anterior.
+ * Ao congelar o cursor com `created <= T0`, a fronteira temporal fica 100% estática independente da direção do sort,
+ * eliminando corridas por construção.
  */
-export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
+async function fetchPagedCollectionWithFrozenCursor<T extends RecordModel>(
+  collectionName: 'webhook_received' | 'message_processing',
+  t0Iso: string,
+  extraFilter = '',
+  pageSize = 500,
+): Promise<T[]> {
+  const baseFilterParts = [`created <= "${t0Iso}"`]
+  if (extraFilter && extraFilter.trim()) {
+    baseFilterParts.push(`(${extraFilter.trim()})`)
+  }
+  const fullFilter = baseFilterParts.join(' && ')
+
+  // 1. Obter a primeira página e o total esperado no momento do congelamento
+  const firstPageRes = await withRetry(
+    () =>
+      pb.collection<T>(collectionName).getList(1, pageSize, {
+        filter: fullFilter,
+        sort: 'created',
+      }),
+    { retries: 3, delayMs: 600 },
+  )
+
+  const expectedTotal = firstPageRes.totalItems
+  const totalPages = firstPageRes.totalPages
+
+  // 2. Armazenar em Map para merge estritamente idempotente (conjunto, nunca duplica nem pula por ID)
+  const itemsById = new Map<string, T>()
+  for (const item of firstPageRes.items) {
+    itemsById.set(item.id, item)
+  }
+
+  // Se tem mais páginas, carregar sequencialmente/paralelamente de forma resiliente
+  if (totalPages > 1) {
+    for (let page = 2; page <= totalPages; page++) {
+      try {
+        const pageRes = await withRetry(
+          () =>
+            pb.collection<T>(collectionName).getList(page, pageSize, {
+              filter: fullFilter,
+              sort: 'created',
+            }),
+          { retries: 3, delayMs: 500 },
+        )
+        for (const item of pageRes.items) {
+          itemsById.set(item.id, item)
+        }
+      } catch (pageErr) {
+        console.warn(`[CONV-LOAD] Falha ao carregar página ${page} de ${collectionName}:`, pageErr)
+      }
+    }
+  }
+
+  // 3. Validação de integridade (2ª linha de defesa):
+  // Se o total carregado for menor que o esperado, verificar lacunas e rebuscar uma vez
+  if (itemsById.size < expectedTotal) {
+    console.warn(
+      `[CONV-LOAD] [${collectionName}] Lacuna detectada: carregados ${itemsById.size} de ${expectedTotal} esperados. Rebuscando páginas faltantes...`,
+    )
+    for (let page = 1; page <= totalPages; page++) {
+      // Se não atingiu o total, faz uma repassagem
+      try {
+        const retryRes = await pb.collection<T>(collectionName).getList(page, pageSize, {
+          filter: fullFilter,
+          sort: 'created',
+        })
+        for (const item of retryRes.items) {
+          itemsById.set(item.id, item)
+        }
+        if (itemsById.size >= expectedTotal) break
+      } catch (retryErr) {
+        console.warn(`[CONV-LOAD] Repassagem falhou na página ${page}:`, retryErr)
+      }
+    }
+  }
+
+  console.log(
+    `[CONV-LOAD] [${collectionName}] Total carregado: ${itemsById.size} | Esperado: ${expectedTotal} (T0: ${t0Iso})`,
+  )
+
+  return Array.from(itemsById.values())
+}
+
+/**
+ * Carrega mensagens de um cliente específico sob demanda por telefone
+ */
+export async function loadCustomerConversationMessages(
+  rawPhone: string,
+): Promise<WhatsAppMessage[]> {
+  if (!rawPhone) return []
+  const norm = extractNormalizedPhone(rawPhone)
+  if (!norm) return []
+  const variants = getPhoneVariants(norm)
+
+  const filterPartsWebhook = variants.map(
+    (v) => `phone ~ "${v}" || chat ~ "${v}" || sender ~ "${v}"`,
+  )
+  const filterWebhook = filterPartsWebhook.join(' || ')
+
+  const filterPartsProc = variants.map((v) => `phone ~ "${v}"`)
+  const filterProc = filterPartsProc.join(' || ')
+
+  const [webhookList, processingList] = await Promise.all([
+    withRetry(
+      () =>
+        pb.collection<WebhookReceivedRecord>('webhook_received').getFullList({
+          filter: filterWebhook,
+          sort: 'created',
+        }),
+      { retries: 2, delayMs: 400 },
+    ).catch(() => [] as WebhookReceivedRecord[]),
+    withRetry(
+      () =>
+        pb.collection<MessageProcessingRecord>('message_processing').getFullList({
+          filter: filterProc,
+          sort: 'created',
+        }),
+      { retries: 2, delayMs: 400 },
+    ).catch(() => [] as MessageProcessingRecord[]),
+  ])
+
+  // Mapear respostas de IA para evitar ecos
+  const aiReplies: Array<{ text: string; time: number }> = []
+  for (const proc of processingList) {
+    const reply = (proc.aiReplyText || '').trim()
+    if (reply && (proc.replySent || proc.status === 'completed')) {
+      aiReplies.push({
+        text: reply,
+        time: new Date(proc.created).getTime(),
+      })
+    }
+  }
+
+  const messagesMap = new Map<string, WhatsAppMessage>()
+  const seenMessageIds = new Set<string>()
+
+  // 1. Mensagens do webhook
+  for (const rec of webhookList) {
+    let text = extractMessageText(rec.text)
+    const hasAttachment = Boolean(rec.attachment_url)
+    if (!text && !hasAttachment) continue
+    if (!text && hasAttachment) {
+      text = rec.attachment_name ? `Arquivo: ${rec.attachment_name}` : ''
+    }
+
+    const isFromMe = Boolean(rec.fromMe)
+    const msgDate = rec.moment ? new Date(rec.moment * 1000) : new Date(rec.created)
+    const timestamp = msgDate.getTime()
+    const timeStr = formatActivityTime(msgDate)
+
+    if (isFromMe && rec.type !== 'AgentSentMessage') {
+      const isAiEcho = aiReplies.some(
+        (ai) =>
+          (ai.text === text || text.startsWith(ai.text.slice(0, 50))) &&
+          Math.abs(timestamp - ai.time) < 30 * 60 * 1000,
+      )
+      if (isAiEcho) continue
+    }
+
+    let sender: WhatsAppSender = 'client'
+    if (isFromMe) {
+      const senderRole =
+        rec.sender && typeof rec.sender === 'object'
+          ? String(rec.sender.role || rec.sender.type || '')
+          : ''
+      const recType = String(rec.type || '')
+      const msgIdStr = String(rec.messageId || '')
+
+      if (
+        senderRole === 'agent' ||
+        recType === 'AgentSentMessage' ||
+        msgIdStr.startsWith('agent_')
+      ) {
+        sender = 'agent'
+      } else if (senderRole === 'ai' || recType === 'AISentMessage') {
+        sender = 'ai'
+      } else {
+        sender = 'agent'
+      }
+    }
+
+    const msgId = `wh-${rec.id}`
+    messagesMap.set(msgId, {
+      id: msgId,
+      text,
+      time: timeStr,
+      sender,
+      timestamp,
+      messageId: rec.messageId,
+      isAudio: Boolean(rec.is_audio),
+      audioUrl: rec.audio_url || undefined,
+      attachmentUrl: rec.attachment_url || undefined,
+      attachmentName: rec.attachment_name || undefined,
+      attachmentType:
+        rec.attachment_type === 'image' ||
+        rec.attachment_type === 'video' ||
+        rec.attachment_type === 'document' ||
+        rec.attachment_type === 'audio'
+          ? (rec.attachment_type as 'image' | 'video' | 'document' | 'audio')
+          : undefined,
+    })
+
+    if (rec.messageId) {
+      seenMessageIds.add(rec.messageId)
+    }
+  }
+
+  // 2. Mensagens do message_processing
+  for (const proc of processingList) {
+    if (proc.incomingText && proc.messageId && !seenMessageIds.has(proc.messageId)) {
+      const procDate = new Date(proc.created)
+      const msgId = `proc-in-${proc.id}`
+      messagesMap.set(msgId, {
+        id: msgId,
+        text: proc.incomingText,
+        time: formatActivityTime(procDate),
+        sender: 'client',
+        timestamp: procDate.getTime(),
+        messageId: proc.messageId,
+        isAudio: Boolean(proc.is_audio),
+        audioUrl: proc.audio_url || undefined,
+      })
+      seenMessageIds.add(proc.messageId)
+    }
+
+    if (proc.aiReplyText && (proc.replySent || proc.status === 'completed')) {
+      const replyDate = new Date(proc.updated || proc.created)
+      const msgId = `proc-ai-${proc.id}`
+      messagesMap.set(msgId, {
+        id: msgId,
+        text: proc.aiReplyText,
+        time: formatActivityTime(replyDate),
+        sender: 'ai',
+        timestamp: replyDate.getTime(),
+      })
+    }
+  }
+
+  const list = Array.from(messagesMap.values())
+  list.sort((a, b) => a.timestamp - b.timestamp)
+  return list
+}
+
+/**
+ * Carrega conversas reais do WhatsApp do banco de dados PocketBase com:
+ * 1. Cursor congelado (created <= T0) para estabilidade absoluta durante paginação concorrente com o WhatsApp
+ * 2. Merge idempotente por ID de registro (Map/dedupe)
+ * 3. Validação de integridade: checagem de lacuna entre total esperado e total carregado
+ * 4. Janela temporal configurável (default 60 dias para Atendimento; ilimitada para busca completa/específica)
+ * 5. Suporte a busca sob demanda além da janela temporal por termo ou telefone
+ */
+export async function loadWhatsAppConversations(
+  options: LoadWhatsAppConversationsOptions = {},
+): Promise<WhatsAppCustomer[]> {
   try {
+    const { daysWindow, searchQuery, phoneFilter } = options
+
+    // Captura o cursor congelado T0 no início exato da carga
+    const t0Date = new Date()
+    const t0Iso = t0Date.toISOString()
+
+    // Construção do filtro temporal se janela for informada e não houver busca sob demanda ampla
+    let timeFilter = ''
+    if (daysWindow && daysWindow > 0 && !searchQuery) {
+      const windowStartDate = new Date(t0Date.getTime() - daysWindow * 24 * 60 * 60 * 1000)
+      const windowStartIso = windowStartDate.toISOString()
+      timeFilter = `created >= "${windowStartIso}"`
+    }
+
+    // Se houver busca sob demanda por texto ou telefone, montar extraFilter
+    let extraFilterWebhook = timeFilter
+    let extraFilterProc = timeFilter
+
+    if (phoneFilter) {
+      const norm = extractNormalizedPhone(phoneFilter)
+      const variants = norm ? getPhoneVariants(norm) : [phoneFilter]
+      const fWebhook = variants
+        .map((v) => `phone ~ "${v}" || chat ~ "${v}" || sender ~ "${v}"`)
+        .join(' || ')
+      const fProc = variants.map((v) => `phone ~ "${v}"`).join(' || ')
+      extraFilterWebhook = extraFilterWebhook
+        ? `(${extraFilterWebhook}) && (${fWebhook})`
+        : fWebhook
+      extraFilterProc = extraFilterProc ? `(${extraFilterProc}) && (${fProc})` : fProc
+    } else if (searchQuery && searchQuery.trim()) {
+      const cleanTerm = searchQuery.trim().replace(/["\\]/g, '')
+      // Se for dígito puro (telefone)
+      const isDigitsOnly = /^\d+$/.test(cleanTerm)
+      if (isDigitsOnly) {
+        const norm = extractNormalizedPhone(cleanTerm)
+        const variants = norm ? getPhoneVariants(norm) : [cleanTerm]
+        const fWebhook = variants
+          .map((v) => `phone ~ "${v}" || chat ~ "${v}" || sender ~ "${v}"`)
+          .join(' || ')
+        const fProc = variants.map((v) => `phone ~ "${v}"`).join(' || ')
+        extraFilterWebhook = fWebhook
+        extraFilterProc = fProc
+      } else {
+        // Busca por texto na mensagem
+        extraFilterWebhook = `text ~ "${cleanTerm}"`
+        extraFilterProc = `incomingText ~ "${cleanTerm}" || aiReplyText ~ "${cleanTerm}"`
+      }
+    }
+
     const [webhookList, processingList, customersList, readStatesMap, allQuotesList] =
       await Promise.all([
-        withRetry(
-          () =>
-            pb
-              .collection<WebhookReceivedRecord>('webhook_received')
-              .getFullList({ sort: 'created' }),
-          { retries: 3, delayMs: 800 },
+        fetchPagedCollectionWithFrozenCursor<WebhookReceivedRecord>(
+          'webhook_received',
+          t0Iso,
+          extraFilterWebhook,
         ).catch((err) => {
-          console.warn('Erro ao carregar webhook_received:', err)
+          console.warn('Erro ao carregar webhook_received com cursor congelado:', err)
           return [] as WebhookReceivedRecord[]
         }),
-        withRetry(
-          () =>
-            pb
-              .collection<MessageProcessingRecord>('message_processing')
-              .getFullList({ sort: 'created' }),
-          { retries: 3, delayMs: 800 },
+        fetchPagedCollectionWithFrozenCursor<MessageProcessingRecord>(
+          'message_processing',
+          t0Iso,
+          extraFilterProc,
         ).catch((err) => {
-          console.warn('Erro ao carregar message_processing:', err)
+          console.warn('Erro ao carregar message_processing com cursor congelado:', err)
           return [] as MessageProcessingRecord[]
         }),
         getCustomers().catch(() => [] as Customer[]),
@@ -391,13 +709,12 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       quotesByCustomerId.set(q.customer, list)
     }
 
-    // Popula o cache global centralizado de clientes (permite resolução síncrona e fallback estável em toda a aplicação)
+    // Popula o cache global centralizado de clientes
     if (customersList.length > 0) {
       populateCustomerCache(customersList)
     }
 
     // Mapa de clientes para rápida associação por telefone cobrindo TODAS as variantes
-    // (com/sem DDI 55, 8 ou 9 dígitos, sufixos canônicos)
     const customerMap = new Map<string, Customer>()
     for (const c of customersList) {
       if (!c) continue
@@ -421,7 +738,6 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
 
     const getOrCreateConv = (rawP: string) => {
       const normalized = extractNormalizedPhone(rawP)
-      // Normalização padrão com 55 se aplicável
       let key = normalized
       if (key.length === 10 || key.length === 11) {
         key = `55${key}`
@@ -460,7 +776,6 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
 
     // 1. Processar webhook_received
     for (const rec of webhookList) {
-      // Tenta extrair telefone válido de múltiplos campos possíveis
       let normalized = extractNormalizedPhone(rec.phone)
       if (!normalized) {
         normalized = extractNormalizedPhone(rec.chat)
@@ -469,7 +784,6 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         normalized = extractNormalizedPhone(rec.sender)
       }
 
-      // Se após todas as tentativas o número ainda for um LID ou vazio, ignoramos para não criar conversa-fantasma
       if (!normalized) continue
 
       let text = extractMessageText(rec.text)
@@ -487,9 +801,6 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       const phoneKey =
         normalized.length === 10 || normalized.length === 11 ? `55${normalized}` : normalized
 
-      // Se for fromMe e o texto coincide exatamente com uma resposta enviada pela IA no message_processing
-      // para esse mesmo número, trata-se de um eco assíncrono da Z-API (ReceivedCallback) que não deve
-      // ser exibido como Atendente RPA duplicado.
       if (isFromMe && rec.type !== 'AgentSentMessage') {
         const aiList = aiRepliesByPhone.get(phoneKey) || []
         const isAiEcho = aiList.some(
@@ -498,16 +809,10 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
             Math.abs(timestamp - ai.time) < 30 * 60 * 1000,
         )
         if (isAiEcho) {
-          // Ignora o eco — a resposta da IA legítima já é carregada via message_processing
           continue
         }
       }
 
-      // Determinar remetente:
-      // Se não for fromMe: 'client'
-      // Se for fromMe: diferenciar atendente humano de IA
-      // Verifica marcações de atendente (ex: type: AgentSentMessage, sender.role: agent, ou ID agent_*)
-      // Versus respostas de IA gravadas pelo ai_message_worker / Z-API
       let sender: WhatsAppSender = 'client'
       if (isFromMe) {
         const senderRole =
@@ -526,18 +831,12 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         } else if (senderRole === 'ai' || recType === 'AISentMessage') {
           sender = 'ai'
         } else {
-          // Mensagem enviada pelo celular (WhatsApp oficial) pelo atendente:
-          // A IA só envia quando ai_message_worker processa (e cria com messageId específico).
-          // Se veio pelo celular ou webhook sem marcação explícita de IA, é resposta manual do Atendente!
           sender = 'agent'
         }
       }
 
       const conv = getOrCreateConv(normalized)
 
-      // Deduplicação defensiva: se a mesma conversa já tiver uma mensagem do mesmo remetente
-      // com o mesmo texto em intervalo de até 5 minutos (eco de AgentSentMessage recebido como ReceivedCallback),
-      // não duplica na visualização!
       const isDuplicateInConv = conv.messages.some(
         (m) =>
           m.sender === sender &&
@@ -574,7 +873,7 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       }
     }
 
-    // 2. Processar respostas de message_processing (garantir respostas de IA enviadas)
+    // 2. Processar respostas de message_processing
     for (const proc of processingList) {
       if (!proc.phone) continue
       const normalized = extractNormalizedPhone(proc.phone)
@@ -582,7 +881,6 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
 
       const conv = getOrCreateConv(normalized)
 
-      // Se o incomingText do cliente não foi incluído pelo webhook (por exemplo webhook falhou ou foi limpo)
       if (proc.incomingText && proc.messageId && !seenMessageIds.has(proc.messageId)) {
         const procDate = new Date(proc.created)
         conv.messages.push({
@@ -598,9 +896,7 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         seenMessageIds.add(proc.messageId)
       }
 
-      // Se a IA respondeu com sucesso (completed ou replySent) e tem texto
       if (proc.aiReplyText && (proc.replySent || proc.status === 'completed')) {
-        // Verificar se esse texto já não existe como última resposta
         const alreadyExists = conv.messages.some(
           (m) => m.sender === 'ai' && m.text.trim() === proc.aiReplyText?.trim(),
         )
@@ -622,14 +918,10 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
     const result: WhatsAppCustomer[] = []
 
     for (const [, conv] of conversations) {
-      // Ordenar mensagens da conversa em ordem cronológica crescente
       conv.messages.sort((a, b) => a.timestamp - b.timestamp)
 
-      // Se não há mensagens após o filtro, ignorar conversa vazia
       if (conv.messages.length === 0) continue
 
-      // Verificar se este telefone pertence a algum cliente cadastrado em customers
-      // Testa a chave direta, sem 55, ou qualquer variante gerada
       let matchedCustomer: Customer | null =
         customerMap.get(conv.phoneKey) || customerMap.get(conv.phoneKey.replace(/^55/, '')) || null
       if (!matchedCustomer) {
@@ -647,17 +939,13 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
       const lastActivity = lastMsg ? lastMsg.time : ''
       const lastTimestamp = lastMsg ? lastMsg.timestamp : 0
 
-      // Estado de leitura persistido
       const lastReadAt =
         readStatesMap.get(conv.phoneKey) || readStatesMap.get(conv.phoneKey.replace(/^55/, '')) || 0
 
-      // Contar quantas mensagens do cliente são estritamente posteriores a lastReadAt
       const unreadCount = conv.messages.filter(
         (m) => m.sender === 'client' && m.timestamp > lastReadAt,
       ).length
 
-      // Prioridade do status da conversa:
-      // Se o cliente associado tem whatsapp_status persistido no banco, respeitar
       let status: WhatsAppStatus = unreadCount > 0 ? 'novo' : 'em_atendimento'
       if (
         matchedCustomer?.whatsapp_status === 'resolvido' ||
@@ -667,7 +955,6 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         status = matchedCustomer.whatsapp_status as WhatsAppStatus
       }
 
-      // Se não encontrou de imediato na lista carregada, tentar o fallback estável do cache histórico
       const effectiveCustomer = matchedCustomer || getLastKnownCustomer(conv.phoneKey)
 
       const displayName = effectiveCustomer
@@ -677,7 +964,6 @@ export async function loadWhatsAppConversations(): Promise<WhatsAppCustomer[]> {
         ? effectiveCustomer.type || (effectiveCustomer.cnpj ? 'PJ' : 'PF')
         : 'PF'
 
-      // Orçamentos associados ao cliente (por customerId ou fallback de telefone via effectiveCustomer)
       const customerQuotes = effectiveCustomer?.id
         ? quotesByCustomerId.get(effectiveCustomer.id) || []
         : []

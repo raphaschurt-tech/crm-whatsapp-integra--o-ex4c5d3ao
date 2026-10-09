@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-09T11:49:24.449Z",
+  "generatedAt": "2026-10-09T21:34:53.436Z",
   "collections": [
     {
       "name": "users",
@@ -208,6 +208,18 @@
         {
           "name": "lead_viewed",
           "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "first_message_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_interaction_at",
+          "type": "date",
           "required": false,
           "system": false
         }

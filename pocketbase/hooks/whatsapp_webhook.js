@@ -1136,6 +1136,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         }
       } catch (_) {}
 
+      const nowIsoString = new Date().toISOString()
       if (!existingCustomer) {
         const custCol = $app.findCollectionByNameOrId('customers')
         const newCust = new Record(custCol)
@@ -1145,12 +1146,14 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         newCust.set('type', 'PF')
         newCust.set('pipeline_status', 'novo_lead')
         newCust.set('lead_source', 'whatsapp')
+        newCust.set('first_message_at', nowIsoString)
+        newCust.set('last_interaction_at', nowIsoString)
         $app.save(newCust)
 
         console.log(
           '[CUSTOMER-AUTO-CREATED-WEBHOOK]',
           JSON.stringify({
-            timestamp: new Date().toISOString(),
+            timestamp: nowIsoString,
             customerId: newCust.id,
             phone: maskedSenderPhone,
             messageId: messageId,
@@ -1160,22 +1163,35 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         // Se o cliente foi excluído (deleted=true), não recriar nem alterar
         const isCustDeleted = Boolean(existingCustomer.get('deleted'))
         if (!isCustDeleted) {
+          let custChanged = false
           const currentPipelineStatus = String(
             existingCustomer.getString('pipeline_status') || '',
           ).trim()
           // Se o cliente não tem pipeline_status (vazio), promove-o a lead real ("novo_lead") por interação
           if (!currentPipelineStatus) {
             existingCustomer.set('pipeline_status', 'novo_lead')
-            $app.save(existingCustomer)
+            custChanged = true
             console.log(
               '[CUSTOMER-PROMOTED-TO-NOVO-LEAD]',
               JSON.stringify({
-                timestamp: new Date().toISOString(),
+                timestamp: nowIsoString,
                 customerId: existingCustomer.id,
                 phone: maskedSenderPhone,
                 messageId: messageId,
               }),
             )
+          }
+
+          // Atualizar timestamp da primeira mensagem e última interação
+          if (!existingCustomer.getString('first_message_at')) {
+            existingCustomer.set('first_message_at', nowIsoString)
+            custChanged = true
+          }
+          existingCustomer.set('last_interaction_at', nowIsoString)
+          custChanged = true
+
+          if (custChanged) {
+            $app.save(existingCustomer)
           }
         }
       }

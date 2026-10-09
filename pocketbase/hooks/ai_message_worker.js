@@ -571,6 +571,7 @@ onRecordAfterCreateSuccess((e) => {
       }
     } catch (_) {}
 
+    const nowIsoWorker = new Date().toISOString()
     // Se o cliente não existir (por exemplo se a mensagem foi enfileirada diretamente), cria agora
     if (!customerRecord) {
       try {
@@ -581,17 +582,30 @@ onRecordAfterCreateSuccess((e) => {
         customerRecord.set('notes', 'Lead originado pelo WhatsApp')
         customerRecord.set('type', 'PF')
         customerRecord.set('pipeline_status', 'novo_lead')
+        customerRecord.set('first_message_at', nowIsoWorker)
+        customerRecord.set('last_interaction_at', nowIsoWorker)
         $app.save(customerRecord)
       } catch (createErr) {
         console.log('[AI-WORKER-CUSTOMER-CREATE-ERR]', createErr.message || String(createErr))
       }
     } else {
-      // Se já existe e não tem pipeline_status e não está excluído, define novo_lead
+      // Se já existe e não tem pipeline_status e não está excluído, define novo_lead e atualiza timestamps
       const isCustDeleted = Boolean(customerRecord.get('deleted'))
       if (!isCustDeleted) {
+        let custNeedsSave = false
         const curStatus = String(customerRecord.getString('pipeline_status') || '').trim()
         if (!curStatus) {
           customerRecord.set('pipeline_status', 'novo_lead')
+          custNeedsSave = true
+        }
+        if (!customerRecord.getString('first_message_at')) {
+          customerRecord.set('first_message_at', nowIsoWorker)
+          custNeedsSave = true
+        }
+        customerRecord.set('last_interaction_at', nowIsoWorker)
+        custNeedsSave = true
+
+        if (custNeedsSave) {
           try {
             $app.save(customerRecord)
           } catch (_) {}

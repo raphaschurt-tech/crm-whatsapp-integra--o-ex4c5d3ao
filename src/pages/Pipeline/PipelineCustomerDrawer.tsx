@@ -26,7 +26,11 @@ import { Input } from '@/components/ui/input'
 import { useNavigate } from 'react-router-dom'
 import { LeadSourceBadge } from '@/components/LeadSourceBadge'
 import { sendWhatsAppMessage } from '@/services/quotes'
-import { WhatsAppMessage, extractNormalizedPhone } from '@/services/whatsappChat'
+import {
+  WhatsAppMessage,
+  extractNormalizedPhone,
+  loadCustomerConversationMessages,
+} from '@/services/whatsappChat'
 import { toast } from '@/hooks/use-toast'
 
 interface PipelineCustomerDrawerProps {
@@ -50,14 +54,45 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
   const [localMessages, setLocalMessages] = useState<WhatsAppMessage[]>([])
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
 
-  // Sincronizar mensagens quando o card ou o whatsappConversation mudar
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false)
+
+  // Carregar mensagens sob demanda para o Drawer quando aberto
   useEffect(() => {
-    if (card?.whatsappConversation?.messages) {
+    let isCancelled = false
+    if (card?.whatsappConversation?.messages && card.whatsappConversation.messages.length > 0) {
       setLocalMessages(card.whatsappConversation.messages)
-    } else {
-      setLocalMessages([])
+      return
     }
-  }, [card?.customer?.id, card?.whatsappConversation?.messages])
+
+    const phoneToLoad = card?.customer?.phone
+    if (!phoneToLoad) {
+      setLocalMessages([])
+      return
+    }
+
+    setIsLoadingMessages(true)
+    loadCustomerConversationMessages(phoneToLoad)
+      .then((msgs) => {
+        if (!isCancelled) {
+          setLocalMessages(msgs)
+        }
+      })
+      .catch((err) => {
+        console.warn('Erro ao carregar mensagens para o drawer:', err)
+        if (!isCancelled) {
+          setLocalMessages([])
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoadingMessages(false)
+        }
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [card?.customer?.id, card?.customer?.phone, card?.whatsappConversation?.messages])
 
   // Rolar para o fim quando novas mensagens forem carregadas ou adicionadas
   useEffect(() => {
@@ -428,8 +463,7 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
               <div className="flex items-center justify-between">
                 <h3 className="text-xs uppercase font-bold text-slate-500 tracking-wider flex items-center gap-1.5">
                   <MessageCircle className="h-4 w-4 text-emerald-600" />
-                  Histórico WhatsApp (
-                  {whatsappConversation ? whatsappConversation.messages.length : 0})
+                  Histórico WhatsApp ({localMessages.length})
                 </h3>
                 <Button
                   size="sm"
@@ -442,7 +476,12 @@ export const PipelineCustomerDrawer: React.FC<PipelineCustomerDrawerProps> = ({
               </div>
 
               <div className="rounded-xl border border-slate-200 overflow-hidden bg-[#efeae2]/30 flex flex-col">
-                {localMessages.length === 0 ? (
+                {isLoadingMessages ? (
+                  <div className="p-6 text-center text-xs text-slate-500 space-y-2 flex flex-col items-center">
+                    <Loader2 className="w-5 h-5 animate-spin text-emerald-600" />
+                    <p>Carregando histórico do WhatsApp...</p>
+                  </div>
+                ) : localMessages.length === 0 ? (
                   <div className="p-6 text-center text-xs text-slate-500 space-y-1">
                     <p>Nenhuma mensagem do WhatsApp sincronizada para este telefone.</p>
                     <p className="text-[11px] text-slate-400 font-mono">{customer.phone}</p>
