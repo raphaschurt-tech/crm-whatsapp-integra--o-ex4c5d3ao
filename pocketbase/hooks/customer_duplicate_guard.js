@@ -66,7 +66,7 @@ onRecordCreateRequest((e) => {
       const existingPhoneCore = getCorePhoneKey(existing.getString('phone'))
       if (existingPhoneCore && existingPhoneCore === phoneCore) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este telefone: ${existingName}`,
+          `Já existe um ${entityLabel} cadastrado com este telefone: ${existingName} [id:${existing.id}]`,
         )
       }
     }
@@ -76,7 +76,7 @@ onRecordCreateRequest((e) => {
       const existingCpf = cleanDigits(existing.getString('cpf'))
       if (existingCpf && existingCpf === cleanCpf) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este CPF: ${existingName}`,
+          `Já existe um ${entityLabel} cadastrado com este CPF: ${existingName} [id:${existing.id}]`,
         )
       }
     }
@@ -86,7 +86,7 @@ onRecordCreateRequest((e) => {
       const existingCnpj = cleanDigits(existing.getString('cnpj'))
       if (existingCnpj && existingCnpj === cleanCnpj) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este CNPJ: ${existingName}`,
+          `Já existe um ${entityLabel} cadastrado com este CNPJ: ${existingName} [id:${existing.id}]`,
         )
       }
     }
@@ -155,7 +155,7 @@ onRecordUpdateRequest((e) => {
       const existingPhoneCore = getCorePhoneKey(existing.getString('phone'))
       if (existingPhoneCore && existingPhoneCore === phoneCore) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este telefone: ${existingName}`,
+          `Já existe um ${entityLabel} cadastrado com este telefone: ${existingName} [id:${existing.id}]`,
         )
       }
     }
@@ -165,7 +165,7 @@ onRecordUpdateRequest((e) => {
       const existingCpf = cleanDigits(existing.getString('cpf'))
       if (existingCpf && existingCpf === cleanCpf) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este CPF: ${existingName}`,
+          `Já existe um ${entityLabel} cadastrado com este CPF: ${existingName} [id:${existing.id}]`,
         )
       }
     }
@@ -175,7 +175,7 @@ onRecordUpdateRequest((e) => {
       const existingCnpj = cleanDigits(existing.getString('cnpj'))
       if (existingCnpj && existingCnpj === cleanCnpj) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este CNPJ: ${existingName}`,
+          `Já existe um ${entityLabel} cadastrado com este CNPJ: ${existingName} [id:${existing.id}]`,
         )
       }
     }

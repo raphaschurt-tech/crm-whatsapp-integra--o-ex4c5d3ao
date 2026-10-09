@@ -34,17 +34,66 @@ export const cleanDocument = (doc?: string): string => {
  * Verifica se já existe outro cliente cadastrado com o mesmo CPF ou CNPJ (com ou sem máscara).
  * Retorna o cliente conflitante, se houver.
  */
+/**
+ * Helper para agrupar tipo de entidade (cliente vs fornecedor/ambos)
+ */
+export function getCustomerGroupType(customerType?: string): 'cliente' | 'fornecedor' {
+  const t = (customerType || '').toLowerCase()
+  if (t === 'fornecedor' || t === 'ambos') return 'fornecedor'
+  return 'cliente'
+}
+
+/**
+ * Normaliza telefone para o core canônico (DDD + 8 dígitos sem DDI 55 e sem nono dígito)
+ */
+export function getCanonicalPhoneCore(rawPhone?: string): string {
+  if (!rawPhone) return ''
+  const s = String(rawPhone).trim()
+  if (s.toLowerCase().includes('@lid')) return ''
+  const digits = s.replace(/\D/g, '')
+  if (digits.length >= 14 || digits.length < 8) return ''
+
+  let withoutDdi = digits
+  if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+    withoutDdi = digits.slice(2)
+  }
+
+  if (withoutDdi.length === 11 && withoutDdi[2] === '9') {
+    return withoutDdi.slice(0, 2) + withoutDdi.slice(3)
+  }
+  if (withoutDdi.length === 10) {
+    return withoutDdi
+  }
+  return withoutDdi
+}
+
+/**
+ * Verifica se já existe outro cliente/fornecedor cadastrado com o mesmo CPF ou CNPJ (com ou sem máscara)
+ * dentro do mesmo grupo (cliente vs fornecedor).
+ * Retorna o cliente conflitante, se houver.
+ */
 export const checkDuplicateDocument = async (
   doc: string,
   excludeCustomerId?: string,
+  targetCustomerType?: string,
 ): Promise<Customer | null> => {
   const clean = cleanDocument(doc)
   if (!clean) return null
 
+  const targetGroup = getCustomerGroupType(targetCustomerType)
+
   try {
-    const allCustomers = await pb.collection<Customer>('customers').getFullList()
+    const allCustomers = await pb.collection<Customer>('customers').getFullList({
+      filter: 'deleted != true',
+    })
     for (const c of allCustomers) {
       if (excludeCustomerId && c.id === excludeCustomerId) continue
+
+      // Verificar correspondência de grupo (cliente vs fornecedor) se especificado
+      if (targetCustomerType) {
+        const existingGroup = getCustomerGroupType(c.customer_type)
+        if (existingGroup !== targetGroup) continue
+      }
 
       const existingCpfClean = cleanDocument(c.cpf)
       const existingCnpjClean = cleanDocument(c.cnpj)
@@ -321,11 +370,123 @@ export async function findCustomerByPhone(rawPhone: string): Promise<Customer | 
   return lookupPromise
 }
 
-export const createCustomer = (data: Partial<Customer>) =>
-  pb.collection<Customer>('customers').create(data)
+/**
+ * Analisa mensagem ou objeto de erro para identificar se é um erro de duplicidade
+ * vindo do hook customer_duplicate_guard do backend PocketBase.
+ * Extrai a mensagem amigável e o ID do registro conflitante (se presente).
+ */
+export interface DuplicateConflictInfo {
+  isDuplicate: boolean
+  message: string
+  existingId?: string
+  existingName?: string
+  field?: 'telefone' | 'CPF' | 'CNPJ' | 'documento'
+  entityLabel?: 'cliente' | 'fornecedor'
+}
 
-export const updateCustomer = (id: string, data: Partial<Customer>) =>
-  pb.collection<Customer>('customers').update(id, data)
+export function extractDuplicateErrorInfo(error: unknown): DuplicateConflictInfo {
+  const defaultRes: DuplicateConflictInfo = {
+    isDuplicate: false,
+    message: '',
+  }
+
+  if (!error) return defaultRes
+
+  let rawMessage = ''
+  if (typeof error === 'string') {
+    rawMessage = error
+  } else if (typeof error === 'object' && error !== null) {
+    const err = error as any
+    // PocketBase ClientResponseError ou objeto genérico de erro
+    rawMessage = err.response?.message || err.data?.message || err.message || ''
+    // Também checar se veio em data errors
+    if (!rawMessage && err.response?.data && typeof err.response.data === 'object') {
+      const dataValues = Object.values(err.response.data)
+      for (const val of dataValues) {
+        if (typeof val === 'object' && val && 'message' in val) {
+          rawMessage = String((val as any).message)
+          break
+        }
+      }
+    }
+  }
+
+  if (!rawMessage) return defaultRes
+
+  // Padrão emitido pelo customer_duplicate_guard:
+  // "Já existe um cliente/fornecedor cadastrado com este telefone/CPF/CNPJ: {nome} [id:{existingId}]"
+  // ou sem o [id:...] caso legado: "Já existe um cliente cadastrado com este..."
+  const match = rawMessage.match(
+    /Já existe um (cliente|fornecedor) cadastrado com este (telefone|CPF|CNPJ):\s*([^[]+?)(?:\s*\[id:([a-zA-Z0-9_-]+)\])?$/i,
+  )
+
+  if (match) {
+    const entityLabel = match[1].toLowerCase() as 'cliente' | 'fornecedor'
+    const field = match[2] as 'telefone' | 'CPF' | 'CNPJ'
+    const existingName = match[3]?.trim() || ''
+    const existingId = match[4]?.trim() || undefined
+    const cleanDisplayMsg = `Já existe um ${entityLabel} cadastrado com este ${field}: ${existingName}`
+
+    return {
+      isDuplicate: true,
+      message: cleanDisplayMsg,
+      existingId,
+      existingName,
+      field,
+      entityLabel,
+    }
+  }
+
+  // Checagem genérica caso a mensagem contenha "Já existe um" e ("cadastrado" ou "telefone" ou "CPF" ou "CNPJ")
+  if (
+    rawMessage.includes('Já existe um') &&
+    (rawMessage.includes('cadastrado') ||
+      rawMessage.includes('telefone') ||
+      rawMessage.includes('CPF') ||
+      rawMessage.includes('CNPJ'))
+  ) {
+    // Tentar extrair id caso exista [id:xxx]
+    const idMatch = rawMessage.match(/\[id:([a-zA-Z0-9_-]+)\]/)
+    const cleanMsg = rawMessage.replace(/\s*\[id:[a-zA-Z0-9_-]+\]/, '').trim()
+    return {
+      isDuplicate: true,
+      message: cleanMsg,
+      existingId: idMatch ? idMatch[1] : undefined,
+    }
+  }
+
+  return defaultRes
+}
+
+export const createCustomer = async (data: Partial<Customer>): Promise<Customer> => {
+  try {
+    return await pb.collection<Customer>('customers').create(data)
+  } catch (err: any) {
+    // Garantir que a mensagem de duplicidade ou validação do backend não seja engolida
+    const dup = extractDuplicateErrorInfo(err)
+    if (dup.isDuplicate) {
+      err.isDuplicate = true
+      err.duplicateInfo = dup
+      // Atribuir mensagem amigável limpa diretamente para consumidores de err.message
+      err.message = dup.message
+    }
+    throw err
+  }
+}
+
+export const updateCustomer = async (id: string, data: Partial<Customer>): Promise<Customer> => {
+  try {
+    return await pb.collection<Customer>('customers').update(id, data)
+  } catch (err: any) {
+    const dup = extractDuplicateErrorInfo(err)
+    if (dup.isDuplicate) {
+      err.isDuplicate = true
+      err.duplicateInfo = dup
+      err.message = dup.message
+    }
+    throw err
+  }
+}
 
 /**
  * Soft delete de cliente: marca deleted = true e deleted_at com timestamp atual.

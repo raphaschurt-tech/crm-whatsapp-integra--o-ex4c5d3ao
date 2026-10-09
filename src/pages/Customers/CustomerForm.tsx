@@ -15,7 +15,17 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/hooks/use-toast'
-import { User, Building2, AlertCircle, Truck, Users, Check, Layers } from 'lucide-react'
+import {
+  User,
+  Building2,
+  AlertCircle,
+  Truck,
+  Users,
+  Check,
+  Layers,
+  ExternalLink,
+} from 'lucide-react'
+import { DuplicateConflictInfo, extractDuplicateErrorInfo } from '@/services/customers'
 import { LEAD_SOURCE_OPTIONS } from '@/components/LeadSourceBadge'
 
 // Funções utilitárias de formatação
@@ -57,6 +67,7 @@ export default function CustomerForm() {
   const [allFamilies, setAllFamilies] = useState<ItemFamily[]>([])
   const [selectedFamilyIds, setSelectedFamilyIds] = useState<string[]>([])
   const [familiesError, setFamiliesError] = useState<string | null>(null)
+  const [duplicateBanner, setDuplicateBanner] = useState<DuplicateConflictInfo | null>(null)
 
   const isEditing = Boolean(id)
 
@@ -148,13 +159,26 @@ export default function CustomerForm() {
     const currentDoc = type === 'PF' ? cpf : cnpj
     const cleanDoc = cleanDocument(currentDoc)
 
-    // Validação de documento duplicado
+    // Validação preventiva de documento duplicado (respeitando o mesmo grupo: cliente vs fornecedor)
     if (cleanDoc) {
-      const duplicate = await checkDuplicateDocument(cleanDoc, id)
+      const duplicate = await checkDuplicateDocument(cleanDoc, id, customerType)
       if (duplicate) {
         const docLabel = type === 'PF' ? 'CPF' : 'CNPJ'
-        const errorMsg = `Este ${docLabel} já está cadastrado para o cliente "${duplicate.name}".`
+        const entityLabel =
+          (duplicate.customer_type || '').toLowerCase() === 'fornecedor' ||
+          (duplicate.customer_type || '').toLowerCase() === 'ambos'
+            ? 'fornecedor'
+            : 'cliente'
+        const errorMsg = `Já existe um ${entityLabel} cadastrado com este ${docLabel}: ${duplicate.name}`
         setDocumentError(errorMsg)
+        setDuplicateBanner({
+          isDuplicate: true,
+          message: errorMsg,
+          existingId: duplicate.id,
+          existingName: duplicate.name,
+          field: docLabel as 'CPF' | 'CNPJ',
+          entityLabel: entityLabel as 'cliente' | 'fornecedor',
+        })
         toast({
           title: `${docLabel} já cadastrado`,
           description: errorMsg,
@@ -165,6 +189,7 @@ export default function CustomerForm() {
     }
 
     setDocumentError(null)
+    setDuplicateBanner(null)
     setLoading(true)
     try {
       const payload: Partial<any> = {
@@ -197,8 +222,23 @@ export default function CustomerForm() {
               : 'Cliente salvo com sucesso!',
       })
       closeTab(undefined, true)
-    } catch (_) {
-      toast({ title: 'Erro ao salvar cliente', variant: 'destructive' })
+    } catch (err: any) {
+      const dupInfo: DuplicateConflictInfo = err?.duplicateInfo || extractDuplicateErrorInfo(err)
+      if (dupInfo.isDuplicate) {
+        setDuplicateBanner(dupInfo)
+        toast({
+          title: 'Cadastro duplicado bloqueado',
+          description: dupInfo.message,
+          variant: 'destructive',
+        })
+      } else {
+        const msg = err?.message || 'Erro ao salvar cliente'
+        toast({
+          title: 'Erro ao salvar',
+          description: msg,
+          variant: 'destructive',
+        })
+      }
     } finally {
       setLoading(false)
     }
@@ -213,6 +253,32 @@ export default function CustomerForm() {
       <h1 className="text-2xl font-bold text-slate-900">
         {isEditing ? 'Editar Cliente' : 'Novo Cliente'}
       </h1>
+
+      {duplicateBanner && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 text-amber-900 space-y-3 animate-in fade-in-50">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="flex-1 text-sm">
+              <p className="font-semibold text-amber-950">Cadastro Duplicado Identificado</p>
+              <p className="mt-1 text-amber-900/90 leading-relaxed">{duplicateBanner.message}</p>
+            </div>
+          </div>
+          {duplicateBanner.existingId && (
+            <div className="flex justify-end pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => navigate(`/clientes/${duplicateBanner.existingId}`)}
+                className="bg-white hover:bg-amber-100/60 text-amber-900 border-amber-300 gap-1.5 font-medium shadow-xs"
+              >
+                <ExternalLink className="w-4 h-4 text-amber-700" />
+                Abrir cadastro existente
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
 
       <form
         onSubmit={handleSubmit}
