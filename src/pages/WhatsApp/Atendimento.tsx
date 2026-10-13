@@ -47,6 +47,7 @@ import {
   WhatsAppStatus,
   DEFAULT_WHATSAPP_DAYS_WINDOW,
   loadWhatsAppConversations,
+  searchWhatsAppConversationsDirect,
   mergeWhatsAppCustomers,
   markWhatsAppAsRead,
   normalizePhoneKey,
@@ -814,17 +815,15 @@ export default function WhatsAppAtendimento() {
       setIsSearchingHistory(true)
 
       try {
-        const historyResults = await loadWhatsAppConversations({
-          searchQuery: trimmed,
-          frozenT0Iso: frozenT0Iso || undefined,
-          isDemandExtension: true,
-        })
+        // Query DIRETA no backend: caminho próprio e leve fora da fila de carga completa,
+        // eliminando concorrência de cursors simultâneos e 429
+        const directResults = await searchWhatsAppConversationsDirect(trimmed)
 
-        if (historyResults.length > 0) {
-          setCustomers((prev) => mergeWhatsAppCustomers(prev, historyResults))
+        if (directResults.length > 0) {
+          setCustomers((prev) => mergeWhatsAppCustomers(prev, directResults))
         }
       } catch (searchErr) {
-        console.warn('[ATENDIMENTO-BUSCA] Erro na busca sob demanda além de 60 dias:', searchErr)
+        console.warn('[ATENDIMENTO-BUSCA] Erro na busca direta sob demanda:', searchErr)
       } finally {
         setIsSearchingHistory(false)
       }

@@ -8,6 +8,11 @@ export interface CustomerAvatarProps {
   type?: 'PF' | 'PJ'
   className?: string
   size?: 'md' | 'sm' | 'lg'
+  /**
+   * Se true (default), carrega sob demanda se estiver visível no viewport (IntersectionObserver)
+   * Se false, usa apenas o cache existente sem disparar fetch de rede
+   */
+  lazy?: boolean
 }
 
 export const CustomerAvatar = React.memo(function CustomerAvatar({
@@ -16,13 +21,54 @@ export const CustomerAvatar = React.memo(function CustomerAvatar({
   type = 'PF',
   className = '',
   size = 'md',
+  lazy = true,
 }: CustomerAvatarProps) {
+  const containerRef = React.useRef<HTMLDivElement | null>(null)
+  const [isVisible, setIsVisible] = useState(!lazy)
+
   // Inicialização síncrona pelo cache (memória ou localStorage)
   const [photoUrl, setPhotoUrl] = useState<string | null>(() => {
     const cached = getCachedProfilePhoto(phone)
     return cached.hit ? cached.url : null
   })
   const [hasError, setHasError] = useState(false)
+
+  // IntersectionObserver para lazy loading: dispara fetch apenas quando o item entrar na tela
+  useEffect(() => {
+    if (!lazy || isVisible) return
+
+    // Se já está no cache, não precisa esperar IntersectionObserver
+    const cached = getCachedProfilePhoto(phone)
+    if (cached.hit) {
+      setIsVisible(true)
+      setPhotoUrl(cached.url)
+      return
+    }
+
+    if (typeof window === 'undefined' || !('IntersectionObserver' in window)) {
+      setIsVisible(true)
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        if (entry && entry.isIntersecting) {
+          setIsVisible(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '120px' }, // margem antecipada para carregar antes do usuário ver
+    )
+
+    if (containerRef.current) {
+      observer.observe(containerRef.current)
+    }
+
+    return () => {
+      observer.disconnect()
+    }
+  }, [lazy, isVisible, phone])
 
   useEffect(() => {
     let isMounted = true
@@ -35,7 +81,10 @@ export const CustomerAvatar = React.memo(function CustomerAvatar({
       return
     }
 
-    // Busca sob demanda com debounce / fila
+    // Só busca se o elemento estiver visível / permitido
+    if (!isVisible) return
+
+    // Busca sob demanda com fila de concorrência limitada (3-4 simultâneas) e dedupe por telefone
     fetchProfilePhoto(phone)
       .then((url) => {
         if (isMounted) {
@@ -51,7 +100,7 @@ export const CustomerAvatar = React.memo(function CustomerAvatar({
     return () => {
       isMounted = false
     }
-  }, [phone])
+  }, [phone, isVisible])
 
   const dimensionClasses =
     size === 'sm' ? 'w-9 h-9 text-xs' : size === 'lg' ? 'w-12 h-12 text-base' : 'w-11 h-11 text-sm'
@@ -62,6 +111,7 @@ export const CustomerAvatar = React.memo(function CustomerAvatar({
   if (photoUrl && !hasError) {
     return (
       <div
+        ref={containerRef}
         className={`relative rounded-full overflow-hidden shrink-0 border border-slate-200/60 bg-slate-100 ${dimensionClasses} ${className}`}
       >
         <img
@@ -84,6 +134,7 @@ export const CustomerAvatar = React.memo(function CustomerAvatar({
 
   return (
     <div
+      ref={containerRef}
       className={`rounded-full flex items-center justify-center font-bold shrink-0 ${bgAndText} ${dimensionClasses} ${className}`}
       title={name || phone}
     >

@@ -97,16 +97,55 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
 
       const status = error?.status ?? error?.response?.status
       const is429 = status === 429 || (error?.message || '').includes('429')
-      // Para 429: backoff exponencial rigoroso (1s -> 2s -> 4s) com jitter
-      const baseDelay = is429
-        ? Math.max(currentDelay, 1000 * Math.pow(backoffFactor, attempt - 1))
-        : currentDelay
-      const jitter = Math.random() * 200
-      const waitTime = Math.min(baseDelay + jitter, maxDelayMs)
+
+      // Verificar se a resposta 429 traz header Retry-After (em segundos ou date)
+      let retryAfterMs: number | null = null
+      const responseHeaders =
+        error?.response?.headers || error?.originalError?.response?.headers || error?.headers
+
+      if (responseHeaders) {
+        let retryAfterVal: string | null = null
+        if (typeof responseHeaders.get === 'function') {
+          retryAfterVal = responseHeaders.get('retry-after') || responseHeaders.get('Retry-After')
+        } else if (typeof responseHeaders === 'object') {
+          retryAfterVal = responseHeaders['retry-after'] || responseHeaders['Retry-After'] || null
+        }
+
+        if (retryAfterVal) {
+          const parsedSec = parseFloat(retryAfterVal)
+          if (!isNaN(parsedSec) && parsedSec > 0) {
+            retryAfterMs = parsedSec * 1000
+          } else {
+            const parsedDate = new Date(retryAfterVal).getTime()
+            if (!isNaN(parsedDate) && parsedDate > Date.now()) {
+              retryAfterMs = parsedDate - Date.now()
+            }
+          }
+        }
+      }
+
+      let waitTime: number
+      if (is429 && retryAfterMs !== null) {
+        // Respeita o Retry-After informado pelo servidor
+        waitTime = Math.min(retryAfterMs, maxDelayMs)
+      } else if (is429) {
+        // Backoff exponencial com jitter aleatório (1s ± 30%, 2s ± 30%, 4s ± 30%)
+        // Tentativa 1: 1000ms * (0.7 ~ 1.3)
+        // Tentativa 2: 2000ms * (0.7 ~ 1.3)
+        // Tentativa 3: 4000ms * (0.7 ~ 1.3)
+        const nominalMs = 1000 * Math.pow(backoffFactor, attempt - 1)
+        const jitterFactor = 0.7 + Math.random() * 0.6 // ±30%
+        waitTime = Math.min(nominalMs * jitterFactor, maxDelayMs)
+      } else {
+        const jitter = (Math.random() - 0.5) * 0.6 * currentDelay // ±30%
+        waitTime = Math.min(Math.max(currentDelay + jitter, 100), maxDelayMs)
+      }
 
       console.warn(
-        `[Network Retry] Tentativa ${attempt} de ${retries} após erro (status: ${status || 'desconhecido'}, aguardando ${Math.round(waitTime)}ms):`,
-        error,
+        `[CONV-LOAD] [Network Retry] Tentativa ${attempt} de ${retries} após erro (status: ${
+          status || 'desconhecido'
+        }, 429: ${is429}, aguardando ${Math.round(waitTime)}ms):`,
+        error?.message || error,
       )
       await new Promise((resolve) => setTimeout(resolve, waitTime))
       currentDelay = Math.min(currentDelay * backoffFactor, maxDelayMs)

@@ -6,7 +6,7 @@ interface CachedPhotoData {
 }
 
 const CACHE_PREFIX = 'rpa_wa_photo_'
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 horas
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 dias de validade local
 
 // Cache em memória para acesso síncrono e evitar JSON.parse constante
 const memoryCache = new Map<string, { url: string | null; expiresAt: number }>()
@@ -14,8 +14,8 @@ const memoryCache = new Map<string, { url: string | null; expiresAt: number }>()
 // In-flight promises para desduplicar requisições em andamento do mesmo telefone
 const inFlightRequests = new Map<string, Promise<string | null>>()
 
-// Fila com limitação de concorrência (máx 2 requisições simultâneas para a Z-API)
-const MAX_CONCURRENT = 2
+// Fila com limitação de concorrência (lotes de 3-4 em paralelo conforme requisito 3)
+const MAX_CONCURRENT = 4
 let runningCount = 0
 const queue: Array<() => void> = []
 
@@ -127,9 +127,9 @@ function setCachedProfilePhoto(phone: string, url: string | null) {
 /**
  * Busca a foto de perfil do contato via endpoint autenticado do backend.
  * Garante:
- * - Cache local TTL 24h
+ * - Cache local TTL 7 dias
  * - Desduplicação in-flight por telefone
- * - Concorrência controlada por fila
+ * - Concorrência controlada por fila (lotes de 3-4 simultâneas)
  * - Nunca lança erro ou interrompe o front: em qualquer falha retorna null
  */
 export async function fetchProfilePhoto(rawPhone: string): Promise<string | null> {
@@ -138,7 +138,7 @@ export async function fetchProfilePhoto(rawPhone: string): Promise<string | null
     return null
   }
 
-  // Verificar cache
+  // Verificar cache (7 dias)
   const cached = getCachedProfilePhoto(norm)
   if (cached.hit) {
     return cached.url
@@ -151,6 +151,12 @@ export async function fetchProfilePhoto(rawPhone: string): Promise<string | null
   }
 
   const taskPromise = enqueue(async () => {
+    // Recheca o cache logo antes de disparar (caso outra requisição do mesmo telefone tenha acabado de resolver)
+    const doubleCheck = getCachedProfilePhoto(norm)
+    if (doubleCheck.hit) {
+      return doubleCheck.url
+    }
+
     try {
       const res = await pb.send<{ ok: boolean; photoUrl: string | null }>(
         `/backend/v1/whatsapp/profile-photo?phone=${encodeURIComponent(norm)}`,
@@ -161,10 +167,17 @@ export async function fetchProfilePhoto(rawPhone: string): Promise<string | null
       const photoUrl = res && res.photoUrl ? res.photoUrl : null
       setCachedProfilePhoto(norm, photoUrl)
       return photoUrl
-    } catch (err) {
-      // Em caso de falha de rede/backend, grava null no cache temporário para não floodar chamadas
-      console.warn(`[fetchProfilePhoto] Falha silenciosa para ${norm}:`, err)
-      setCachedProfilePhoto(norm, null)
+    } catch (err: any) {
+      const status = err?.status ?? err?.response?.status
+      if (status === 429) {
+        console.warn(`[fetchProfilePhoto] 429 Rate Limit ao buscar foto para ${norm}`)
+      } else {
+        console.warn(`[fetchProfilePhoto] Falha silenciosa para ${norm}:`, err)
+      }
+      // Em caso de falha transitória/não 429, grava null no cache com TTL para evitar flood repetido
+      if (status !== 429) {
+        setCachedProfilePhoto(norm, null)
+      }
       return null
     }
   })
