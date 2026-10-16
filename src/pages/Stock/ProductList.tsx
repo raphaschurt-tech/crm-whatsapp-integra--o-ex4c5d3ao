@@ -216,11 +216,11 @@ export default function ProductList() {
             variant="outline"
             className="border-emerald-600 text-emerald-700 hover:bg-emerald-50 font-semibold shadow-sm"
             onClick={() => {
-              // Se houver seleção ativa, imprime a seleção; caso contrário, abre com os produtos filtrados da visualização
+              // Se houver seleção ativa na tabela, abre com a seleção; caso contrário, abre vazio para o usuário pesquisar e selecionar no modal
               const toPrint =
                 selectedProductIds.length > 0
                   ? products.filter((p) => selectedProductIds.includes(p.id))
-                  : filtered.slice(0, 100)
+                  : []
               setProductsToPrint(toPrint)
               setPrintModalOpen(true)
             }}

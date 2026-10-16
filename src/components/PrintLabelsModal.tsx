@@ -114,14 +114,28 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
     return map
   }, [allProducts, initialProducts])
 
-  // Lista dos produtos atualmente ativos para impressão
+  // Base do catálogo a ser pesquisado/filtrado: allProducts (se fornecido) ou initialProducts
+  const catalogList = useMemo(() => {
+    return allProducts.length > 0 ? allProducts : initialProducts
+  }, [allProducts, initialProducts])
+
+  // Lista dos produtos atualmente ativos/selecionados para impressão
   const activeProducts = useMemo(() => {
     return selectedIds.map((id) => productMap.get(id)).filter((p): p is Product => Boolean(p))
   }, [selectedIds, productMap])
 
-  // Produtos filtrados na interface de gerenciamento de vias
+  // Ajusta previewIndex se o item atualmente visualizado for desmarcado
+  useEffect(() => {
+    if (activeProducts.length === 0) {
+      setPreviewIndex(0)
+    } else if (previewIndex >= activeProducts.length) {
+      setPreviewIndex(0)
+    }
+  }, [activeProducts.length, previewIndex])
+
+  // Produtos exibidos na lista segundo os filtros de busca e família
   const filteredProducts = useMemo(() => {
-    return activeProducts.filter((p) => {
+    return catalogList.filter((p) => {
       if (selectedFamily !== 'all' && (p.sou_family || '').trim() !== selectedFamily) {
         return false
       }
@@ -134,15 +148,68 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
       }
       return true
     })
-  }, [activeProducts, selectedFamily, searchFilter])
+  }, [catalogList, selectedFamily, searchFilter])
 
-  // Total de etiquetas / páginas que serão impressas (soma de todas as vias)
+  // Checagem se todos os itens filtrados estão atualmente selecionados
+  const isAllFilteredSelected = useMemo(() => {
+    if (filteredProducts.length === 0) return false
+    return filteredProducts.every((p) => selectedIds.includes(p.id))
+  }, [filteredProducts, selectedIds])
+
+  // Quantidade de itens do resultado filtrado atual que já estão selecionados
+  const filteredSelectedCount = useMemo(() => {
+    return filteredProducts.filter((p) => selectedIds.includes(p.id)).length
+  }, [filteredProducts, selectedIds])
+
+  // Alterna "selecionar todos" aplicado APENAS aos itens do resultado filtrado
+  const handleToggleSelectAllFiltered = () => {
+    if (filteredProducts.length === 0) return
+
+    if (isAllFilteredSelected) {
+      // Desmarca apenas os itens do resultado filtrado
+      const filteredIdSet = new Set(filteredProducts.map((p) => p.id))
+      setSelectedIds((prev) => prev.filter((id) => !filteredIdSet.has(id)))
+    } else {
+      // Marca todos os itens do resultado filtrado e inicializa quantidades se necessário
+      const idsToAdd: string[] = []
+      setQuantities((prev) => {
+        const next = { ...prev }
+        filteredProducts.forEach((p) => {
+          idsToAdd.push(p.id)
+          if (!next[p.id]) {
+            next[p.id] = 1
+          }
+        })
+        return next
+      })
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...idsToAdd])))
+    }
+  }
+
+  // Total de etiquetas / páginas que serão impressas (soma de todas as vias dos itens selecionados)
   const totalLabelsToPrint = useMemo(() => {
     return selectedIds.reduce((sum, id) => {
-      const q = quantities[id] || 0
+      const q = quantities[id] !== undefined ? quantities[id] : 1
       return sum + (q > 0 ? q : 0)
     }, 0)
   }, [selectedIds, quantities])
+
+  // Alterna seleção individual de um produto
+  const handleToggleProduct = (product: Product) => {
+    setSelectedIds((prev) => {
+      const exists = prev.includes(product.id)
+      if (exists) {
+        return prev.filter((id) => id !== product.id)
+      } else {
+        // Inicializa quantidade com 1 se não estiver definida
+        setQuantities((qPrev) => ({
+          ...qPrev,
+          [product.id]: qPrev[product.id] || 1,
+        }))
+        return [...prev, product.id]
+      }
+    })
+  }
 
   // Atualiza via de um produto específico
   const setProductCopies = (id: string, count: number) => {
@@ -150,13 +217,16 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
     setQuantities((prev) => ({ ...prev, [id]: valid }))
   }
 
-  // Remove um produto da fila
-  const removeProductFromQueue = (id: string) => {
-    setSelectedIds((prev) => prev.filter((i) => i !== id))
-  }
-
-  // Aplica quantidade de vias em lote para todos os selecionados
+  // Aplica quantidade de vias em lote para todos os atualmente selecionados
   const handleApplyBulkCopies = () => {
+    if (selectedIds.length === 0) {
+      toast({
+        title: 'Nenhum produto selecionado',
+        description: 'Selecione ao menos um produto para aplicar vias em massa.',
+        variant: 'destructive',
+      })
+      return
+    }
     const val = Math.max(1, Math.min(999, bulkCopies))
     setQuantities((prev) => {
       const next = { ...prev }
@@ -167,36 +237,7 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
     })
     toast({
       title: 'Vias atualizadas',
-      description: `Definido ${val} via(s) para todos os ${selectedIds.length} produtos.`,
-    })
-  }
-
-  // Adiciona produtos por família completa (se allProducts estiver disponível)
-  const handleAddByFamily = (fam: string) => {
-    if (!fam || fam === 'all') return
-    const matching = allProducts.filter((p) => (p.sou_family || '').trim() === fam)
-    if (matching.length === 0) {
-      toast({ title: 'Nenhum produto nesta família', variant: 'destructive' })
-      return
-    }
-
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      matching.forEach((p) => next.add(p.id))
-      return Array.from(next)
-    })
-
-    setQuantities((prev) => {
-      const next = { ...prev }
-      matching.forEach((p) => {
-        if (!next[p.id]) next[p.id] = 1
-      })
-      return next
-    })
-
-    toast({
-      title: `Família "${fam}" adicionada`,
-      description: `${matching.length} produto(s) adicionados ao lote de impressão.`,
+      description: `Definido ${val} via(s) para os ${selectedIds.length} produto(s) selecionado(s).`,
     })
   }
 
@@ -206,7 +247,7 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
     selectedIds.forEach((id) => {
       const p = productMap.get(id)
       if (p) {
-        const count = quantities[id] || 1
+        const count = quantities[id] !== undefined ? quantities[id] : 1
         for (let i = 0; i < count; i++) {
           pages.push(p)
         }
@@ -352,7 +393,10 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
                     <div className="flex justify-between text-slate-500">
                       <span>Vias deste item:</span>
                       <strong className="text-emerald-700 font-bold">
-                        {quantities[currentPreviewProduct.id] || 1} cópia(s)
+                        {quantities[currentPreviewProduct.id] !== undefined
+                          ? quantities[currentPreviewProduct.id]
+                          : 1}{' '}
+                        cópia(s)
                       </strong>
                     </div>
                   </div>
@@ -430,41 +474,57 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
                     </div>
                   </div>
                 </div>
-
-                {/* BOTÃO PARA ADICIONAR FAMÍLIA INTEIRA SE SELECIONADA */}
-                {selectedFamily !== 'all' && (
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-xs text-slate-600">
-                      Deseja adicionar todos os produtos de <strong>{selectedFamily}</strong>?
-                    </span>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50"
-                      onClick={() => handleAddByFamily(selectedFamily)}
-                    >
-                      + Incluir família no lote
-                    </Button>
-                  </div>
-                )}
               </div>
 
-              {/* LISTA DE PRODUTOS DO LOTE COM CONTROLE INDIVIDUAL DE CÓPIAS */}
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden flex-1 min-h-[300px]">
-                <div className="p-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+              {/* LISTA DE PRODUTOS DO CATÁLOGO / FILA COM SELEÇÃO E CONTROLE INDIVIDUAL DE VIAS */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden flex-1 min-h-[320px]">
+                <div className="p-3 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="relative flex-1">
-                    <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
+                    <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
                     <Input
-                      placeholder="Buscar produto ou SKU na fila..."
+                      placeholder="Buscar por SKU, nome ou localização..."
                       value={searchFilter}
                       onChange={(e) => setSearchFilter(e.target.value)}
-                      className="h-7 pl-8 text-xs bg-white"
+                      className="h-8 pl-8 text-xs bg-white"
                     />
                   </div>
-                  <span className="text-xs text-slate-500 shrink-0 font-medium">
-                    {filteredProducts.length} de {activeProducts.length} produtos
-                  </span>
+
+                  <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                    {/* Botão Selecionar Todos / Desmarcar Todos DO RESULTADO FILTRADO */}
+                    <button
+                      type="button"
+                      onClick={handleToggleSelectAllFiltered}
+                      disabled={filteredProducts.length === 0}
+                      className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 disabled:text-slate-400 flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title={
+                        isAllFilteredSelected
+                          ? 'Desmarcar todos do resultado filtrado'
+                          : 'Selecionar todos do resultado filtrado'
+                      }
+                    >
+                      {isAllFilteredSelected ? (
+                        <>
+                          <CheckSquare className="h-4 w-4 text-emerald-600" />
+                          <span>Desmarcar filtrados</span>
+                        </>
+                      ) : (
+                        <>
+                          <Square className="h-4 w-4 text-slate-400" />
+                          <span>Selecionar todos filtrados</span>
+                        </>
+                      )}
+                    </button>
+
+                    <span className="text-xs text-slate-500 font-medium">
+                      {filteredSelectedCount > 0 && (
+                        <strong className="text-emerald-700 font-bold mr-1">
+                          {filteredSelectedCount} marcado(s) ·
+                        </strong>
+                      )}
+                      {filteredProducts.length}{' '}
+                      {filteredProducts.length === 1 ? 'produto' : 'produtos'}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="divide-y divide-slate-100 overflow-y-auto max-h-[320px]">
@@ -473,8 +533,9 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
                       Nenhum produto encontrado com os filtros atuais.
                     </div>
                   ) : (
-                    filteredProducts.map((prod, idx) => {
-                      const copies = quantities[prod.id] || 1
+                    filteredProducts.map((prod) => {
+                      const isSelected = selectedIds.includes(prod.id)
+                      const copies = quantities[prod.id] !== undefined ? quantities[prod.id] : 1
                       const isInspecting = currentPreviewProduct?.id === prod.id
                       const loc = formatLocation(prod)
 
@@ -482,14 +543,35 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
                         <div
                           key={prod.id}
                           className={`p-3 flex items-center justify-between gap-3 transition-colors ${
-                            isInspecting ? 'bg-emerald-50/70' : 'hover:bg-slate-50'
+                            isInspecting
+                              ? 'bg-emerald-50/70'
+                              : isSelected
+                                ? 'bg-emerald-50/30 hover:bg-emerald-50/50'
+                                : 'hover:bg-slate-50'
                           }`}
                         >
+                          {/* CHECKBOX INDIVIDUAL DE SELEÇÃO */}
+                          <div className="flex items-center shrink-0">
+                            <input
+                              type="checkbox"
+                              aria-label={`Selecionar produto ${prod.name}`}
+                              checked={isSelected}
+                              onChange={() => handleToggleProduct(prod)}
+                              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-4 w-4"
+                            />
+                          </div>
+
+                          {/* IDENTIFICAÇÃO DO PRODUTO (CLIQUE COLOCA EM FOCO NO PREVIEW) */}
                           <div
                             className="flex-1 min-w-0 cursor-pointer"
                             onClick={() => {
                               const foundIdx = activeProducts.findIndex((p) => p.id === prod.id)
-                              if (foundIdx !== -1) setPreviewIndex(foundIdx)
+                              if (foundIdx !== -1) {
+                                setPreviewIndex(foundIdx)
+                              } else {
+                                // Se o produto ainda não está selecionado, seleciona e foca nele
+                                handleToggleProduct(prod)
+                              }
                             }}
                           >
                             <div className="flex items-center gap-2">
@@ -497,7 +579,9 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
                                 {prod.sku}
                               </span>
                               <span
-                                className="font-semibold text-xs text-slate-800 truncate"
+                                className={`font-semibold text-xs truncate ${
+                                  isSelected ? 'text-slate-900 font-bold' : 'text-slate-700'
+                                }`}
                                 title={prod.name}
                               >
                                 {prod.name}
@@ -516,13 +600,18 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
                             </div>
                           </div>
 
-                          {/* CONTROLE DE CÓPIAS / VIAS */}
+                          {/* CONTROLE DE CÓPIAS / VIAS INDIVIDUAL POR PRODUTO */}
                           <div className="flex items-center gap-2 shrink-0">
-                            <div className="flex items-center border border-slate-200 rounded-md bg-white shadow-sm overflow-hidden">
+                            <div
+                              className={`flex items-center border rounded-md bg-white shadow-sm overflow-hidden ${
+                                isSelected ? 'border-slate-300' : 'border-slate-200 opacity-60'
+                              }`}
+                            >
                               <button
                                 type="button"
+                                disabled={!isSelected}
                                 onClick={() => setProductCopies(prod.id, copies - 1)}
-                                className="px-2 py-1 text-slate-600 hover:bg-slate-100 text-xs font-bold"
+                                className="px-2 py-1 text-slate-600 hover:bg-slate-100 disabled:hover:bg-transparent text-xs font-bold disabled:opacity-40"
                               >
                                 -
                               </button>
@@ -530,31 +619,30 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
                                 type="number"
                                 min="1"
                                 max="999"
+                                disabled={!isSelected}
                                 value={copies}
                                 onChange={(e) =>
                                   setProductCopies(prod.id, parseInt(e.target.value, 10) || 1)
                                 }
-                                className="w-12 text-center text-xs font-bold text-slate-800 border-x border-slate-200 py-1 focus:outline-none"
+                                className="w-12 text-center text-xs font-bold text-slate-800 border-x border-slate-200 py-1 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
                               />
                               <button
                                 type="button"
+                                disabled={!isSelected}
                                 onClick={() => setProductCopies(prod.id, copies + 1)}
-                                className="px-2 py-1 text-slate-600 hover:bg-slate-100 text-xs font-bold"
+                                className="px-2 py-1 text-slate-600 hover:bg-slate-100 disabled:hover:bg-transparent text-xs font-bold disabled:opacity-40"
                               >
                                 +
                               </button>
                             </div>
 
-                            <span className="text-[11px] text-slate-400 font-medium">via(s)</span>
-
-                            <button
-                              type="button"
-                              onClick={() => removeProductFromQueue(prod.id)}
-                              className="text-slate-400 hover:text-red-500 p-1"
-                              title="Remover produto da impressão"
+                            <span
+                              className={`text-[11px] font-medium ${
+                                isSelected ? 'text-slate-600' : 'text-slate-400'
+                              }`}
                             >
-                              <X className="h-4 w-4" />
-                            </button>
+                              via(s)
+                            </span>
                           </div>
                         </div>
                       )
