@@ -32,12 +32,32 @@ routerAdd('GET', '/backend/v1/run-summaries-backfill', (c) => {
     // 2. Carregar resumos já existentes
     const existingSummariesSet = new Set()
     try {
-      const existingSums = $app.findRecordsByFilter('chat_summaries', '', '-created', 10000, 0)
+      const existingSums = $app.findRecordsByFilter('chat_summaries', '', '-created', 20000, 0)
       for (let s = 0; s < existingSums.length; s++) {
         const cPhone = existingSums[s].getString('canonical_phone')
         if (cPhone) existingSummariesSet.add(cPhone)
       }
     } catch (_) {}
+
+    const extractPhoneString = (raw) => {
+      if (!raw) return ''
+      if (typeof raw === 'string') {
+        const trimmed = raw.trim()
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+          try {
+            const parsed = JSON.parse(trimmed)
+            if (parsed && typeof parsed === 'object') {
+              return String(parsed.phone || parsed.number || parsed.id || parsed.chatId || '')
+            }
+          } catch (_) {}
+        }
+        return trimmed
+      }
+      if (typeof raw === 'object') {
+        return String(raw.phone || raw.number || raw.id || raw.chatId || '')
+      }
+      return String(raw)
+    }
 
     // 3. Processar mensagens em lotes
     const convMap = new Map()
@@ -68,22 +88,31 @@ routerAdd('GET', '/backend/v1/run-summaries-backfill', (c) => {
 
         let rawPhone = ''
         try {
-          const p = rec.get('phone')
-          if (typeof p === 'string') rawPhone = p
-          else if (p && typeof p === 'object' && p.phone) rawPhone = String(p.phone)
+          rawPhone = extractPhoneString(rec.get('phone'))
         } catch (_) {}
         if (!rawPhone) {
           try {
-            const ch = rec.get('chat')
-            if (typeof ch === 'string') rawPhone = ch
-            else if (ch && typeof ch === 'object' && ch.phone) rawPhone = String(ch.phone)
+            rawPhone = extractPhoneString(rec.getString('phone'))
           } catch (_) {}
         }
         if (!rawPhone) {
           try {
-            const s = rec.get('sender')
-            if (typeof s === 'string') rawPhone = s
-            else if (s && typeof s === 'object' && s.phone) rawPhone = String(s.phone)
+            rawPhone = extractPhoneString(rec.get('chat'))
+          } catch (_) {}
+        }
+        if (!rawPhone) {
+          try {
+            rawPhone = extractPhoneString(rec.getString('chat'))
+          } catch (_) {}
+        }
+        if (!rawPhone) {
+          try {
+            rawPhone = extractPhoneString(rec.get('sender'))
+          } catch (_) {}
+        }
+        if (!rawPhone) {
+          try {
+            rawPhone = extractPhoneString(rec.getString('sender'))
           } catch (_) {}
         }
 

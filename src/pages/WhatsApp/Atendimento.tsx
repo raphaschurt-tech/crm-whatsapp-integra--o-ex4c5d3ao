@@ -47,8 +47,10 @@ import {
   WhatsAppStatus,
   DEFAULT_WHATSAPP_DAYS_WINDOW,
   loadWhatsAppConversations,
+  loadCustomerConversationMessages,
   searchWhatsAppConversationsDirect,
   mergeWhatsAppCustomers,
+  rebuildMissingChatSummary,
   markWhatsAppAsRead,
   normalizePhoneKey,
   extractNormalizedPhone,
@@ -80,6 +82,14 @@ export default function WhatsAppAtendimento() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const [customers, setCustomers] = useState<WhatsAppCustomer[]>([])
+
+  // Estado da carga sob demanda de mensagens do cliente selecionado (Guarda 3c)
+  const [loadingActiveMessages, setLoadingActiveMessages] = useState(false)
+  const [loadingActiveMessagesError, setLoadingActiveMessagesError] = useState<string | null>(null)
+  const [activeMessagesPage, setActiveMessagesPage] = useState(1)
+  const [hasMoreActiveMessages, setHasMoreActiveMessages] = useState(true)
+  const [isLoadingMoreActiveMessages, setIsLoadingMoreActiveMessages] = useState(false)
+
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
   const [selectedPhone, setSelectedPhone] = useState<string>(() => {
     try {
@@ -675,21 +685,36 @@ export default function WhatsAppAtendimento() {
           const updatedMessages = [...target.messages, newMsg].sort(
             (a, b) => a.timestamp - b.timestamp,
           )
-          const isSelected = target.id === selectedCustomerId || target.rawPhone === selectedPhone
-          const isUnread = !isFromMe && !isSelected
+          const isSelected =
+            target.id === selectedCustomerId ||
+            target.summaryId === selectedCustomerId ||
+            target.rawPhone === selectedPhone ||
+            (target.canonicalPhone && key.includes(target.canonicalPhone))
+
+          // Guarda 3b: mensagem chegando com a conversa ABERTA aparece no thread e NÃO incrementa badge;
+          // conversa FECHADA sobe ao topo com badge +1 sem recarregar;
+          // mensagem do próprio atendente NÃO incrementa badge
+          const shouldIncrementBadge = !isFromMe && !isSelected
 
           const updatedTarget: WhatsAppCustomer = {
             ...target,
             messages: updatedMessages,
             lastActivity: timeStr,
             lastTimestamp: timestamp,
-            unreadCount: isUnread ? (target.unreadCount || 0) + 1 : target.unreadCount,
-            status: isUnread && target.status === 'resolvido' ? 'novo' : target.status,
+            unreadCount: shouldIncrementBadge
+              ? (target.unreadCount || 0) + 1
+              : target.unreadCount || 0,
+            status: shouldIncrementBadge && target.status === 'resolvido' ? 'novo' : target.status,
+          }
+
+          // Se a conversa estiver aberta e for do cliente, marcar leitura automaticamente (Guarda 3a)
+          if (isSelected && !isFromMe) {
+            markWhatsAppAsRead(rawPhone, timestamp, target.summaryId)
           }
 
           const copy = [...prev]
           copy[index] = updatedTarget
-          // Reordena pelo mais recente sem piscar
+          // Reordena pelo mais recente sem piscar (conversa fechada ou aberta sobe ao topo)
           return copy.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
         }
 
@@ -773,6 +798,51 @@ export default function WhatsAppAtendimento() {
     [triggerDebouncedFetch],
   )
 
+  // Handler realtime para atualizações na tabela chat_summaries (zeramento de badge, novas mensagens)
+  const handleRealtimeChatSummary = useCallback(
+    (e: any) => {
+      const rec = e.record
+      if (!rec) return
+      const cPhone = rec.canonical_phone
+      if (!cPhone) return
+
+      setCustomers((prev) => {
+        const index = prev.findIndex((c) => {
+          return c.canonicalPhone === cPhone || c.summaryId === rec.id
+        })
+        if (index < 0) return prev
+
+        const target = prev[index]
+        const isSelected =
+          target.id === selectedCustomerId ||
+          target.summaryId === selectedCustomerId ||
+          target.rawPhone === selectedPhone
+
+        // Se o evento zerou unread_count ou veio com nova contagem
+        const unreadCount = isSelected ? 0 : Number(rec.unread_count) || 0
+
+        const updated: WhatsAppCustomer = {
+          ...target,
+          unreadCount,
+          lastActivity: rec.last_message_at
+            ? formatActivityTime(new Date(rec.last_message_at))
+            : target.lastActivity,
+          lastTimestamp: rec.last_message_at
+            ? new Date(rec.last_message_at).getTime()
+            : target.lastTimestamp,
+          lastMessagePreview: rec.last_message_preview || target.lastMessagePreview,
+          lastMessageDirection: rec.last_message_direction || target.lastMessageDirection,
+        }
+
+        const copy = [...prev]
+        copy[index] = updated
+        return copy.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+      })
+    },
+    [selectedCustomerId, selectedPhone],
+  )
+
+  useRealtime('chat_summaries', handleRealtimeChatSummary)
   useRealtime('webhook_received', handleRealtimeWebhook)
   useRealtime('message_processing', handleRealtimeProcessing)
   useRealtime('whatsapp_read_states', triggerDebouncedFetch)
@@ -915,7 +985,9 @@ export default function WhatsAppAtendimento() {
   const activeCustomer = (() => {
     // 1. Procurar por ID se tiver selectedCustomerId
     if (selectedCustomerId) {
-      const byId = customers.find((c) => c.id === selectedCustomerId)
+      const byId = customers.find(
+        (c) => c.id === selectedCustomerId || c.summaryId === selectedCustomerId,
+      )
       if (byId) return byId
     }
 
@@ -923,7 +995,7 @@ export default function WhatsAppAtendimento() {
     if (selectedPhone) {
       const normSaved = normalizePhoneKey(selectedPhone)
       const byPhone = customers.find((c) => {
-        const cNorm = normalizePhoneKey(c.rawPhone || c.phone)
+        const cNorm = normalizePhoneKey(c.canonicalPhone || c.rawPhone || c.phone)
         return cNorm === normSaved || (c.rawPhone && c.rawPhone === selectedPhone)
       })
       if (byPhone) return byPhone
@@ -932,6 +1004,110 @@ export default function WhatsAppAtendimento() {
     // 3. NÃO saltar para customers[0] se não encontrar match
     return undefined
   })()
+
+  // Carga SOB DEMANDA das mensagens reais ao abrir conversa (Passo 3 & Guarda 3c)
+  // Guarda 5: se não houver mensagens ou resumo corrompido, dispara reconstrução
+  const activePhoneTarget = activeCustomer ? activeCustomer.rawPhone || activeCustomer.phone : ''
+  const activeSummaryId = activeCustomer?.summaryId
+
+  const loadActiveCustomerMessagesOnDemand = useCallback(
+    async (phone: string, page = 1, append = false) => {
+      if (!phone) return
+      if (page === 1) {
+        setLoadingActiveMessages(true)
+        setLoadingActiveMessagesError(null)
+      } else {
+        setIsLoadingMoreActiveMessages(true)
+      }
+
+      try {
+        const perPage = 100
+        const fetched = await loadCustomerConversationMessages(phone, { page, perPage })
+
+        // Se página 1 e fetched vazio, tentar reconstrução defensiva (Guarda 5)
+        if (page === 1 && fetched.length === 0) {
+          await rebuildMissingChatSummary(phone)
+        }
+
+        setCustomers((prev) => {
+          const index = prev.findIndex((c) => {
+            const cNorm = normalizePhoneKey(c.canonicalPhone || c.rawPhone || c.phone)
+            const pNorm = normalizePhoneKey(phone)
+            return cNorm === pNorm || c.rawPhone === phone
+          })
+          if (index < 0) return prev
+
+          const current = prev[index]
+          let mergedMessages: WhatsAppMessage[]
+
+          if (append) {
+            // Merge idempotente por ID
+            const existingIds = new Set(current.messages.map((m) => m.id))
+            const newOnes = fetched.filter((m) => !existingIds.has(m.id))
+            mergedMessages = [...current.messages, ...newOnes]
+          } else {
+            // Substitui o preview sintético da lista pelas mensagens reais
+            mergedMessages = fetched
+          }
+
+          mergedMessages.sort((a, b) => a.timestamp - b.timestamp)
+
+          const copy = [...prev]
+          copy[index] = {
+            ...current,
+            messages: mergedMessages,
+          }
+          return copy
+        })
+
+        setHasMoreActiveMessages(fetched.length >= perPage)
+        setActiveMessagesPage(page)
+      } catch (err: any) {
+        console.warn('[ATENDIMENTO-DEMAND] Erro ao carregar mensagens sob demanda:', err)
+        if (page === 1) {
+          setLoadingActiveMessagesError(
+            err?.message || 'Falha ao carregar mensagens desta conversa.',
+          )
+        }
+      } finally {
+        setLoadingActiveMessages(false)
+        setIsLoadingMoreActiveMessages(false)
+      }
+    },
+    [],
+  )
+
+  // Disparar carga sob demanda ao trocar de conversa selecionada
+  useEffect(() => {
+    if (!activePhoneTarget) return
+    setActiveMessagesPage(1)
+    setHasMoreActiveMessages(true)
+    loadActiveCustomerMessagesOnDemand(activePhoneTarget, 1, false)
+  }, [activePhoneTarget, loadActiveCustomerMessagesOnDemand])
+
+  // Rolar para cima para carregar histórico anterior da mesma conversa sob demanda (preservando scroll)
+  const handleChatScrollTop = useCallback(async () => {
+    const el = chatContainerRef.current
+    if (!el || isLoadingMoreActiveMessages || !hasMoreActiveMessages || !activePhoneTarget) return
+    if (el.scrollTop <= 60) {
+      const prevScrollHeight = el.scrollHeight
+      const nextPage = activeMessagesPage + 1
+      await loadActiveCustomerMessagesOnDemand(activePhoneTarget, nextPage, true)
+      // Preservar posição do scroll
+      requestAnimationFrame(() => {
+        if (chatContainerRef.current) {
+          const newScrollHeight = chatContainerRef.current.scrollHeight
+          chatContainerRef.current.scrollTop = newScrollHeight - prevScrollHeight
+        }
+      })
+    }
+  }, [
+    activeMessagesPage,
+    activePhoneTarget,
+    hasMoreActiveMessages,
+    isLoadingMoreActiveMessages,
+    loadActiveCustomerMessagesOnDemand,
+  ])
 
   // Unifica mensagens e orçamentos em uma timeline cronológica única de eventos
   type ChatTimelineItem =
@@ -994,10 +1170,10 @@ export default function WhatsAppAtendimento() {
             : c,
         ),
       )
-      // Grava no banco de dados para persistência definitiva
-      markWhatsAppAsRead(targetPhone, lastMsg.timestamp)
+      // Grava no banco de dados para persistência definitiva (Guarda 3a)
+      markWhatsAppAsRead(targetPhone, lastMsg.timestamp, activeCustomer.summaryId)
     }
-  }, [activeCustomer?.id, activeCustomer?.messages?.length])
+  }, [activeCustomer?.id, activeCustomer?.messages?.length, activeCustomer?.summaryId])
 
   const checkIfNearBottom = () => {
     const el = chatContainerRef.current
@@ -1013,6 +1189,8 @@ export default function WhatsAppAtendimento() {
     if (isNear && hasUnreadBelow) {
       setHasUnreadBelow(false)
     }
+    // Suporte a carga para trás ao rolar para o topo
+    handleChatScrollTop()
   }
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
@@ -1100,9 +1278,8 @@ export default function WhatsAppAtendimento() {
         } else if (statusFilter === 'em_atendimento') {
           if (c.status !== 'em_atendimento') return false
         } else if (statusFilter === 'antigos') {
-          const msgs = c.messages || []
-          const lastMsgTime =
-            c.lastTimestamp || (msgs.length > 0 ? msgs[msgs.length - 1]?.timestamp || 0 : 0)
+          // Guarda 3d: filtros usam apenas campos do resumo
+          const lastMsgTime = c.lastTimestamp || 0
           const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000
           if (!lastMsgTime || lastMsgTime > sevenDaysAgo) return false
         } else if (statusFilter === 'inativos') {
@@ -1169,43 +1346,43 @@ export default function WhatsAppAtendimento() {
       switch (statusFilter) {
         case 'todos':
         case 'novo': {
-          // Ordenar por atividade mais recente: mais recente → mais antiga (descendente)
-          const tA = getLastTimestamp(a)
-          const tB = getLastTimestamp(b)
+          // Ordenar por atividade mais recente: mais recente → mais antiga (descendente) - Guarda 3d
+          const tA = a.lastTimestamp || getLastTimestamp(a)
+          const tB = b.lastTimestamp || getLastTimestamp(b)
           return tB - tA
         }
         case 'nao_lidos': {
-          // Ordenar da mais antiga → mais recente
-          const tA = getLastTimestamp(a)
-          const tB = getLastTimestamp(b)
+          // Ordenar da mais antiga → mais recente - Guarda 3d
+          const tA = a.lastTimestamp || getLastTimestamp(a)
+          const tB = b.lastTimestamp || getLastTimestamp(b)
           return tA - tB
         }
         case 'em_atendimento': {
-          // Ordenar mais recente → mais antiga
-          const tA = getLastTimestamp(a)
-          const tB = getLastTimestamp(b)
+          // Ordenar mais recente → mais antiga - Guarda 3d
+          const tA = a.lastTimestamp || getLastTimestamp(a)
+          const tB = b.lastTimestamp || getLastTimestamp(b)
           return tB - tA
         }
         case 'antigos': {
-          // Ordenar da mais antiga → mais nova
-          const tA = getLastTimestamp(a)
-          const tB = getLastTimestamp(b)
+          // Ordenar da mais antiga → mais nova - Guarda 3d
+          const tA = a.lastTimestamp || getLastTimestamp(a)
+          const tB = b.lastTimestamp || getLastTimestamp(b)
           return tA - tB
         }
         case 'inativos': {
-          // Ordenar pela data de fechamento: mais recente → mais antiga (usar updated do registro da conversa; se não houver, a última atividade)
+          // Ordenar pela data de fechamento: mais recente → mais antiga - Guarda 3d
           const convRecordA = a as any
           const convRecordB = b as any
           const tA = convRecordA.updated
             ? new Date(convRecordA.updated).getTime()
-            : getLastTimestamp(a)
+            : a.lastTimestamp || getLastTimestamp(a)
           const tB = convRecordB.updated
             ? new Date(convRecordB.updated).getTime()
-            : getLastTimestamp(b)
+            : b.lastTimestamp || getLastTimestamp(b)
           return tB - tA
         }
         default:
-          return getLastTimestamp(b) - getLastTimestamp(a)
+          return (b.lastTimestamp || getLastTimestamp(b)) - (a.lastTimestamp || getLastTimestamp(a))
       }
     })
 
@@ -1997,7 +2174,14 @@ export default function WhatsAppAtendimento() {
                               : c,
                           ),
                         )
-                        markWhatsAppAsRead(targetPhone, clickedLastMsg.timestamp)
+                        markWhatsAppAsRead(
+                          targetPhone,
+                          clickedLastMsg.timestamp,
+                          customer.summaryId,
+                        )
+                      } else {
+                        // Se abriu a conversa sem mensagens prévias carregadas, zera no backend também (Guarda 3a)
+                        markWhatsAppAsRead(targetPhone, Date.now(), customer.summaryId)
                       }
                     }}
                     className={`p-3.5 flex items-start gap-3 cursor-pointer transition-colors border-l-4 ${
@@ -2075,7 +2259,14 @@ export default function WhatsAppAtendimento() {
                           <>
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-xs text-slate-500 truncate flex-1">
-                                {lastMsg ? (
+                                {customer.lastMessagePreview ? (
+                                  <>
+                                    {customer.lastMessageDirection === 'outbound' && (
+                                      <span className="font-medium text-slate-700">Você: </span>
+                                    )}
+                                    {customer.lastMessagePreview}
+                                  </>
+                                ) : lastMsg ? (
                                   <>
                                     {lastMsg.sender === 'agent' && (
                                       <span className="font-medium text-slate-700">Você: </span>
@@ -2256,351 +2447,411 @@ export default function WhatsAppAtendimento() {
               onScroll={handleChatScroll}
               className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3.5 relative"
             >
-              <div className="flex justify-center my-2">
-                <span className="text-[11px] bg-white/80 border border-slate-200 text-slate-500 px-3 py-1 rounded-full shadow-xs">
-                  Criptografia de ponta a ponta simulada • Atendimento RPA Auto Parts
-                </span>
-              </div>
+              {/* Guarda 3c: Spinner/indicador ao carregar histórico anterior da mesma conversa */}
+              {isLoadingMoreActiveMessages && (
+                <div className="flex justify-center my-2">
+                  <div className="text-xs text-emerald-800 bg-white/90 border border-emerald-200 px-3 py-1 rounded-full shadow-xs flex items-center gap-2">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+                    <span>Carregando mensagens anteriores...</span>
+                  </div>
+                </div>
+              )}
 
-              {timelineItems.map((item) => {
-                if (item.kind === 'quote') {
-                  const q = item.data
-                  // Calcular status derivado para o badge do cartão
-                  const createdDate = new Date(q.created)
-                  const now = new Date()
-                  const diffDays = (now.getTime() - createdDate.getTime()) / (1000 * 3600 * 24)
-                  let displayStatus = q.status
-                  if (diffDays > 7 && (q.status === 'enviado' || q.status === 'rascunho')) {
-                    displayStatus = 'vencido' as any
-                  }
-
-                  const formattedDate = createdDate.toLocaleDateString('pt-BR', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                  })
-                  const timeFormatted = `${String(createdDate.getHours()).padStart(2, '0')}:${String(
-                    createdDate.getMinutes(),
-                  ).padStart(2, '0')}`
-
-                  const statusConfig = {
-                    pago: {
-                      badge: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-                      label: 'Pago',
-                      icon: CheckCircle,
-                    },
-                    aprovado: {
-                      badge: 'bg-green-100 text-green-800 border-green-200',
-                      label: 'Aprovado',
-                      icon: CheckCircle,
-                    },
-                    enviado: {
-                      badge: 'bg-blue-100 text-blue-800 border-blue-200',
-                      label: 'Enviado',
-                      icon: Clock,
-                    },
-                    vencido: {
-                      badge: 'bg-amber-100 text-amber-800 border-amber-200',
-                      label: 'Vencido',
-                      icon: AlertCircle,
-                    },
-                    rejeitado: {
-                      badge: 'bg-rose-100 text-rose-800 border-rose-200',
-                      label: 'Rejeitado',
-                      icon: AlertCircle,
-                    },
-                    rascunho: {
-                      badge: 'bg-slate-100 text-slate-700 border-slate-200',
-                      label: 'Rascunho',
-                      icon: Clock,
-                    },
-                  }[displayStatus as string] || {
-                    badge: 'bg-blue-100 text-blue-800 border-blue-200',
-                    label: displayStatus,
-                    icon: Clock,
-                  }
-
-                  const StatusIcon = statusConfig.icon
-
-                  return (
-                    <div key={`timeline-quote-${q.id}`} className="flex justify-center my-3">
-                      <div className="w-full max-w-md bg-white border border-indigo-200 rounded-xl p-3.5 shadow-sm hover:border-indigo-400 transition-all bg-gradient-to-r from-indigo-50/40 via-white to-indigo-50/20">
-                        <div className="flex items-center justify-between gap-2 border-b border-indigo-100 pb-2 mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
-                              <FileText className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <span className="font-bold text-slate-900 text-xs font-mono">
-                                Orçamento Nº {q.number}
-                              </span>
-                              <span className="text-[10px] text-slate-400 block">
-                                {formattedDate} às {timeFormatted}
-                              </span>
-                            </div>
-                          </div>
-                          <Badge className={`${statusConfig.badge} text-[10px] font-bold`}>
-                            <StatusIcon className="w-3 h-3 mr-1 inline" />
-                            {statusConfig.label}
-                          </Badge>
-                        </div>
-
-                        <div className="flex items-center justify-between py-1">
-                          <span className="text-xs text-slate-600 font-medium">Valor Total:</span>
-                          <span className="text-base font-extrabold text-emerald-700">
-                            {formatCurrency(q.total)}
-                          </span>
-                        </div>
-
-                        {q.notes && (
-                          <p className="text-[11px] text-slate-500 italic bg-slate-50 p-1.5 rounded mt-1 border border-slate-100 line-clamp-2">
-                            "{q.notes}"
-                          </p>
-                        )}
-
-                        <div className="flex items-center justify-end gap-2 pt-2 mt-2 border-t border-indigo-100/60">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => navigate(`/orcamentos/${q.id}`)}
-                            className="h-7 text-xs text-indigo-700 hover:text-indigo-800 hover:bg-indigo-50 px-2 font-medium"
-                          >
-                            <Eye className="w-3.5 h-3.5 mr-1" />
-                            Ver Orçamento
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                }
-
-                const msg = item.data
-                const isClient = msg.sender === 'client'
-                const isAi = msg.sender === 'ai'
-
-                return (
-                  <div
-                    key={msg.id}
-                    className={`flex ${isClient ? 'justify-end' : 'justify-start'}`}
+              {/* Guarda 3c: Skeleton/Spinner na carga inicial sob demanda */}
+              {loadingActiveMessages ? (
+                <div className="flex flex-col items-center justify-center py-16 space-y-4">
+                  <RefreshCw className="w-8 h-8 animate-spin text-emerald-600" />
+                  <p className="text-sm font-medium text-slate-600">
+                    Carregando mensagens da conversa...
+                  </p>
+                  <div className="w-full max-w-sm space-y-3 px-4">
+                    <div className="h-10 bg-slate-200/70 rounded-xl animate-pulse" />
+                    <div className="h-14 bg-emerald-100/70 rounded-xl animate-pulse ml-auto w-3/4" />
+                    <div className="h-10 bg-slate-200/70 rounded-xl animate-pulse w-2/3" />
+                  </div>
+                </div>
+              ) : loadingActiveMessagesError ? (
+                /* Guarda 3c: Botão "Tentar novamente" em caso de falha (nunca thread vazio silencioso) */
+                <div className="flex flex-col items-center justify-center py-16 space-y-3 bg-rose-50/50 border border-rose-200 rounded-xl mx-4 my-8 p-6 text-center">
+                  <AlertCircle className="w-8 h-8 text-rose-500" />
+                  <p className="text-sm font-semibold text-rose-900">
+                    Não foi possível carregar as mensagens
+                  </p>
+                  <p className="text-xs text-rose-600 max-w-sm">{loadingActiveMessagesError}</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (activePhoneTarget) {
+                        loadActiveCustomerMessagesOnDemand(activePhoneTarget, 1, false)
+                      }
+                    }}
+                    className="mt-2 text-xs border-rose-300 text-rose-800 hover:bg-rose-100"
                   >
-                    <div
-                      className={`relative max-w-[82%] sm:max-w-[70%] rounded-2xl px-3.5 py-2.5 shadow-sm text-sm ${
-                        isClient
-                          ? 'bg-[#d9fdd3] text-slate-900 rounded-tr-xs border border-[#c1e8ba]'
-                          : 'bg-white text-slate-900 rounded-tl-xs border border-slate-200'
-                      }`}
-                    >
-                      {/* Indicador de remetente caso seja IA ou Atendente */}
-                      {!isClient && (
-                        <div className="flex items-center gap-1 mb-1">
-                          {isAi ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                              <Sparkles className="w-3 h-3 text-emerald-600" /> Assistente IA
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
-                              <User className="w-3 h-3 text-blue-600" /> Atendente RPA
-                            </span>
-                          )}
-                        </div>
-                      )}
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                    Tentar novamente
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex justify-center my-2">
+                    <span className="text-[11px] bg-white/80 border border-slate-200 text-slate-500 px-3 py-1 rounded-full shadow-xs">
+                      Criptografia de ponta a ponta simulada • Atendimento RPA Auto Parts
+                    </span>
+                  </div>
 
-                      {/* Badge discreto quando a mensagem do cliente veio de áudio transcrito */}
-                      {isClient && msg.isAudio && (
-                        <div className="flex items-center gap-1 mb-1">
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-600/10 text-emerald-800 border border-emerald-600/20">
-                            <Mic className="w-2.5 h-2.5 text-emerald-700" /> Áudio transcrito
-                          </span>
-                        </div>
-                      )}
+                  {timelineItems.map((item) => {
+                    if (item.kind === 'quote') {
+                      const q = item.data
+                      // Calcular status derivado para o badge do cartão
+                      const createdDate = new Date(q.created)
+                      const now = new Date()
+                      const diffDays = (now.getTime() - createdDate.getTime()) / (1000 * 3600 * 24)
+                      let displayStatus = q.status
+                      if (diffDays > 7 && (q.status === 'enviado' || q.status === 'rascunho')) {
+                        displayStatus = 'vencido' as any
+                      }
 
-                      {/* Bloco de Anexo (Áudio, Imagem, Vídeo ou Documento) se houver */}
-                      {(msg.attachmentUrl || (msg.isAudio && msg.audioUrl)) && (
-                        <div className="mb-2">
-                          {msg.attachmentType === 'audio' ||
-                          msg.isAudio ||
-                          (msg.attachmentUrl &&
-                            (msg.attachmentUrl.startsWith('data:audio/') ||
-                              /\.(ogg|mp3|wav|m4a|aac|opus|weba)$/i.test(
-                                msg.attachmentName || '',
-                              ) ||
-                              /\.(ogg|mp3|wav|m4a|aac|opus|weba)(\?.*)?$/i.test(
-                                msg.attachmentUrl,
-                              ))) ? (
-                            <div className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/90 flex flex-col gap-1.5 min-w-[260px] max-w-sm">
-                              <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium">
-                                <span className="inline-flex items-center gap-1.5">
-                                  <Mic className="w-3.5 h-3.5 text-emerald-600" />
-                                  {msg.attachmentName || 'Mensagem de voz'}
-                                </span>
-                                {(msg.attachmentUrl || msg.audioUrl) && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleDownloadAttachment(
-                                        (msg.attachmentUrl || msg.audioUrl)!,
-                                        msg.attachmentName || 'audio.mp3',
-                                      )
-                                    }
-                                    className="text-slate-500 hover:text-emerald-700 p-0.5"
-                                    title="Baixar áudio"
-                                  >
-                                    <Download className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </div>
-                              <audio
-                                controls
-                                preload="metadata"
-                                src={msg.attachmentUrl || msg.audioUrl}
-                                className="w-full h-8"
-                              >
-                                Seu navegador não suporta a reprodução de áudio.
-                              </audio>
-                            </div>
-                          ) : msg.attachmentType === 'image' ||
-                            (msg.attachmentUrl && msg.attachmentUrl.startsWith('data:image/')) ||
-                            /\.(jpg|jpeg|png|webp|gif)$/i.test(msg.attachmentName || '') ? (
-                            <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-50 relative group">
-                              <img
-                                src={msg.attachmentUrl}
-                                alt={msg.attachmentName || 'Imagem anexada'}
-                                className="max-h-64 w-auto object-cover rounded-lg cursor-pointer hover:opacity-95 transition-opacity"
-                                onClick={() => {
-                                  setPreviewMediaUrl(msg.attachmentUrl!)
-                                  setPreviewMediaTitle(msg.attachmentName || 'Visualizar Imagem')
-                                  setPreviewMediaType('image')
-                                }}
-                              />
-                              <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-md p-1">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setPreviewMediaUrl(msg.attachmentUrl!)
-                                    setPreviewMediaTitle(msg.attachmentName || 'Visualizar Imagem')
-                                    setPreviewMediaType('image')
-                                  }}
-                                  className="text-white hover:text-emerald-300 p-1"
-                                  title="Expandir"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleDownloadAttachment(
-                                      msg.attachmentUrl!,
-                                      msg.attachmentName || 'imagem.png',
-                                    )
-                                  }
-                                  className="text-white hover:text-emerald-300 p-1"
-                                  title="Baixar imagem"
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          ) : msg.attachmentType === 'video' ||
-                            (msg.attachmentUrl && msg.attachmentUrl.startsWith('data:video/')) ||
-                            /\.(mp4|webm|mov|m4v|3gp)$/i.test(msg.attachmentName || '') ? (
-                            <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-900 relative group max-w-sm">
-                              <video
-                                controls
-                                preload="metadata"
-                                src={msg.attachmentUrl}
-                                className="max-h-64 w-full object-cover rounded-lg bg-black"
-                              >
-                                Seu navegador não suporta a reprodução de vídeo.
-                              </video>
-                              <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-900/90 text-white text-[11px]">
-                                <span className="truncate font-medium text-slate-300 max-w-[200px]">
-                                  {msg.attachmentName || 'Vídeo'}
-                                </span>
-                                <div className="flex items-center gap-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setPreviewMediaUrl(msg.attachmentUrl!)
-                                      setPreviewMediaTitle(msg.attachmentName || 'Visualizar Vídeo')
-                                      setPreviewMediaType('video')
-                                    }}
-                                    className="p-1 text-slate-300 hover:text-white"
-                                    title="Ampliar vídeo"
-                                  >
-                                    <Eye className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleDownloadAttachment(
-                                        msg.attachmentUrl!,
-                                        msg.attachmentName || 'video.mp4',
-                                      )
-                                    }
-                                    className="p-1 text-slate-300 hover:text-white"
-                                    title="Baixar vídeo"
-                                  >
-                                    <Download className="w-3.5 h-3.5" />
-                                  </button>
+                      const formattedDate = createdDate.toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                      })
+                      const timeFormatted = `${String(createdDate.getHours()).padStart(2, '0')}:${String(
+                        createdDate.getMinutes(),
+                      ).padStart(2, '0')}`
+
+                      const statusConfig = {
+                        pago: {
+                          badge: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                          label: 'Pago',
+                          icon: CheckCircle,
+                        },
+                        aprovado: {
+                          badge: 'bg-green-100 text-green-800 border-green-200',
+                          label: 'Aprovado',
+                          icon: CheckCircle,
+                        },
+                        enviado: {
+                          badge: 'bg-blue-100 text-blue-800 border-blue-200',
+                          label: 'Enviado',
+                          icon: Clock,
+                        },
+                        vencido: {
+                          badge: 'bg-amber-100 text-amber-800 border-amber-200',
+                          label: 'Vencido',
+                          icon: AlertCircle,
+                        },
+                        rejeitado: {
+                          badge: 'bg-rose-100 text-rose-800 border-rose-200',
+                          label: 'Rejeitado',
+                          icon: AlertCircle,
+                        },
+                        rascunho: {
+                          badge: 'bg-slate-100 text-slate-700 border-slate-200',
+                          label: 'Rascunho',
+                          icon: Clock,
+                        },
+                      }[displayStatus as string] || {
+                        badge: 'bg-blue-100 text-blue-800 border-blue-200',
+                        label: displayStatus,
+                        icon: Clock,
+                      }
+
+                      const StatusIcon = statusConfig.icon
+
+                      return (
+                        <div key={`timeline-quote-${q.id}`} className="flex justify-center my-3">
+                          <div className="w-full max-w-md bg-white border border-indigo-200 rounded-xl p-3.5 shadow-sm hover:border-indigo-400 transition-all bg-gradient-to-r from-indigo-50/40 via-white to-indigo-50/20">
+                            <div className="flex items-center justify-between gap-2 border-b border-indigo-100 pb-2 mb-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                                  <FileText className="w-4 h-4" />
                                 </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-slate-100/90 transition-colors">
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
-                                  <File className="w-5 h-5" />
-                                </div>
-                                <div className="truncate">
-                                  <p className="text-xs font-semibold text-slate-800 truncate">
-                                    {msg.attachmentName || 'Documento Anexo'}
-                                  </p>
-                                  <span className="text-[10px] text-slate-500 font-medium">
-                                    Documento WhatsApp
+                                <div>
+                                  <span className="font-bold text-slate-900 text-xs font-mono">
+                                    Orçamento Nº {q.number}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 block">
+                                    {formattedDate} às {timeFormatted}
                                   </span>
                                 </div>
                               </div>
+                              <Badge className={`${statusConfig.badge} text-[10px] font-bold`}>
+                                <StatusIcon className="w-3 h-3 mr-1 inline" />
+                                {statusConfig.label}
+                              </Badge>
+                            </div>
+
+                            <div className="flex items-center justify-between py-1">
+                              <span className="text-xs text-slate-600 font-medium">
+                                Valor Total:
+                              </span>
+                              <span className="text-base font-extrabold text-emerald-700">
+                                {formatCurrency(q.total)}
+                              </span>
+                            </div>
+
+                            {q.notes && (
+                              <p className="text-[11px] text-slate-500 italic bg-slate-50 p-1.5 rounded mt-1 border border-slate-100 line-clamp-2">
+                                "{q.notes}"
+                              </p>
+                            )}
+
+                            <div className="flex items-center justify-end gap-2 pt-2 mt-2 border-t border-indigo-100/60">
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                onClick={() =>
-                                  handleDownloadAttachment(
-                                    msg.attachmentUrl!,
-                                    msg.attachmentName || 'documento.pdf',
-                                  )
-                                }
-                                className="h-8 px-2 text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 shrink-0 font-medium"
-                                title="Baixar documento"
+                                onClick={() => navigate(`/orcamentos/${q.id}`)}
+                                className="h-7 text-xs text-indigo-700 hover:text-indigo-800 hover:bg-indigo-50 px-2 font-medium"
                               >
-                                <Download className="w-3.5 h-3.5 mr-1" />
-                                Baixar
+                                <Eye className="w-3.5 h-3.5 mr-1" />
+                                Ver Orçamento
                               </Button>
                             </div>
-                          )}
+                          </div>
                         </div>
-                      )}
+                      )
+                    }
 
-                      {/* Texto da mensagem / Legenda */}
-                      {msg.text ? (
-                        <p className="whitespace-pre-wrap leading-relaxed text-sm break-words">
-                          {msg.text}
-                        </p>
-                      ) : null}
+                    const msg = item.data
+                    const isClient = msg.sender === 'client'
+                    const isAi = msg.sender === 'ai'
 
-                      {/* Horário e confirmação de leitura */}
-                      <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-slate-500">
-                        <span>{msg.time}</span>
-                        {isClient && (
-                          <CheckCheck className="w-3.5 h-3.5 text-emerald-600 ml-0.5 inline" />
-                        )}
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex ${isClient ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div
+                          className={`relative max-w-[82%] sm:max-w-[70%] rounded-2xl px-3.5 py-2.5 shadow-sm text-sm ${
+                            isClient
+                              ? 'bg-[#d9fdd3] text-slate-900 rounded-tr-xs border border-[#c1e8ba]'
+                              : 'bg-white text-slate-900 rounded-tl-xs border border-slate-200'
+                          }`}
+                        >
+                          {/* Indicador de remetente caso seja IA ou Atendente */}
+                          {!isClient && (
+                            <div className="flex items-center gap-1 mb-1">
+                              {isAi ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                                  <Sparkles className="w-3 h-3 text-emerald-600" /> Assistente IA
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                                  <User className="w-3 h-3 text-blue-600" /> Atendente RPA
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Badge discreto quando a mensagem do cliente veio de áudio transcrito */}
+                          {isClient && msg.isAudio && (
+                            <div className="flex items-center gap-1 mb-1">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-600/10 text-emerald-800 border border-emerald-600/20">
+                                <Mic className="w-2.5 h-2.5 text-emerald-700" /> Áudio transcrito
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Bloco de Anexo (Áudio, Imagem, Vídeo ou Documento) se houver */}
+                          {(msg.attachmentUrl || (msg.isAudio && msg.audioUrl)) && (
+                            <div className="mb-2">
+                              {msg.attachmentType === 'audio' ||
+                              msg.isAudio ||
+                              (msg.attachmentUrl &&
+                                (msg.attachmentUrl.startsWith('data:audio/') ||
+                                  /\.(ogg|mp3|wav|m4a|aac|opus|weba)$/i.test(
+                                    msg.attachmentName || '',
+                                  ) ||
+                                  /\.(ogg|mp3|wav|m4a|aac|opus|weba)(\?.*)?$/i.test(
+                                    msg.attachmentUrl,
+                                  ))) ? (
+                                <div className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/90 flex flex-col gap-1.5 min-w-[260px] max-w-sm">
+                                  <div className="flex items-center justify-between text-[11px] text-slate-600 font-medium">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <Mic className="w-3.5 h-3.5 text-emerald-600" />
+                                      {msg.attachmentName || 'Mensagem de voz'}
+                                    </span>
+                                    {(msg.attachmentUrl || msg.audioUrl) && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleDownloadAttachment(
+                                            (msg.attachmentUrl || msg.audioUrl)!,
+                                            msg.attachmentName || 'audio.mp3',
+                                          )
+                                        }
+                                        className="text-slate-500 hover:text-emerald-700 p-0.5"
+                                        title="Baixar áudio"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                  <audio
+                                    controls
+                                    preload="metadata"
+                                    src={msg.attachmentUrl || msg.audioUrl}
+                                    className="w-full h-8"
+                                  >
+                                    Seu navegador não suporta a reprodução de áudio.
+                                  </audio>
+                                </div>
+                              ) : msg.attachmentType === 'image' ||
+                                (msg.attachmentUrl &&
+                                  msg.attachmentUrl.startsWith('data:image/')) ||
+                                /\.(jpg|jpeg|png|webp|gif)$/i.test(msg.attachmentName || '') ? (
+                                <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-50 relative group">
+                                  <img
+                                    src={msg.attachmentUrl}
+                                    alt={msg.attachmentName || 'Imagem anexada'}
+                                    className="max-h-64 w-auto object-cover rounded-lg cursor-pointer hover:opacity-95 transition-opacity"
+                                    onClick={() => {
+                                      setPreviewMediaUrl(msg.attachmentUrl!)
+                                      setPreviewMediaTitle(
+                                        msg.attachmentName || 'Visualizar Imagem',
+                                      )
+                                      setPreviewMediaType('image')
+                                    }}
+                                  />
+                                  <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 rounded-md p-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPreviewMediaUrl(msg.attachmentUrl!)
+                                        setPreviewMediaTitle(
+                                          msg.attachmentName || 'Visualizar Imagem',
+                                        )
+                                        setPreviewMediaType('image')
+                                      }}
+                                      className="text-white hover:text-emerald-300 p-1"
+                                      title="Expandir"
+                                    >
+                                      <Eye className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleDownloadAttachment(
+                                          msg.attachmentUrl!,
+                                          msg.attachmentName || 'imagem.png',
+                                        )
+                                      }
+                                      className="text-white hover:text-emerald-300 p-1"
+                                      title="Baixar imagem"
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : msg.attachmentType === 'video' ||
+                                (msg.attachmentUrl &&
+                                  msg.attachmentUrl.startsWith('data:video/')) ||
+                                /\.(mp4|webm|mov|m4v|3gp)$/i.test(msg.attachmentName || '') ? (
+                                <div className="rounded-lg overflow-hidden border border-slate-200 bg-slate-900 relative group max-w-sm">
+                                  <video
+                                    controls
+                                    preload="metadata"
+                                    src={msg.attachmentUrl}
+                                    className="max-h-64 w-full object-cover rounded-lg bg-black"
+                                  >
+                                    Seu navegador não suporta a reprodução de vídeo.
+                                  </video>
+                                  <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-900/90 text-white text-[11px]">
+                                    <span className="truncate font-medium text-slate-300 max-w-[200px]">
+                                      {msg.attachmentName || 'Vídeo'}
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setPreviewMediaUrl(msg.attachmentUrl!)
+                                          setPreviewMediaTitle(
+                                            msg.attachmentName || 'Visualizar Vídeo',
+                                          )
+                                          setPreviewMediaType('video')
+                                        }}
+                                        className="p-1 text-slate-300 hover:text-white"
+                                        title="Ampliar vídeo"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleDownloadAttachment(
+                                            msg.attachmentUrl!,
+                                            msg.attachmentName || 'video.mp4',
+                                          )
+                                        }
+                                        className="p-1 text-slate-300 hover:text-white"
+                                        title="Baixar vídeo"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-slate-100/90 transition-colors">
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                                      <File className="w-5 h-5" />
+                                    </div>
+                                    <div className="truncate">
+                                      <p className="text-xs font-semibold text-slate-800 truncate">
+                                        {msg.attachmentName || 'Documento Anexo'}
+                                      </p>
+                                      <span className="text-[10px] text-slate-500 font-medium">
+                                        Documento WhatsApp
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() =>
+                                      handleDownloadAttachment(
+                                        msg.attachmentUrl!,
+                                        msg.attachmentName || 'documento.pdf',
+                                      )
+                                    }
+                                    className="h-8 px-2 text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 shrink-0 font-medium"
+                                    title="Baixar documento"
+                                  >
+                                    <Download className="w-3.5 h-3.5 mr-1" />
+                                    Baixar
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Texto da mensagem / Legenda */}
+                          {msg.text ? (
+                            <p className="whitespace-pre-wrap leading-relaxed text-sm break-words">
+                              {msg.text}
+                            </p>
+                          ) : null}
+
+                          {/* Horário e confirmação de leitura */}
+                          <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-slate-500">
+                            <span>{msg.time}</span>
+                            {isClient && (
+                              <CheckCheck className="w-3.5 h-3.5 text-emerald-600 ml-0.5 inline" />
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                )
-              })}
-              <div ref={messagesEndRef} />
+                    )
+                  })}
+                  <div ref={messagesEndRef} />
+                </>
+              )}
             </div>
 
             {/* Indicador discreto "Novas mensagens ↓" se o usuário estiver navegando o histórico */}

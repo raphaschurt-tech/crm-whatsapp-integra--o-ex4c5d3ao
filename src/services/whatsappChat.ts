@@ -34,6 +34,7 @@ export interface WhatsAppCustomer {
   type: 'PF' | 'PJ'
   phone: string
   rawPhone: string
+  canonicalPhone?: string
   company?: string
   status: WhatsAppStatus
   unreadCount?: number
@@ -42,6 +43,22 @@ export interface WhatsAppCustomer {
   lastTimestamp: number
   messages: WhatsAppMessage[]
   quotes?: Quote[]
+  summaryId?: string
+  lastMessagePreview?: string
+  lastMessageDirection?: 'inbound' | 'outbound'
+}
+
+export interface ChatSummaryRecord extends RecordModel {
+  canonical_phone: string
+  raw_phone?: string
+  last_message_preview?: string
+  last_message_direction?: 'inbound' | 'outbound'
+  last_message_at?: string
+  first_message_at?: string
+  unread_count?: number
+  tem_mensagens?: boolean
+  last_message_id?: string
+  last_seen_message_ids?: string[] | string
 }
 
 export interface LoadWhatsAppConversationsOptions {
@@ -94,7 +111,7 @@ export function mergeWhatsAppCustomers(
   const map = new Map<string, WhatsAppCustomer>()
 
   const getKey = (c: WhatsAppCustomer) => {
-    const raw = c.rawPhone || c.phone
+    const raw = c.canonicalPhone || c.rawPhone || c.phone
     const norm = normalizePhoneKey(raw)
     return norm || c.id
   }
@@ -382,7 +399,11 @@ const readStateIdCache = new Map<string, string>()
  * Marca uma conversa como lida até o timestamp especificado no banco PocketBase
  * Implementa upsert defensivo com in-flight dedup e tratamento para conflitos (erro 400).
  */
-export async function markWhatsAppAsRead(rawPhone: string, readTimestamp: number): Promise<void> {
+export async function markWhatsAppAsRead(
+  rawPhone: string,
+  readTimestamp: number,
+  summaryId?: string,
+): Promise<void> {
   if (!rawPhone || !readTimestamp) return
   const key = normalizePhoneKey(rawPhone)
   if (!key) return
@@ -397,6 +418,8 @@ export async function markWhatsAppAsRead(rawPhone: string, readTimestamp: number
       await withRetry(
         async () => {
           await persistReadStateRecord(key, readTimestamp)
+          // Guarda 3a: persistir zeramento de unread_count também em chat_summaries
+          await persistSummaryUnreadZero(key, summaryId)
         },
         { retries: 2, delayMs: 400 },
       )
@@ -409,6 +432,39 @@ export async function markWhatsAppAsRead(rawPhone: string, readTimestamp: number
 
   inFlightReadStateSaves.set(key, savePromise)
   return savePromise
+}
+
+async function persistSummaryUnreadZero(key: string, summaryId?: string): Promise<void> {
+  try {
+    const cPhone = computeCanonicalPhoneString(key)
+    if (summaryId) {
+      await pb.collection('chat_summaries').update(summaryId, { unread_count: 0 })
+      return
+    }
+    if (cPhone) {
+      const rec = await pb
+        .collection<ChatSummaryRecord>('chat_summaries')
+        .getFirstListItem(`canonical_phone = "${cPhone}"`)
+        .catch(() => null)
+      if (rec) {
+        await pb.collection('chat_summaries').update(rec.id, { unread_count: 0 })
+      }
+    }
+  } catch (err) {
+    console.warn(`[persistSummaryUnreadZero] Falha ao zerar unread_count no chat_summaries:`, err)
+  }
+}
+
+export function computeCanonicalPhoneString(phoneInput: string): string {
+  if (!phoneInput) return ''
+  const s = String(phoneInput).trim()
+  if (s.toLowerCase().includes('@lid')) return ''
+  const digits = s.replace(/\D/g, '')
+  if (!digits || digits.length >= 14) return ''
+  if ((digits.length === 12 || digits.length === 13) && digits.startsWith('55')) {
+    return digits.slice(2)
+  }
+  return digits
 }
 
 async function persistReadStateRecord(key: string, readTimestamp: number): Promise<void> {
@@ -593,11 +649,15 @@ async function fetchPagedCollectionWithFrozenCursor<T extends RecordModel>(
  */
 export async function loadCustomerConversationMessages(
   rawPhone: string,
+  options?: { page?: number; perPage?: number },
 ): Promise<WhatsAppMessage[]> {
   if (!rawPhone) return []
   const norm = extractNormalizedPhone(rawPhone)
   if (!norm) return []
   const variants = getPhoneVariants(norm)
+
+  const page = options?.page ?? 1
+  const perPage = options?.perPage ?? 100
 
   const filterPartsWebhook = variants.map(
     (v) => `phone ~ "${v}" || chat ~ "${v}" || sender ~ "${v}"`,
@@ -610,20 +670,24 @@ export async function loadCustomerConversationMessages(
   const [webhookList, processingList] = await Promise.all([
     withRetry(
       () =>
-        pb.collection<WebhookReceivedRecord>('webhook_received').getFullList({
+        pb.collection<WebhookReceivedRecord>('webhook_received').getList(page, perPage, {
           filter: filterWebhook,
-          sort: 'created',
+          sort: '-created',
         }),
       { retries: 2, delayMs: 400 },
-    ).catch(() => [] as WebhookReceivedRecord[]),
+    )
+      .then((res) => res.items)
+      .catch(() => [] as WebhookReceivedRecord[]),
     withRetry(
       () =>
-        pb.collection<MessageProcessingRecord>('message_processing').getFullList({
+        pb.collection<MessageProcessingRecord>('message_processing').getList(page, perPage, {
           filter: filterProc,
-          sort: 'created',
+          sort: '-created',
         }),
       { retries: 2, delayMs: 400 },
-    ).catch(() => [] as MessageProcessingRecord[]),
+    )
+      .then((res) => res.items)
+      .catch(() => [] as MessageProcessingRecord[]),
   ])
 
   // Mapear respostas de IA para evitar ecos
@@ -749,6 +813,68 @@ export async function loadCustomerConversationMessages(
 }
 
 /**
+ * Reconstrução resiliente de resumo ausente ou corrompido para uma conversa específica
+ * (Guarda 5: nunca varredura global, apenas daquela conversa específica)
+ */
+export async function rebuildMissingChatSummary(
+  rawPhone: string,
+): Promise<ChatSummaryRecord | null> {
+  const norm = extractNormalizedPhone(rawPhone)
+  if (!norm) return null
+  const canonicalPhone = computeCanonicalPhoneString(norm)
+  if (!canonicalPhone) return null
+
+  try {
+    const messages = await loadCustomerConversationMessages(rawPhone, { perPage: 150 })
+    if (messages.length === 0) return null
+
+    const firstMsg = messages[0]
+    const lastMsg = messages[messages.length - 1]
+
+    const firstAt = new Date(firstMsg.timestamp).toISOString()
+    const lastAt = new Date(lastMsg.timestamp).toISOString()
+    const lastPreview = lastMsg.text
+      ? lastMsg.text.length > 90
+        ? lastMsg.text.slice(0, 90) + '...'
+        : lastMsg.text
+      : 'Mensagem'
+    const direction = lastMsg.sender === 'client' ? 'inbound' : 'outbound'
+
+    // Verificar se já existe
+    const existing = await pb
+      .collection<ChatSummaryRecord>('chat_summaries')
+      .getFirstListItem(`canonical_phone = "${canonicalPhone}"`)
+      .catch(() => null)
+
+    if (existing) {
+      return await pb.collection<ChatSummaryRecord>('chat_summaries').update(existing.id, {
+        last_message_at: lastAt,
+        last_message_preview: lastPreview,
+        last_message_direction: direction,
+        tem_mensagens: true,
+      })
+    } else {
+      return await pb.collection<ChatSummaryRecord>('chat_summaries').create({
+        canonical_phone: canonicalPhone,
+        raw_phone: rawPhone,
+        first_message_at: firstAt,
+        last_message_at: lastAt,
+        last_message_preview: lastPreview,
+        last_message_direction: direction,
+        unread_count: 0,
+        tem_mensagens: true,
+      })
+    }
+  } catch (err) {
+    console.warn(
+      `[rebuildMissingChatSummary] Falha ao reconstruir resumo para ${canonicalPhone}:`,
+      err,
+    )
+    return null
+  }
+}
+
+/**
  * Carrega conversas reais do WhatsApp do banco de dados PocketBase com:
  * 1. Cursor congelado (created <= T0) para estabilidade absoluta durante paginação concorrente com o WhatsApp
  * 2. Merge idempotente por ID de registro (Map/dedupe)
@@ -760,10 +886,47 @@ export async function loadCustomerConversationMessages(
 // Garante UMA carga completa ativa por vez: nova carga espera/reaproveita a promessa em andamento
 let activeFullLoadPromise: Promise<WhatsAppCustomer[]> | null = null
 
+// Cache da flag chat_summaries_migrated para cut-over seguro (Guarda 2b)
+let cachedCutoverFlag: boolean | null = null
+let cutoverFlagCheckedAt = 0
+
+export async function isChatSummariesMigrated(): Promise<boolean> {
+  const now = Date.now()
+  if (cachedCutoverFlag !== null && now - cutoverFlagCheckedAt < 30000) {
+    return cachedCutoverFlag
+  }
+  try {
+    const settingsRec = await pb
+      .collection('settings')
+      .getFirstListItem('')
+      .catch(() => null)
+    const val = Boolean(settingsRec?.chat_summaries_migrated)
+    cachedCutoverFlag = val
+    cutoverFlagCheckedAt = now
+    return val
+  } catch (_) {
+    return cachedCutoverFlag ?? false
+  }
+}
+
 export async function loadWhatsAppConversations(
   options: LoadWhatsAppConversationsOptions = {},
 ): Promise<WhatsAppCustomer[]> {
   const isSearchQuery = Boolean(options.searchQuery && options.searchQuery.trim())
+
+  // Cut-over check: se migrado e não for busca detalhada em mensagens brutas
+  const migrated = await isChatSummariesMigrated()
+  if (migrated && !isSearchQuery && !options.phoneFilter && !options.olderThanIso) {
+    try {
+      const summaryResults = await loadWhatsAppConversationsFromSummaries()
+      if (summaryResults.length > 0) {
+        return summaryResults
+      }
+      // Se por algum motivo summaries retornou vazio (ex: tabela corrompida), faz fallback
+    } catch (sumErr) {
+      console.warn('[CONV-LOAD] Falha ao carregar de chat_summaries, acionando fallback:', sumErr)
+    }
+  }
 
   // Se não for uma busca direta, aplicamos o lock/single-flight para cargas completas
   if (!isSearchQuery) {
@@ -788,6 +951,135 @@ export async function loadWhatsAppConversations(
 }
 
 /**
+ * Carrega a lista leve de conversas a partir de chat_summaries (passo 3 & guarda 2b/3d)
+ * Paginação leve de 1 a 2 páginas (até 500 resumos), sem varrer dezenas de milhares de mensagens
+ */
+export async function loadWhatsAppConversationsFromSummaries(): Promise<WhatsAppCustomer[]> {
+  const [summariesList, customersList, allQuotesList] = await Promise.all([
+    withRetry(
+      () =>
+        pb.collection<ChatSummaryRecord>('chat_summaries').getList(1, 500, {
+          filter: 'tem_mensagens = true',
+          sort: '-last_message_at',
+        }),
+      { retries: 3, delayMs: 400 },
+    ).catch(() => ({ items: [] as ChatSummaryRecord[] })),
+    getCustomers().catch(() => [] as Customer[]),
+    getQuotes().catch(() => [] as Quote[]),
+  ])
+
+  if (customersList.length > 0) {
+    populateCustomerCache(customersList)
+  }
+
+  // Mapa de quotes por customerId
+  const quotesByCustomerId = new Map<string, Quote[]>()
+  for (const q of allQuotesList) {
+    if (!q.customer) continue
+    const list = quotesByCustomerId.get(q.customer) || []
+    list.push(q)
+    quotesByCustomerId.set(q.customer, list)
+  }
+
+  // Mapa de clientes cobrindo variantes
+  const customerMap = new Map<string, Customer>()
+  for (const c of customersList) {
+    if (!c) continue
+    const variants = getPhoneVariants(c.phone || '')
+    for (const v of variants) {
+      if (!customerMap.has(v)) {
+        customerMap.set(v, c)
+      }
+    }
+  }
+
+  const result: WhatsAppCustomer[] = []
+
+  for (const rec of summariesList.items) {
+    const canonical = rec.canonical_phone
+    if (!canonical) continue
+
+    const rawPhone = rec.raw_phone || canonical
+    const phoneKey =
+      canonical.length === 10 || canonical.length === 11 ? `55${canonical}` : canonical
+
+    let matchedCustomer: Customer | null =
+      customerMap.get(phoneKey) || customerMap.get(canonical) || null
+    if (!matchedCustomer) {
+      const variants = getPhoneVariants(canonical)
+      for (const v of variants) {
+        const found = customerMap.get(v)
+        if (found) {
+          matchedCustomer = found
+          break
+        }
+      }
+    }
+
+    const effectiveCustomer = matchedCustomer || getLastKnownCustomer(phoneKey)
+    const displayName = effectiveCustomer
+      ? effectiveCustomer.name
+      : formatPhoneDisplay(rawPhone || canonical)
+    const customerType: 'PF' | 'PJ' = effectiveCustomer
+      ? effectiveCustomer.type || (effectiveCustomer.cnpj ? 'PJ' : 'PF')
+      : 'PF'
+
+    const lastMsgDate = rec.last_message_at ? new Date(rec.last_message_at) : new Date(rec.created)
+    const lastTimestamp = !isNaN(lastMsgDate.getTime()) ? lastMsgDate.getTime() : 0
+    const lastActivity = formatActivityTime(lastMsgDate)
+
+    const unreadCount = Number(rec.unread_count) || 0
+
+    let status: WhatsAppStatus = unreadCount > 0 ? 'novo' : 'em_atendimento'
+    if (
+      matchedCustomer?.whatsapp_status === 'resolvido' ||
+      matchedCustomer?.whatsapp_status === 'em_atendimento' ||
+      matchedCustomer?.whatsapp_status === 'novo'
+    ) {
+      status = matchedCustomer.whatsapp_status as WhatsAppStatus
+    }
+
+    const customerQuotes = effectiveCustomer?.id
+      ? quotesByCustomerId.get(effectiveCustomer.id) || []
+      : []
+
+    // Criar uma mensagem leve sintética para o preview da lista (sem varrer mensagens reais)
+    const previewMessage: WhatsAppMessage = {
+      id: rec.last_message_id ? `sum-last-${rec.last_message_id}` : `sum-last-${rec.id}`,
+      text: rec.last_message_preview || 'Mensagem',
+      time: lastActivity,
+      sender: rec.last_message_direction === 'outbound' ? 'agent' : 'client',
+      timestamp: lastTimestamp,
+      messageId: rec.last_message_id,
+    }
+
+    result.push({
+      id: effectiveCustomer ? effectiveCustomer.id : `sum-${rec.id}`,
+      customerId: effectiveCustomer?.id,
+      name: displayName,
+      type: customerType,
+      phone: formatPhoneDisplay(rawPhone || canonical),
+      rawPhone: rawPhone || phoneKey,
+      canonicalPhone: canonical,
+      company: effectiveCustomer?.company,
+      status,
+      unreadCount,
+      lastReadAt: lastTimestamp,
+      lastActivity,
+      lastTimestamp,
+      messages: [previewMessage], // Contém o preview leve; mensagens completas sob demanda!
+      quotes: customerQuotes,
+      summaryId: rec.id,
+      lastMessagePreview: rec.last_message_preview,
+      lastMessageDirection: rec.last_message_direction,
+    })
+  }
+
+  result.sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+  return result
+}
+
+/**
  * Busca DIRETA no backend por termo (nome, telefone ou texto da mensagem)
  * Caminho leve, focado, fora da fila/lock de carga completa, sem paginar milhares de mensagens.
  * Retorna apenas as conversas que casam com o filtro.
@@ -797,6 +1089,95 @@ export async function searchWhatsAppConversationsDirect(
 ): Promise<WhatsAppCustomer[]> {
   const cleanTerm = searchTerm.trim().replace(/["\\]/g, '')
   if (!cleanTerm) return []
+
+  const migrated = await isChatSummariesMigrated()
+  if (migrated) {
+    try {
+      // 1. Tentar busca rápida em chat_summaries (preview, phone, ou casando clientes)
+      const cleanDigits = cleanTerm.replace(/\D/g, '')
+      let sumFilter = `last_message_preview ~ "${cleanTerm}"`
+      if (cleanDigits.length >= 4) {
+        sumFilter += ` || canonical_phone ~ "${cleanDigits}" || raw_phone ~ "${cleanDigits}"`
+      }
+      const sumMatches = await pb
+        .collection<ChatSummaryRecord>('chat_summaries')
+        .getList(1, 60, {
+          filter: sumFilter,
+          sort: '-last_message_at',
+        })
+        .catch(() => ({ items: [] as ChatSummaryRecord[] }))
+
+      if (sumMatches.items.length > 0) {
+        // Montar a partir dos resumos encontrados
+        const customersList = await getCustomers().catch(() => [] as Customer[])
+        const allQuotesList = await getQuotes().catch(() => [] as Quote[])
+        const customerMap = new Map<string, Customer>()
+        for (const c of customersList) {
+          if (!c) continue
+          const vars = getPhoneVariants(c.phone || '')
+          for (const v of vars) {
+            if (!customerMap.has(v)) customerMap.set(v, c)
+          }
+        }
+        const quotesByCustomer = new Map<string, Quote[]>()
+        for (const q of allQuotesList) {
+          if (!q.customer) continue
+          const list = quotesByCustomer.get(q.customer) || []
+          list.push(q)
+          quotesByCustomer.set(q.customer, list)
+        }
+
+        const out: WhatsAppCustomer[] = []
+        for (const rec of sumMatches.items) {
+          const canonical = rec.canonical_phone
+          const rawPhone = rec.raw_phone || canonical
+          const phoneKey =
+            canonical.length === 10 || canonical.length === 11 ? `55${canonical}` : canonical
+          const matchedCust =
+            customerMap.get(phoneKey) ||
+            customerMap.get(canonical) ||
+            getLastKnownCustomer(phoneKey)
+          const lastMsgDate = rec.last_message_at
+            ? new Date(rec.last_message_at)
+            : new Date(rec.created)
+          const lastTimestamp = !isNaN(lastMsgDate.getTime()) ? lastMsgDate.getTime() : 0
+
+          out.push({
+            id: matchedCust ? matchedCust.id : `sum-${rec.id}`,
+            customerId: matchedCust?.id,
+            name: matchedCust ? matchedCust.name : formatPhoneDisplay(rawPhone || canonical),
+            type: matchedCust?.type || (matchedCust?.cnpj ? 'PJ' : 'PF') || 'PF',
+            phone: formatPhoneDisplay(rawPhone || canonical),
+            rawPhone: rawPhone || phoneKey,
+            canonicalPhone: canonical,
+            company: matchedCust?.company,
+            status: (Number(rec.unread_count) || 0) > 0 ? 'novo' : 'em_atendimento',
+            unreadCount: Number(rec.unread_count) || 0,
+            lastReadAt: lastTimestamp,
+            lastActivity: formatActivityTime(lastMsgDate),
+            lastTimestamp,
+            messages: [
+              {
+                id: rec.last_message_id ? `sum-last-${rec.last_message_id}` : `sum-last-${rec.id}`,
+                text: rec.last_message_preview || 'Mensagem',
+                time: formatActivityTime(lastMsgDate),
+                sender: rec.last_message_direction === 'outbound' ? 'agent' : 'client',
+                timestamp: lastTimestamp,
+                messageId: rec.last_message_id,
+              },
+            ],
+            quotes: matchedCust?.id ? quotesByCustomer.get(matchedCust.id) || [] : [],
+            summaryId: rec.id,
+            lastMessagePreview: rec.last_message_preview,
+            lastMessageDirection: rec.last_message_direction,
+          })
+        }
+        if (out.length > 0) return out
+      }
+    } catch {
+      /* intentionally ignored */
+    }
+  }
 
   const cleanDigits = cleanTerm.replace(/\D/g, '')
   let extraFilterWebhook = ''

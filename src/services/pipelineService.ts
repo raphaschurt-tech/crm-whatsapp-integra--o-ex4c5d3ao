@@ -9,6 +9,9 @@ import {
   WhatsAppMessage,
   formatActivityTime,
   formatPhoneDisplay,
+  isChatSummariesMigrated,
+  computeCanonicalPhoneString,
+  ChatSummaryRecord,
 } from '@/services/whatsappChat'
 
 export type PipelineColumnId =
@@ -169,7 +172,7 @@ export async function loadPipelineBoardData(): Promise<{
 }> {
   // Executa as consultas com backoff e retries aumentados para absorver limites de taxa
   // Não carrega mais todas as 11+ páginas de mensagens do WhatsApp aqui
-  const [customers, quotes, purchaseRequests] = await Promise.all([
+  const [customers, quotes, purchaseRequests, summariesMigrated] = await Promise.all([
     withRetry(() => getCustomers(), { retries: 4, delayMs: 1000 }).catch((err) => {
       console.warn('Erro ao carregar customers para o Pipeline:', err)
       return [] as Customer[]
@@ -185,7 +188,32 @@ export async function loadPipelineBoardData(): Promise<{
         delayMs: 800,
       },
     ).catch(() => [] as any[]),
+    isChatSummariesMigrated().catch(() => false),
   ])
+
+  // Se o cut-over estiver ativo, carregar os resumos em lote leve (chat_summaries)
+  // Passo 4: deriva elegibilidade (tem_mensagens), última interação (last_message_at)
+  // e entrada em "Em atendimento" (first_message_at) dos RESUMOS — sem varrer mensagens.
+  const summariesMap = new Map<string, ChatSummaryRecord>()
+  if (summariesMigrated) {
+    try {
+      const allSummaries = await withRetry(
+        () =>
+          pb.collection<ChatSummaryRecord>('chat_summaries').getFullList({
+            filter: 'tem_mensagens = true',
+          }),
+        { retries: 2, delayMs: 400 },
+      ).catch(() => [] as ChatSummaryRecord[])
+
+      for (const sum of allSummaries) {
+        if (sum.canonical_phone) {
+          summariesMap.set(sum.canonical_phone, sum)
+        }
+      }
+    } catch (err) {
+      console.warn('[PIPELINE] Falha ao carregar chat_summaries, usando campos do customer:', err)
+    }
+  }
 
   // Mapear solicitações de compras ativas (em andamento) por cliente
   const activePurchasesByCustomer = new Map<string, any[]>()
@@ -213,7 +241,13 @@ export async function loadPipelineBoardData(): Promise<{
     if (c.deleted) return false
     const rawStatus = (c.pipeline_status || '').trim()
     const hasQuotes = (quotesByCustomer.get(c.id) || []).length > 0
-    const hasMessages = Boolean(c.first_message_at || c.last_interaction_at)
+
+    // Passo 4: elegibilidade (tem_mensagens) lida de chat_summaries se disponível
+    const cPhone = computeCanonicalPhoneString(c.phone || '')
+    const summary = cPhone ? summariesMap.get(cPhone) : undefined
+    const summaryHasMessages = Boolean(summary?.tem_mensagens)
+
+    const hasMessages = Boolean(summaryHasMessages || c.first_message_at || c.last_interaction_at)
     // Se o cliente não tem pipeline_status e também não tem interação/orçamento (ex: acabou de ser importado), fica fora do funil
     if (!rawStatus && !hasQuotes && !hasMessages) {
       return false
@@ -231,8 +265,18 @@ export async function loadPipelineBoardData(): Promise<{
     let lastInteractionDate: Date = new Date(customer.created)
     let lastInteractionText = formatActivityTime(customer.created)
 
-    // Se houver interação gravada no contato (WhatsApp)
-    if (customer.last_interaction_at) {
+    // Se houver interação gravada no contato ou em chat_summaries (Passo 4: last_message_at)
+    const cPhone = computeCanonicalPhoneString(customer.phone || '')
+    const summary = cPhone ? summariesMap.get(cPhone) : undefined
+
+    if (summary?.last_message_at) {
+      const sumLastTime = new Date(summary.last_message_at).getTime()
+      if (sumLastTime > lastInteractionTimestamp) {
+        lastInteractionTimestamp = sumLastTime
+        lastInteractionDate = new Date(sumLastTime)
+        lastInteractionText = formatActivityTime(lastInteractionDate)
+      }
+    } else if (customer.last_interaction_at) {
       const persistedInteractionTime = new Date(customer.last_interaction_at).getTime()
       if (persistedInteractionTime > lastInteractionTimestamp) {
         lastInteractionTimestamp = persistedInteractionTime
@@ -303,7 +347,12 @@ export async function loadPipelineBoardData(): Promise<{
       } else if (columnId === 'em_atendimento') {
         // Momento em que entrou em atendimento: primeira mensagem real do WhatsApp (first_message_at) ou primeiro orçamento
         let firstInteraction = new Date(customer.created).getTime()
-        if (customer.first_message_at) {
+        if (summary?.first_message_at) {
+          const sumFirstTime = new Date(summary.first_message_at).getTime()
+          if (sumFirstTime > 0) {
+            firstInteraction = sumFirstTime
+          }
+        } else if (customer.first_message_at) {
           const firstMsgTime = new Date(customer.first_message_at).getTime()
           if (firstMsgTime > 0) {
             firstInteraction = firstMsgTime
