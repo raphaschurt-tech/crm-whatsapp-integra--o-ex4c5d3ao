@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-16T22:29:10.149Z",
+  "generatedAt": "2026-10-16T23:36:03.087Z",
   "collections": [
     {
       "name": "users",
@@ -767,6 +767,12 @@
         {
           "name": "sync_integrity_floor",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "chat_summaries_migrated",
+          "type": "bool",
           "required": false,
           "system": false
         }
@@ -1629,6 +1635,83 @@
         }
       ],
       "indexes": ["CREATE UNIQUE INDEX idx_chat_control_phone ON chat_control (phone)"]
+    },
+    {
+      "name": "chat_summaries",
+      "type": "base",
+      "apiRules": {
+        "list": "",
+        "view": "",
+        "create": "",
+        "update": "",
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "canonical_phone",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "raw_phone",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_message_preview",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_message_direction",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_message_at",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "first_message_at",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "unread_count",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "tem_mensagens",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_message_id",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_seen_message_ids",
+          "type": "json",
+          "required": false,
+          "system": false
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_chat_summaries_canonical_phone ON chat_summaries (canonical_phone)",
+        "CREATE INDEX idx_chat_summaries_last_message_at ON chat_summaries (last_message_at DESC)"
+      ]
     }
   ]
 }
