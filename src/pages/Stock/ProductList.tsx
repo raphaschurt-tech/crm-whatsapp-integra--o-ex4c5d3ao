@@ -13,8 +13,12 @@ import {
   Boxes,
   Check,
   AlertCircle,
+  Printer,
+  CheckSquare,
+  Square,
 } from 'lucide-react'
 import { getProducts, deleteProduct } from '@/services/products'
+import { PrintLabelsModal } from '@/components/PrintLabelsModal'
 import { syncStock, lookupStock } from '@/services/stock'
 import { Product } from '@/types/crm'
 import { matchProductSearch } from '@/lib/fuzzySearch'
@@ -69,6 +73,11 @@ export default function ProductList() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [lookupQty, setLookupQuantity] = useState<number | null>(null)
   const [checking, setChecking] = useState(false)
+
+  // Seleção múltipla para impressão de etiquetas em lote
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([])
+  const [printModalOpen, setPrintModalOpen] = useState(false)
+  const [productsToPrint, setProductsToPrint] = useState<Product[]>([])
 
   const loadData = async () => {
     setLoading(true)
@@ -203,6 +212,24 @@ export default function ProductList() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            className="border-emerald-600 text-emerald-700 hover:bg-emerald-50 font-semibold shadow-sm"
+            onClick={() => {
+              // Se houver seleção ativa, imprime a seleção; caso contrário, abre com os produtos filtrados da visualização
+              const toPrint =
+                selectedProductIds.length > 0
+                  ? products.filter((p) => selectedProductIds.includes(p.id))
+                  : filtered.slice(0, 100)
+              setProductsToPrint(toPrint)
+              setPrintModalOpen(true)
+            }}
+            title="Imprimir etiquetas com código de barras (70×30 mm)"
+          >
+            <Printer className="mr-1.5 h-4 w-4 text-emerald-600" />
+            Imprimir Etiquetas
+            {selectedProductIds.length > 0 && ` (${selectedProductIds.length})`}
+          </Button>
           <Button variant="outline" disabled={syncing} onClick={handleSyncAPI}>
             <RefreshCw className={`mr-1.5 h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
             Sincronizar via API
@@ -289,10 +316,70 @@ export default function ProductList() {
         </div>
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          {/* BARRA DE AÇÃO EM MASSA (QUANDO HOUVER ITENS SELECIONADOS) */}
+          {selectedProductIds.length > 0 && (
+            <div className="bg-emerald-50 px-4 py-2.5 border-b border-emerald-200 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-emerald-600 text-white font-bold">
+                  {selectedProductIds.length} selecionado(s)
+                </Badge>
+                <span className="text-xs text-emerald-900 font-medium">
+                  Prontos para etiquetar ou gerenciar
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const toPrint = products.filter((p) => selectedProductIds.includes(p.id))
+                    setProductsToPrint(toPrint)
+                    setPrintModalOpen(true)
+                  }}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-8 shadow-sm flex items-center gap-1.5"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  Imprimir Etiquetas da Seleção ({selectedProductIds.length})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setSelectedProductIds([])}
+                  className="text-xs text-slate-600 hover:text-slate-800 h-8"
+                >
+                  Desmarcar todos
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 text-xs uppercase font-semibold text-slate-500 border-b">
+                  <th className="p-4 w-10 text-center">
+                    <input
+                      type="checkbox"
+                      aria-label="Selecionar todos os produtos visíveis"
+                      checked={
+                        filtered.length > 0 &&
+                        filtered.every((p) => selectedProductIds.includes(p.id))
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const allFilteredIds = filtered.map((p) => p.id)
+                          setSelectedProductIds((prev) =>
+                            Array.from(new Set([...prev, ...allFilteredIds])),
+                          )
+                        } else {
+                          const currentFilteredSet = new Set(filtered.map((p) => p.id))
+                          setSelectedProductIds((prev) =>
+                            prev.filter((id) => !currentFilteredSet.has(id)),
+                          )
+                        }
+                      }}
+                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-4 w-4"
+                    />
+                  </th>
                   <th className="p-4">Produto / SKU</th>
                   <th className="p-4">Naturezas</th>
                   <th className="p-4">Preço</th>
@@ -304,6 +391,7 @@ export default function ProductList() {
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
                 {filtered.map((p) => {
+                  const isChecked = selectedProductIds.includes(p.id)
                   const isPur =
                     p.is_purchased !== undefined
                       ? Boolean(p.is_purchased)
@@ -315,7 +403,27 @@ export default function ProductList() {
                   const isComp = Boolean(p.is_component)
 
                   return (
-                    <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
+                    <tr
+                      key={p.id}
+                      className={`hover:bg-slate-50/80 transition-colors ${
+                        isChecked ? 'bg-emerald-50/40' : ''
+                      }`}
+                    >
+                      <td className="p-4 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Selecionar produto ${p.name}`}
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedProductIds((prev) => [...prev, p.id])
+                            } else {
+                              setSelectedProductIds((prev) => prev.filter((id) => id !== p.id))
+                            }
+                          }}
+                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-4 w-4"
+                        />
+                      </td>
                       <td className="p-4">
                         <button
                           type="button"
@@ -411,6 +519,18 @@ export default function ProductList() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          onClick={() => {
+                            setProductsToPrint([p])
+                            setPrintModalOpen(true)
+                          }}
+                          className="text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50"
+                          title="Imprimir Etiqueta Térmica deste produto"
+                        >
+                          <Printer className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => handleOpenLookup(p)}
                           title="Consultar API Externa"
                         >
@@ -501,6 +621,14 @@ export default function ProductList() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de Impressão de Etiquetas com Código de Barras */}
+      <PrintLabelsModal
+        open={printModalOpen}
+        onOpenChange={setPrintModalOpen}
+        initialProducts={productsToPrint}
+        allProducts={products}
+      />
     </div>
   )
 }

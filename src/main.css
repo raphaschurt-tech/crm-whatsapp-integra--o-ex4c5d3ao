@@ -304,3 +304,66 @@
     animation: pulse-lead-border 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 }
+
+/* ==========================================================================
+   CSS DE IMPRESSÃO TÉRMICA DE ETIQUETAS (70mm × 30mm)
+   Compatível com impressoras térmicas Zebra, Argox, Elgin e Bematech via navegador.
+   Garante UMA etiqueta por página, sem margens do navegador e sem escala.
+   O driver da impressora térmica (modo Tear-Off) controla o avanço/recuo de destaque.
+   ========================================================================== */
+@media print {
+  @page {
+    size: 70mm 30mm;
+    margin: 0 !important;
+  }
+
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    width: 70mm !important;
+    height: auto !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Ocultar toda a interface do CRM durante o Ctrl+P de etiquetas */
+  body.printing-labels > #root > *:not(#thermal-print-portal) {
+    display: none !important;
+  }
+
+  body.printing-labels #thermal-print-portal {
+    display: block !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 70mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    z-index: 9999999 !important;
+  }
+
+  .product-label-print-page {
+    width: 70mm !important;
+    height: 30mm !important;
+    max-width: 70mm !important;
+    max-height: 30mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+  }
+
+  /* Evita quebra órfã após a última página */
+  .product-label-print-page:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+}

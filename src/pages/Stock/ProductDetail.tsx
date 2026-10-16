@@ -16,8 +16,10 @@ import {
   MapPin,
   Tag,
   Hash,
+  Printer,
 } from 'lucide-react'
 import { getProduct, deleteProduct } from '@/services/products'
+import { PrintLabelsModal } from '@/components/PrintLabelsModal'
 import { lookupStock } from '@/services/stock'
 import { Product } from '@/types/crm'
 import { formatCurrency } from '@/lib/whatsapp'
@@ -36,6 +38,7 @@ export default function ProductDetail() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
+  const [printModalOpen, setPrintModalOpen] = useState(false)
 
   const loadData = async () => {
     if (!id) return
@@ -183,6 +186,15 @@ export default function ProductDetail() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setPrintModalOpen(true)}
+            className="border-emerald-600 text-emerald-700 hover:bg-emerald-50 font-semibold shadow-sm"
+            title="Imprimir etiqueta térmica com código de barras"
+          >
+            <Printer className="mr-1.5 h-4 w-4 text-emerald-600" />
+            Imprimir Etiqueta
+          </Button>
           <Button
             variant="outline"
             onClick={handleLookup}
@@ -341,6 +353,14 @@ export default function ProductDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {product && (
+        <PrintLabelsModal
+          open={printModalOpen}
+          onOpenChange={setPrintModalOpen}
+          initialProducts={[product]}
+        />
+      )}
     </div>
   )
 }
