@@ -73,7 +73,8 @@ export function matchesSearchTokens(
 
 /**
  * Helper de matching de produtos para combobox e listagens.
- * Campos pesquisados: nome, sku, descrição, fornecedor, marca, código de barras e código reduzido.
+ * Campos pesquisados: nome, sku, descrição, fornecedor, marca, código de barras,
+ * código reduzido, localizações físicas (1, 2, 3) e família SOU.IS.
  */
 export function matchProductSearch(
   product: {
@@ -84,6 +85,10 @@ export function matchProductSearch(
     brand?: string | null
     barcode?: string | null
     reduced_code?: string | null
+    location_1?: string | null
+    location_2?: string | null
+    location_3?: string | null
+    sou_family?: string | null
   },
   rawQuery: string | null | undefined,
 ): boolean {
@@ -96,6 +101,10 @@ export function matchProductSearch(
       product.brand,
       product.barcode,
       product.reduced_code,
+      product.location_1,
+      product.location_2,
+      product.location_3,
+      product.sou_family,
     ],
     rawQuery,
   )
