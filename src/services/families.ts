@@ -18,6 +18,28 @@ export const getFamilies = async (): Promise<ItemFamily[]> => {
   }
 }
 
+/**
+ * Retorna lista leve apenas de nomes de famílias (item_families sem expandir milhares de produtos),
+ * ideal para dropdowns sem travar o navegador ou o backend.
+ */
+export const getLightFamilyNames = async (): Promise<string[]> => {
+  try {
+    const list = await withRetry(
+      () =>
+        pb.collection<ItemFamily>('item_families').getFullList({
+          sort: 'name',
+          fields: 'name',
+          requestKey: null,
+        }),
+      { retries: 2, delayMs: 400 },
+    )
+    return list.map((f) => (f.name || '').trim()).filter(Boolean)
+  } catch (error) {
+    console.warn('Erro ao carregar nomes leves de famílias:', error)
+    return []
+  }
+}
+
 export const getFamily = (id: string) =>
   pb.collection<ItemFamily>('item_families').getOne(id, {
     expand: 'products',

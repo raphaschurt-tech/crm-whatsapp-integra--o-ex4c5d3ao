@@ -359,6 +359,10 @@
     overflow: hidden !important;
     box-sizing: border-box !important;
     background: #ffffff !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    position: relative !important;
   }
 
   /* Evita quebra órfã após a última página */

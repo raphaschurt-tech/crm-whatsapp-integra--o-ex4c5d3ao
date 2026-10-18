@@ -52,12 +52,20 @@ export const ProductLabel: React.FC<ProductLabelProps> = ({
   const location = formatLocation(product)
   const isPrint = mode === 'print'
 
+  /**
+   * GUARDS M5 + BORDA DE TOLERÂNCIA:
+   * - Mídia física total: exatamente 70mm x 30mm (@page { size: 70mm 30mm; margin: 0 })
+   * - Borda de tolerância de 2mm nos 4 lados: área útil 66mm x 26mm (padding 2mm no container).
+   * - Nada pode tocar ou sangrar a borda física do adesivo.
+   * - Code 128 do SKU no topo com módulo ≥ 0,25mm (barra de 26mm a 66mm de largura, viewBox puro).
+   * - Código grande + descrição + localização, todos contidos dentro dos 2mm de recuo.
+   */
   return (
     <div
       className={`product-label-box relative bg-white text-black overflow-hidden box-border select-none ${
         isPrint
           ? 'product-label-print'
-          : `shadow-md rounded-sm ${showBorder ? 'border border-slate-400' : ''}`
+          : `shadow-md rounded-none ${showBorder ? 'border border-slate-400' : ''}`
       } ${className}`}
       style={{
         width: '70mm',
@@ -66,25 +74,27 @@ export const ProductLabel: React.FC<ProductLabelProps> = ({
         maxWidth: '70mm',
         minHeight: '30mm',
         maxHeight: '30mm',
-        padding: '1.2mm 2mm 1.2mm 2mm',
+        padding: '2mm', // Borda de tolerância estrita de 2mm em todos os 4 lados
+        boxSizing: 'border-box',
         fontFamily:
           'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif',
       }}
     >
-      <div className="w-full h-full flex flex-col justify-between leading-none overflow-hidden">
+      {/* Contêiner da área útil 66mm x 26mm */}
+      <div className="w-full h-full flex flex-col justify-between leading-none overflow-hidden box-border">
         {/* BLOCO SUPERIOR: Código de Barras Code 128 (do SKU) */}
-        <div className="w-full flex flex-col items-center pt-0.5">
-          <div className="w-full max-w-[66mm] h-[8.5mm] flex items-center justify-center">
-            <Barcode128 value={sku} height={32} quietZone={false} className="w-full h-full" />
+        <div className="w-full flex flex-col items-center pt-0">
+          <div className="w-full max-w-[66mm] h-[8mm] flex items-center justify-center overflow-hidden">
+            <Barcode128 value={sku} height={30} quietZone={false} className="w-full h-full" />
           </div>
         </div>
 
-        {/* CÓDIGO DO PRODUTO (SKU) EM FONTE GRANDE */}
-        <div className="w-full flex items-center justify-between px-0.5 mt-[-1px]">
+        {/* CÓDIGO DO PRODUTO (SKU) EM FONTE GRANDE + MARCA */}
+        <div className="w-full flex items-center justify-between px-0.5 mt-0">
           <span
             className="font-extrabold tracking-tight font-mono text-black"
             style={{
-              fontSize: '15pt',
+              fontSize: '14pt',
               lineHeight: '1.05',
               letterSpacing: '0.02em',
             }}
@@ -104,12 +114,12 @@ export const ProductLabel: React.FC<ProductLabelProps> = ({
           )}
         </div>
 
-        {/* CORPO: Descrição / Nome do produto */}
+        {/* CORPO: Descrição / Nome do produto (até 2 linhas com line-clamp) */}
         <div className="w-full px-0.5 flex-1 min-h-0 flex items-center overflow-hidden my-0.5">
           <p
             className="font-semibold uppercase text-black line-clamp-2 leading-[1.1] w-full"
             style={{
-              fontSize: '7.5pt',
+              fontSize: '7.2pt',
               display: '-webkit-box',
               WebkitLineClamp: 2,
               WebkitBoxOrient: 'vertical',
