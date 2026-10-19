@@ -7,17 +7,13 @@ import {
   RefreshCw,
   Search,
   Check,
-  Building2,
   ShieldCheck,
   AlertTriangle,
   ArrowRight,
-  ExternalLink,
   Trash2,
   Sparkles,
   History,
-  RefreshCw,
   Clock,
-  Layers,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -34,6 +30,7 @@ import {
 } from '@/components/ui/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { formatCurrency } from '@/lib/whatsapp'
+import pb from '@/lib/pocketbase/client'
 import {
   getNfeProcessedList,
   getNfePriceQueue,
@@ -45,6 +42,7 @@ import {
   markSouisStockLaunched,
 } from '@/services/financial'
 import { getProducts } from '@/services/products'
+import { getSettings } from '@/services/settings'
 import type { NfeProcessed, NfePriceQueueItem, NfeProductMapping, Product } from '@/types/crm'
 
 export function NfeProcessedView() {
@@ -55,8 +53,8 @@ export function NfeProcessedView() {
 
   // Estado da FASE 2: Captura DFe (D2, D7, CF-1b, CF-1d)
   const [dfePointer, setDfePointer] = useState<any>(null)
+  const [companyCnpjConfigured, setCompanyCnpjConfigured] = useState<string>('')
   const [dfeHistoryList, setDfeHistoryList] = useState<any[]>([])
-  const [loadingDfeHistory, setLoadingDfeHistory] = useState<boolean>(false)
   const [enqueuingCommand, setEnqueuingCommand] = useState<boolean>(false)
   const [retroactiveDays, setRetroactiveDays] = useState<number>(30)
   const [isRetroactiveModalOpen, setIsRetroactiveModalOpen] = useState<boolean>(false)
@@ -92,7 +90,7 @@ export function NfeProcessedView() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [nfes, queue, maps, pointer, hist] = await Promise.all([
+      const [nfes, queue, maps, pointer, hist, appSettings] = await Promise.all([
         getNfeProcessedList(),
         getNfePriceQueue(),
         getNfeProductMappings(),
@@ -104,10 +102,14 @@ export function NfeProcessedView() {
           .collection('dfe_history')
           .getList(1, 50, { sort: '-created' })
           .catch(() => ({ items: [] })),
+        getSettings().catch(() => null),
       ])
       setNfeList(nfes)
       setPriceQueue(queue)
       setMappings(maps)
+      if (appSettings && appSettings.company_cnpj) {
+        setCompanyCnpjConfigured(String(appSettings.company_cnpj).replace(/\D/g, ''))
+      }
       if (pointer.items.length > 0) setDfePointer(pointer.items[0])
       setDfeHistoryList(hist.items)
     } catch (err: any) {
@@ -470,19 +472,51 @@ export function NfeProcessedView() {
         </div>
       </div>
 
-      {/* Avisos de Observabilidade DFe (CF-1d, D7, D9) */}
-      {(!dfePointer || !dfePointer.cert_cnpj) && (
-        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-amber-900 shadow-xs">
+      {/* Avisos de Observabilidade DFe (CF-1d, D7, D8, D9) */}
+      {/* 1. Worker offline ou não inicializado */}
+      {(!dfePointer || dfePointer.worker_status === 'offline') && (
+        <div className="bg-slate-100 border border-slate-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-slate-800 shadow-xs">
           <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <AlertTriangle className="h-4 w-4 text-slate-600 shrink-0" />
             <span>
-              <strong>Aviso DFe (D7):</strong> Certificado digital A1 não configurado no worker
-              externo. Nenhuma consulta automática rodará.
+              <strong>WORKER OFFLINE:</strong> O serviço de captura automática DF-e está offline ou
+              não sincronizado recentemente. Consultas sob demanda aguardarão o início do worker.
             </span>
           </div>
         </div>
       )}
 
+      {/* 2. Certificado digital A1 não configurado */}
+      {(!dfePointer || !dfePointer.cert_cnpj) && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-amber-900 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>Certificado não configurado:</strong> Certificado digital A1 não configurado
+              no worker externo. Nenhuma consulta automática rodará.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* 3. CNPJ divergente entre o certificado A1 e a empresa no CRM (D8) */}
+      {dfePointer?.cert_cnpj &&
+        companyCnpjConfigured &&
+        dfePointer.cert_cnpj.replace(/\D/g, '') !== companyCnpjConfigured && (
+          <div className="bg-rose-50 border border-rose-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-rose-900 shadow-xs">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+              <span>
+                <strong>CNPJ divergente (D8):</strong> O CNPJ do certificado digital (
+                {dfePointer.cert_cnpj}) diverge do CNPJ cadastrado nas Configurações da Empresa (
+                {companyCnpjConfigured}). O ciclo de captura automática do worker foi suspenso para
+                evitar notas indevidas.
+              </span>
+            </div>
+          </div>
+        )}
+
+      {/* 4. Erro do worker ou falhas consecutivas */}
       {dfePointer && dfePointer.worker_status === 'error' && (
         <div className="bg-rose-50 border border-rose-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-rose-900 shadow-xs">
           <div className="flex items-center gap-2">
