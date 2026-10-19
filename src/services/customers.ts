@@ -2,22 +2,152 @@ import pb from '@/lib/pocketbase/client'
 import { withRetry } from '@/lib/retry'
 import { Customer } from '@/types/crm'
 
-export const getCustomers = async (includeDeleted = false): Promise<Customer[]> => {
-  try {
-    const filter = includeDeleted ? '' : 'deleted != true'
-    return await withRetry(
-      () =>
-        pb.collection<Customer>('customers').getFullList({
-          sort: 'name',
-          filter: filter || undefined,
-          expand: 'item_families',
-        }),
-      { retries: 3, delayMs: 800 },
-    )
-  } catch (error) {
-    console.warn('Erro ao carregar clientes:', error)
-    return []
+// Singleton in-memory cache para a lista global de clientes (P-2)
+// Previne rajadas de 15–20 requisições simultâneas no carregamento inicial (HTTP 429)
+interface CustomerSingletonCache {
+  data: Customer[]
+  timestamp: number
+}
+
+let customerSingletonCache: CustomerSingletonCache | null = null
+let customerSingletonCacheWithDeleted: CustomerSingletonCache | null = null
+
+let inFlightCustomersPromise: Promise<Customer[]> | null = null
+let inFlightCustomersWithDeletedPromise: Promise<Customer[]> | null = null
+
+const CUSTOMER_CACHE_FRESH_MS = 60 * 1000 // 1 minuto considerado fresco
+const CUSTOMER_CACHE_STALE_MS = 10 * 60 * 1000 // 10 minutos stale-while-revalidate
+
+/**
+ * Invalida ou limpa o cache singleton de clientes (ex: após criação, atualização ou exclusão)
+ */
+export function invalidateCustomerCache(): void {
+  customerSingletonCache = null
+  customerSingletonCacheWithDeleted = null
+  allCustomersLoadedAt = 0
+}
+
+/**
+ * Atualiza o cache singleton em background sem bloquear a UI (stale-while-revalidate)
+ */
+function triggerBackgroundCustomerRefresh(includeDeleted = false): void {
+  const isTargetInFlight = includeDeleted
+    ? inFlightCustomersWithDeletedPromise
+    : inFlightCustomersPromise
+
+  if (isTargetInFlight) return
+
+  const fetchPromise = (async () => {
+    try {
+      const filter = includeDeleted ? '' : 'deleted != true'
+      const list = await withRetry(
+        () =>
+          pb.collection<Customer>('customers').getFullList({
+            sort: 'name',
+            filter: filter || undefined,
+            expand: 'item_families',
+          }),
+        { retries: 3, delayMs: 800 },
+      )
+
+      if (list && list.length > 0) {
+        const now = Date.now()
+        if (includeDeleted) {
+          customerSingletonCacheWithDeleted = { data: list, timestamp: now }
+        } else {
+          customerSingletonCache = { data: list, timestamp: now }
+          populateCustomerCache(list)
+          allCustomersLoadedAt = now
+        }
+      }
+      return list
+    } catch (err) {
+      console.warn('[CUSTOMER-CACHE] Erro no refresh em background:', err)
+      return includeDeleted
+        ? customerSingletonCacheWithDeleted?.data || []
+        : customerSingletonCache?.data || []
+    } finally {
+      if (includeDeleted) {
+        inFlightCustomersWithDeletedPromise = null
+      } else {
+        inFlightCustomersPromise = null
+      }
+    }
+  })()
+
+  if (includeDeleted) {
+    inFlightCustomersWithDeletedPromise = fetchPromise
+  } else {
+    inFlightCustomersPromise = fetchPromise
   }
+}
+
+export const getCustomers = async (includeDeleted = false): Promise<Customer[]> => {
+  const now = Date.now()
+  const currentCache = includeDeleted ? customerSingletonCacheWithDeleted : customerSingletonCache
+
+  // 1. Se temos cache disponível
+  if (currentCache && currentCache.data.length > 0) {
+    const age = now - currentCache.timestamp
+    // Se estiver stale (> 60s), dispara refresh em background (stale-while-revalidate)
+    if (age > CUSTOMER_CACHE_FRESH_MS) {
+      triggerBackgroundCustomerRefresh(includeDeleted)
+    }
+    // Retorna imediatamente os dados do cache em memória (zero latência, 0 requisições bloqueantes)
+    return currentCache.data
+  }
+
+  // 2. Se já existe uma requisição em voo (single-flight deduplication)
+  const activePromise = includeDeleted
+    ? inFlightCustomersWithDeletedPromise
+    : inFlightCustomersPromise
+  if (activePromise) {
+    return activePromise
+  }
+
+  // 3. Primeira carga síncrona: dispara e armazena promise compartilhada
+  const fetchPromise = (async () => {
+    try {
+      const filter = includeDeleted ? '' : 'deleted != true'
+      const list = await withRetry(
+        () =>
+          pb.collection<Customer>('customers').getFullList({
+            sort: 'name',
+            filter: filter || undefined,
+            expand: 'item_families',
+          }),
+        { retries: 3, delayMs: 800 },
+      )
+
+      const updateTime = Date.now()
+      if (includeDeleted) {
+        customerSingletonCacheWithDeleted = { data: list, timestamp: updateTime }
+      } else {
+        customerSingletonCache = { data: list, timestamp: updateTime }
+        populateCustomerCache(list)
+        allCustomersLoadedAt = updateTime
+      }
+
+      return list
+    } catch (error) {
+      console.warn('Erro ao carregar clientes:', error)
+      return []
+    } finally {
+      if (includeDeleted) {
+        inFlightCustomersWithDeletedPromise = null
+      } else {
+        inFlightCustomersPromise = null
+      }
+    }
+  })()
+
+  if (includeDeleted) {
+    inFlightCustomersWithDeletedPromise = fetchPromise
+  } else {
+    inFlightCustomersPromise = fetchPromise
+  }
+
+  return fetchPromise
 }
 
 export const getCustomer = (id: string) =>
@@ -460,7 +590,9 @@ export function extractDuplicateErrorInfo(error: unknown): DuplicateConflictInfo
 
 export const createCustomer = async (data: Partial<Customer>): Promise<Customer> => {
   try {
-    return await pb.collection<Customer>('customers').create(data)
+    const created = await pb.collection<Customer>('customers').create(data)
+    invalidateCustomerCache()
+    return created
   } catch (err: any) {
     // Garantir que a mensagem de duplicidade ou validação do backend não seja engolida
     const dup = extractDuplicateErrorInfo(err)
@@ -476,7 +608,9 @@ export const createCustomer = async (data: Partial<Customer>): Promise<Customer>
 
 export const updateCustomer = async (id: string, data: Partial<Customer>): Promise<Customer> => {
   try {
-    return await pb.collection<Customer>('customers').update(id, data)
+    const updated = await pb.collection<Customer>('customers').update(id, data)
+    invalidateCustomerCache()
+    return updated
   } catch (err: any) {
     const dup = extractDuplicateErrorInfo(err)
     if (dup.isDuplicate) {
@@ -494,10 +628,12 @@ export const updateCustomer = async (id: string, data: Partial<Customer>): Promi
  * Protegido no backend: apenas role 'admin' tem permissão de executar.
  */
 export const deleteCustomer = async (id: string): Promise<Customer> => {
-  return await pb.collection<Customer>('customers').update(id, {
+  const deleted = await pb.collection<Customer>('customers').update(id, {
     deleted: true,
     deleted_at: new Date().toISOString(),
   })
+  invalidateCustomerCache()
+  return deleted
 }
 
 export interface SyncContactsResult {
