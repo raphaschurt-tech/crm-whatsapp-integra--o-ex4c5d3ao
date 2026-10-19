@@ -26,11 +26,32 @@ export function normalizeSearchText(text: string | null | undefined): string {
 }
 
 /**
+ * Normaliza a string de busca digitada pelo usuário ANTES da tokenização:
+ * (1) substitui separadores `-`, `.`, `/`, `·` por espaço;
+ * (2) insere espaço entre junções dígito ↔ letra ("1d01" -> "1 d 01", "2c3" -> "2 c 3", "1D01" -> "1 D 01");
+ * N2: Não remove zeros à esquerda, não altera case nem plural.
+ * N6: Junção dígito ↔ letra trata maiúsculas e minúsculas identicamente ([0-9][a-zA-Z] e [a-zA-Z][0-9]).
+ */
+export function normalizeSearchInput(rawQuery: string | null | undefined): string {
+  if (!rawQuery) return ''
+  return (
+    String(rawQuery)
+      // (1) Substitui separadores por espaço
+      .replace(/[-./·]/g, ' ')
+      // (2) Insere espaço entre dígito e letra (ex.: "1d01" -> "1 d01", "1D01" -> "1 D01")
+      .replace(/(\d)([a-zA-Z])/g, '$1 $2')
+      // (2) Insere espaço entre letra e dígito (ex.: "d01" -> "d 01", "BL206" -> "BL 206", "ix35" -> "ix 35")
+      .replace(/([a-zA-Z])(\d)/g, '$1 $2')
+  )
+}
+
+/**
  * Extrai as palavras-chave do termo de busca digitado pelo usuário.
  * Filtra stopwords a não ser que todas sejam stopwords.
  */
 export function extractSearchTokens(rawQuery: string | null | undefined): string[] {
-  const normalized = normalizeSearchText(rawQuery)
+  const preprocessed = normalizeSearchInput(rawQuery)
+  const normalized = normalizeSearchText(preprocessed)
   if (!normalized) return []
 
   const words = normalized.split(/\s+/).filter(Boolean)

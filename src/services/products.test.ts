@@ -63,4 +63,48 @@ describe('buildRawProductFilter', () => {
     expect(filter).toContain("name ~ 'bucha'")
     expect(filter).not.toContain('--')
   })
+
+  describe('Guards N1-N6 no buildRawProductFilter', () => {
+    it('N1 & N6: todas as variantes ("1d01", "1D01", "1-D-01", "1 d 01") geram o mesmo filtro com tokens 1, d, 01', () => {
+      const f1 = buildRawProductFilter('1d01', '')
+      const f2 = buildRawProductFilter('1D01', '')
+      const f3 = buildRawProductFilter('1-D-01', '')
+      const f4 = buildRawProductFilter('1 d 01', '')
+
+      expect(f1).toBe(f2)
+      expect(f2).toBe(f3)
+      expect(f3).toBe(f4)
+
+      // Contém cláusulas para '1', 'd' e '01'
+      expect(f1).toContain("location_1 ~ '1'")
+      expect(f1).toContain("location_2 ~ 'd'")
+      expect(f1).toContain("location_3 ~ '01'")
+    })
+
+    it('N2: tokens verbatim sem remoção de zeros à esquerda', () => {
+      const filter = buildRawProductFilter('1d01', '')
+      expect(filter).toContain("location_3 ~ '01'")
+      expect(filter).not.toContain("location_3 ~ '1'") // '01' não vira '1'
+    })
+
+    it('N3: SKU misto sem espaço "BL206" vira "bl" e "206"', () => {
+      const filter = buildRawProductFilter('BL206', '')
+      expect(filter).toContain("reduced_code ~ 'bl'")
+      expect(filter).toContain("reduced_code ~ '206'")
+    })
+
+    it('SKU puramente numérico "8722" não é quebrado', () => {
+      const filter = buildRawProductFilter('8722', '')
+      expect(filter).toContain("sku ~ '8722'")
+      expect(filter).not.toContain(') && (')
+    })
+
+    it('N4: "bucha facão ix35" divide ix35 em "ix" e "35"', () => {
+      const filter = buildRawProductFilter('bucha facão ix35', '')
+      expect(filter).toContain("name ~ 'bucha'")
+      expect(filter).toContain("name ~ 'facao'")
+      expect(filter).toContain("name ~ 'ix'")
+      expect(filter).toContain("name ~ '35'")
+    })
+  })
 })
