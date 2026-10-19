@@ -16,6 +16,7 @@ import {
   Menu,
   X,
   Search,
+  DollarSign,
 } from 'lucide-react'
 import logoImg from '@/assets/logo-rpa-auto-parts-01-definitivo-correto-1d75c.png'
 import { useAuth } from '@/hooks/use-auth'
@@ -50,6 +51,7 @@ export default function Layout() {
     { label: 'Produtos', path: '/produtos', icon: Package },
     { label: 'Famílias', path: '/familias', icon: Layers },
     { label: 'Ordens de Produção', path: '/ordens-producao', icon: Factory },
+    ...(isAdmin ? [{ label: 'Financeiro', path: '/financeiro', icon: DollarSign }] : []),
     ...(isAdmin ? [{ label: 'Configurações', path: '/configuracoes', icon: Settings }] : []),
   ]
 
@@ -88,6 +90,7 @@ export default function Layout() {
     if (path.startsWith('/produtos') || path.startsWith('/estoque')) return 'Produtos'
     if (path.startsWith('/familias')) return 'Famílias de Insumos'
     if (path.startsWith('/ordens-producao')) return 'Ordens de Produção (PCP)'
+    if (path.startsWith('/financeiro')) return 'Financeiro'
     if (path.startsWith('/configuracoes')) return 'Configurações'
     return 'RPA Auto Parts'
   }

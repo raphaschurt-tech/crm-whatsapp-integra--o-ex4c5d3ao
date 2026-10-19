@@ -22,12 +22,7 @@ export const ProtectedRoute = ({ adminOnly = false, children }: ProtectedRoutePr
   }
 
   if (adminOnly && !isAdmin) {
-    return (
-      <div className="p-8 text-center">
-        <h2 className="text-xl font-bold text-slate-800">Acesso Negado</h2>
-        <p className="mt-2 text-slate-600">Você não tem permissão para acessar esta página.</p>
-      </div>
-    )
+    return <Navigate to="/dashboard" replace />
   }
 
   return children ? <>{children}</> : <Outlet />

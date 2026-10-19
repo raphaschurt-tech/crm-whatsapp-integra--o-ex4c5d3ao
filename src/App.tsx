@@ -23,6 +23,7 @@ import UserList from './pages/Users/UserList'
 import SettingsPage from './pages/Settings/SettingsPage'
 import PaymentPage from './pages/Payment/PaymentPage'
 import ProductionOrderList from './pages/Stock/ProductionOrderList'
+import FinancialPage from './pages/Financial/FinancialPage'
 import NotFound from './pages/NotFound'
 import ErrorBoundary from './components/ErrorBoundary'
 
@@ -63,6 +64,14 @@ export function App() {
                 <Route path="familias" element={<FamilyList />} />
                 <Route path="ordens-producao" element={<ProductionOrderList />} />
                 <Route path="pipeline-compras" element={<PipelineCompras />} />
+                <Route
+                  path="financeiro"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <FinancialPage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route path="whatsapp" element={null} />
                 <Route path="usuarios" element={<UserList />} />
                 <Route path="configuracoes" element={<SettingsPage />} />

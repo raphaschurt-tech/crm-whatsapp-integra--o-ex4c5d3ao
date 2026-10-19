@@ -285,3 +285,154 @@ export interface Order extends RecordModel {
     [key: string]: any
   }
 }
+
+// ==========================================
+// MÓDULO FINANCEIRO (FASE 1)
+// ==========================================
+
+export type FinancialCategoryType = 'despesa' | 'receita'
+export type FinancialPaymentStatus = 'pendente' | 'pago' | 'cancelado'
+export type AccountsPayableOrigin = 'manual' | 'nfe' | 'recorrente'
+export type AccountsReceivableOrigin = 'manual' | 'orcamento' | 'recorrente'
+export type FinancialPaymentMethod =
+  | 'PIX'
+  | 'boleto'
+  | 'transferencia'
+  | 'dinheiro'
+  | 'cheque'
+  | 'cartao'
+  | 'outros'
+
+export interface FinancialCategory extends RecordModel {
+  name: string
+  type: FinancialCategoryType
+  description?: string
+  color?: string
+  is_active: boolean
+}
+
+export interface FinancialRecurringTemplate extends RecordModel {
+  description: string
+  category?: string
+  value_type: 'fixo' | 'variavel'
+  fixed_amount?: number
+  due_day: number
+  default_payment_method: FinancialPaymentMethod
+  supplier?: string
+  supplier_name?: string
+  notes?: string
+  is_active: boolean
+  expand?: {
+    category?: FinancialCategory
+    supplier?: Customer
+    [key: string]: any
+  }
+}
+
+export interface NfeProcessed extends RecordModel {
+  access_key: string
+  nfe_number?: string
+  series?: string
+  issue_date?: string
+  supplier_cnpj?: string
+  supplier_name?: string
+  supplier?: string
+  total_amount?: number
+  items_count?: number
+  matched_items_count?: number
+  pending_items_count?: number
+  status: 'processada' | 'pendente_reconciliacao' | 'erro' | 'cancelada'
+  xml_payload?: string
+  raw_items?: any
+  notes?: string
+  expand?: {
+    supplier?: Customer
+    [key: string]: any
+  }
+}
+
+export interface NfePriceQueueItem extends RecordModel {
+  nfe?: string
+  access_key?: string
+  sku?: string
+  supplier_code?: string
+  description: string
+  ncm?: string
+  quantity?: number
+  unit_cost?: number
+  suggested_sell_price?: number
+  status: 'pendente' | 'aplicado' | 'ignorado'
+  resolution_notes?: string
+  resolved_by?: string
+  expand?: {
+    nfe?: NfeProcessed
+    resolved_by?: User
+    [key: string]: any
+  }
+}
+
+export interface AccountsPayable extends RecordModel {
+  description: string
+  category?: string
+  supplier?: string
+  supplier_name?: string
+  amount: number
+  due_date: string
+  status: FinancialPaymentStatus
+  origin: AccountsPayableOrigin
+  nfe_access_key?: string
+  nfe_record?: string
+  recurring_template?: string
+  recurring_competence?: string
+  installment_number?: number
+  total_installments?: number
+  paid_at?: string
+  payment_method?: FinancialPaymentMethod
+  notes?: string
+  attachment?: string
+  created_by?: string
+  expand?: {
+    category?: FinancialCategory
+    supplier?: Customer
+    nfe_record?: NfeProcessed
+    recurring_template?: FinancialRecurringTemplate
+    created_by?: User
+    [key: string]: any
+  }
+}
+
+export interface AccountsReceivable extends RecordModel {
+  description: string
+  category?: string
+  customer?: string
+  customer_name?: string
+  quote?: string
+  amount: number
+  due_date: string
+  status: FinancialPaymentStatus
+  origin: AccountsReceivableOrigin
+  paid_at?: string
+  payment_method?: FinancialPaymentMethod
+  notes?: string
+  attachment?: string
+  created_by?: string
+  expand?: {
+    category?: FinancialCategory
+    customer?: Customer
+    quote?: Quote
+    created_by?: User
+    [key: string]: any
+  }
+}
+
+export interface FinancialDashboardKpis {
+  pendingPayablesAmount: number
+  overduePayablesAmount: number
+  overduePayablesCount: number
+  dueNext7DaysAmount: number
+  dueNext7DaysCount: number
+  pendingReceivablesAmount: number
+  monthInflows: number
+  monthOutflows: number
+  monthBalance: number
+}

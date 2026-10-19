@@ -354,6 +354,8 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     if (clean.startsWith('/produtos/')) return 'Produto'
     if (clean === '/familias') return 'Famílias'
     if (clean === '/ordens-producao') return 'Ordens PCP'
+    if (clean === '/financeiro') return 'Financeiro'
+    if (clean.startsWith('/financeiro')) return 'Financeiro'
     if (clean === '/usuarios') return 'Usuários'
     if (clean === '/configuracoes') return 'Configurações'
     return 'Página'
