@@ -59,6 +59,20 @@ routerAdd('GET', '/backend/v1/run-summaries-backfill', (c) => {
       return String(raw)
     }
 
+    const isXmlRecord = (rec) => {
+      const attachName = String(rec.getString('attachment_name') || '').trim()
+      const attachUrl = String(rec.getString('attachment_url') || '').trim()
+      const attachType = String(rec.getString('attachment_type') || '').toLowerCase()
+      if (attachName && /\.xml$/i.test(attachName)) return true
+      if (attachUrl && /\.xml(\?|$)/i.test(attachUrl)) return true
+      if (
+        attachType === 'document' &&
+        (attachName.toLowerCase().includes('.xml') || attachUrl.toLowerCase().includes('.xml'))
+      )
+        return true
+      return false
+    }
+
     // 3. Processar mensagens em lotes
     const convMap = new Map()
     let page = 1
@@ -85,6 +99,9 @@ routerAdd('GET', '/backend/v1/run-summaries-backfill', (c) => {
 
       for (let i = 0; i < records.length; i++) {
         const rec = records[i]
+
+        // Regra S3: XML / NF-e nunca vira conversa nem resumo
+        if (isXmlRecord(rec)) continue
 
         let rawPhone = ''
         try {

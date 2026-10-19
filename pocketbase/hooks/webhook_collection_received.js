@@ -14,41 +14,46 @@ onRecordAfterCreateSuccess((e) => {
       }
     }
 
-    let rawPhone = ''
-    try {
-      const phoneVal = record.get('phone')
-      if (phoneVal) {
-        if (typeof phoneVal === 'string') {
-          rawPhone = phoneVal
-        } else if (typeof phoneVal === 'object' && phoneVal.phone) {
-          rawPhone = String(phoneVal.phone)
+    // Função auxiliar robusta para extrair telefone de qualquer formato:
+    // - string pura: "5511999999999"
+    // - string JSON: '{"phone":"5511..."}'
+    // - objeto JS: { phone: "5511..." }
+    const extractPhoneValue = (val) => {
+      if (!val) return ''
+      if (typeof val === 'string') {
+        const trimmed = val.trim()
+        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+          try {
+            const parsed = JSON.parse(trimmed)
+            if (parsed && typeof parsed === 'object') {
+              return String(parsed.phone || parsed.number || parsed.id || parsed.chatId || '')
+            }
+          } catch (_) {}
         }
+        return trimmed
       }
-    } catch (_) {}
-
-    if (!rawPhone) {
-      try {
-        const chatVal = record.get('chat')
-        if (chatVal) {
-          if (typeof chatVal === 'string') {
-            rawPhone = chatVal
-          } else if (typeof chatVal === 'object' && chatVal.phone) {
-            rawPhone = String(chatVal.phone)
-          }
-        }
-      } catch (_) {}
+      if (typeof val === 'object') {
+        return String(val.phone || val.number || val.id || val.chatId || '')
+      }
+      return String(val)
     }
 
-    if (!rawPhone) {
+    let rawPhone = ''
+    const candidateFields = ['phone', 'chat', 'sender']
+    for (let f = 0; f < candidateFields.length; f++) {
+      const fieldName = candidateFields[f]
+      // Tentar get (objeto/tipo nativo)
       try {
-        const senderVal = record.get('sender')
-        if (senderVal) {
-          if (typeof senderVal === 'string') {
-            rawPhone = senderVal
-          } else if (typeof senderVal === 'object' && senderVal.phone) {
-            rawPhone = String(senderVal.phone)
-          }
-        }
+        const v = record.get(fieldName)
+        rawPhone = extractPhoneValue(v)
+        if (rawPhone) break
+      } catch (_) {}
+
+      // Tentar getString (se gravado como string ou retornado como string JSON)
+      try {
+        const s = record.getString(fieldName)
+        rawPhone = extractPhoneValue(s)
+        if (rawPhone) break
       } catch (_) {}
     }
 
@@ -61,6 +66,22 @@ onRecordAfterCreateSuccess((e) => {
       } else {
         maskedSenderPhone = '****'
       }
+    } else {
+      // FAIL-ALOUD EXPLÍCITO: NUNCA MAIS SILENCIOSO QUANDO NÃO CONSEGUIR EXTRAIR TELEFONE
+      console.error(
+        '[WEBHOOK-COLLECTION-RECEIVED-FAIL-ALOUD] [PHONE-EXTRACTION-FAILED]',
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          recordId: record.id,
+          messageId: messageId,
+          type: recordType,
+          rawPhoneField: String(record.getString('phone') || record.get('phone') || ''),
+          rawChatField: String(record.getString('chat') || record.get('chat') || ''),
+          rawSenderField: String(record.getString('sender') || record.get('sender') || ''),
+          error:
+            'Não foi possível extrair número de telefone do registro webhook_received. Resumo não atualizado.',
+        }),
+      )
     }
 
     console.log(
@@ -77,6 +98,27 @@ onRecordAfterCreateSuccess((e) => {
     // ==========================================
     // UPSERT DO RESUMO DA CONVERSA (chat_summaries)
     // ==========================================
+    // REGRA S3 / XML: notas fiscais desviadas ou mensagens XML NUNCA viram conversa nem resumo nem badge!
+    const isXmlMessage = Boolean(
+      (record.getString('attachment_name') &&
+        /\.xml$/i.test(record.getString('attachment_name').trim())) ||
+      (record.getString('attachment_url') &&
+        /\.xml(\?|$)/i.test(record.getString('attachment_url').trim())) ||
+      (record.getString('attachment_type') === 'document' &&
+        (record.getString('attachment_name').toLowerCase().includes('.xml') ||
+          record.getString('attachment_url').toLowerCase().includes('.xml'))),
+    )
+    if (isXmlMessage) {
+      console.log(
+        '[WEBHOOK-COLLECTION-RECEIVED-XML-SKIPPED]',
+        JSON.stringify({
+          messageId: messageId,
+          reason: 'Mensagem XML/NF-e ignorada no resumo de atendimento (Regra S3).',
+        }),
+      )
+      return e.next()
+    }
+
     // 1c. Telefone canônico: remove 55 se 12/13 dígitos, descarta LIDs
     const computeCanonicalPhone = (p) => {
       if (!p) return ''
@@ -262,7 +304,15 @@ onRecordAfterCreateSuccess((e) => {
       }
     }
   } catch (err) {
-    console.log('[WEBHOOK-COLLECTION-RECEIVED-ERROR]', err.message || String(err))
+    // FAIL-ALOUD EXPLÍCITO: Log de erro alto para qualquer falha não capturada no processamento do resumo
+    console.error(
+      '[WEBHOOK-COLLECTION-RECEIVED-ERROR-FAIL-ALOUD]',
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        error: err.message || String(err),
+        stack: err.stack || undefined,
+      }),
+    )
   }
 
   e.next()
