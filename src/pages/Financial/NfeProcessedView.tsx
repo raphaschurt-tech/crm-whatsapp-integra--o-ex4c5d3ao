@@ -14,11 +14,16 @@ import {
   ExternalLink,
   Trash2,
   Sparkles,
+  History,
+  RefreshCw,
+  Clock,
+  Layers,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Label } from '@/components/ui/label'
 import {
   Dialog,
   DialogContent,
@@ -44,9 +49,17 @@ import type { NfeProcessed, NfePriceQueueItem, NfeProductMapping, Product } from
 
 export function NfeProcessedView() {
   const { toast } = useToast()
-  const [activeSubTab, setActiveSubTab] = useState<'nfe' | 'pauta' | 'excecoes' | 'mapeamentos'>(
-    'nfe',
-  )
+  const [activeSubTab, setActiveSubTab] = useState<
+    'nfe' | 'pauta' | 'excecoes' | 'mapeamentos' | 'historico_dfe'
+  >('nfe')
+
+  // Estado da FASE 2: Captura DFe (D2, D7, CF-1b, CF-1d)
+  const [dfePointer, setDfePointer] = useState<any>(null)
+  const [dfeHistoryList, setDfeHistoryList] = useState<any[]>([])
+  const [loadingDfeHistory, setLoadingDfeHistory] = useState<boolean>(false)
+  const [enqueuingCommand, setEnqueuingCommand] = useState<boolean>(false)
+  const [retroactiveDays, setRetroactiveDays] = useState<number>(30)
+  const [isRetroactiveModalOpen, setIsRetroactiveModalOpen] = useState<boolean>(false)
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -79,14 +92,24 @@ export function NfeProcessedView() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [nfes, queue, maps] = await Promise.all([
+      const [nfes, queue, maps, pointer, hist] = await Promise.all([
         getNfeProcessedList(),
         getNfePriceQueue(),
         getNfeProductMappings(),
+        pb
+          .collection('dfe_pointer_state')
+          .getList(1, 1, { sort: '-created' })
+          .catch(() => ({ items: [] })),
+        pb
+          .collection('dfe_history')
+          .getList(1, 50, { sort: '-created' })
+          .catch(() => ({ items: [] })),
       ])
       setNfeList(nfes)
       setPriceQueue(queue)
       setMappings(maps)
+      if (pointer.items.length > 0) setDfePointer(pointer.items[0])
+      setDfeHistoryList(hist.items)
     } catch (err: any) {
       toast({
         title: 'Erro ao carregar dados',
@@ -231,6 +254,70 @@ export function NfeProcessedView() {
   }
 
   // Upload manual de XML
+  // CF-1b: Botão "Consultar Agora" DFe (grava comando na fila)
+  const handleEnqueueConsultarAgora = async () => {
+    setEnqueuingCommand(true)
+    try {
+      const res = await pb.send<{ success: boolean; message: string }>(
+        '/backend/v1/dfe/commands/enqueue',
+        {
+          method: 'POST',
+          body: { command: 'consultar_agora' },
+        },
+      )
+      if (res.success) {
+        toast({
+          title: 'Comando Enfileirado (CF-1b)',
+          description: 'comando enfileirado — executa no próximo ciclo do worker',
+          className: 'bg-indigo-600 text-white',
+        })
+        loadData()
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao consultar',
+        description: err.message || 'Falha ao enfileirar comando.',
+        variant: 'destructive',
+      })
+    } finally {
+      setEnqueuingCommand(false)
+    }
+  }
+
+  // D2: Importação Retroativa Explícita
+  const handleConfirmRetroactive = async () => {
+    setEnqueuingCommand(true)
+    try {
+      const res = await pb.send<{ success: boolean; message: string }>(
+        '/backend/v1/dfe/commands/enqueue',
+        {
+          method: 'POST',
+          body: {
+            command: 'importacao_retroativa',
+            params: { days: Number(retroactiveDays) || 30 },
+          },
+        },
+      )
+      if (res.success) {
+        toast({
+          title: 'Importação Retroativa Enfileirada (D2)',
+          description: `Solicitação para os últimos ${retroactiveDays} dias enviada ao worker.`,
+          className: 'bg-indigo-600 text-white',
+        })
+        setIsRetroactiveModalOpen(false)
+        loadData()
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao solicitar importação',
+        description: err.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setEnqueuingCommand(false)
+    }
+  }
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -362,14 +449,51 @@ export function NfeProcessedView() {
             exceções.
           </p>
         </div>
-        <Button
-          onClick={() => setIsUploadOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-xs shrink-0 font-semibold gap-1.5 shadow-xs"
-        >
-          <Upload className="h-3.5 w-3.5" />
-          <span>Upload de XML</span>
-        </Button>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          <Button
+            onClick={handleEnqueueConsultarAgora}
+            disabled={enqueuingCommand}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold gap-1.5 shadow-xs"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${enqueuingCommand ? 'animate-spin' : ''}`} />
+            <span>Consultar Agora (DFe)</span>
+          </Button>
+
+          <Button
+            onClick={() => setIsUploadOpen(true)}
+            variant="outline"
+            className="text-blue-700 border-blue-300 hover:bg-blue-100 text-xs font-semibold gap-1.5 shadow-xs"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            <span>Upload de XML</span>
+          </Button>
+        </div>
       </div>
+
+      {/* Avisos de Observabilidade DFe (CF-1d, D7, D9) */}
+      {(!dfePointer || !dfePointer.cert_cnpj) && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-amber-900 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>Aviso DFe (D7):</strong> Certificado digital A1 não configurado no worker
+              externo. Nenhuma consulta automática rodará.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {dfePointer && dfePointer.worker_status === 'error' && (
+        <div className="bg-rose-50 border border-rose-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-rose-900 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+            <span>
+              <strong>ALERTA WORKER DFe (CF-1d / D3):</strong> Três ou mais falhas consecutivas
+              registradas. Erro: {dfePointer.last_error || 'Falha de comunicação'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Lembrete / Alerta de Entradas Pendentes no SOU.IS (F1 / F2) */}
       {pendingStockEntries.length > 0 && (
@@ -458,6 +582,19 @@ export function NfeProcessedView() {
           >
             <Sparkles className="h-3.5 w-3.5 text-amber-400" />
             <span>Mapeamentos de Aprendizado ({mappings.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('historico_dfe')}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 ${
+              activeSubTab === 'historico_dfe'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <History className="h-3.5 w-3.5 text-indigo-300" />
+            <span>Histórico DFe ({dfeHistoryList.length})</span>
           </button>
         </div>
 
@@ -819,6 +956,121 @@ export function NfeProcessedView() {
         </div>
       )}
 
+      {/* 5. ABA HISTÓRICO DFE (D2 — Backlog e Visibilidade da Captura Automática) */}
+      {activeSubTab === 'historico_dfe' && (
+        <div className="space-y-4">
+          <div className="bg-indigo-50/50 border border-indigo-200 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="text-xs text-indigo-950 space-y-1">
+              <span className="font-bold flex items-center gap-1.5 text-sm text-indigo-900">
+                <History className="h-4 w-4 text-indigo-600" />
+                Histórico de Documentos Recebidos via Distribuição DF-e (D2)
+              </span>
+              <p className="text-indigo-800">
+                Esta aba lista todos os documentos e resumos capturados da SEFAZ pelo ponteiro NSU.
+                Na ativação (NSU-START), o backlog histórico fica apenas listado aqui sem criar
+                lançamentos nem contas a pagar fantasma.
+              </p>
+              <div className="flex items-center gap-4 pt-1 font-mono text-[11px] text-slate-600 flex-wrap">
+                <span>
+                  Ponteiro ultNSU: <strong>{dfePointer?.ult_nsu || '0'}</strong>
+                </span>
+                <span>
+                  maxNSU: <strong>{dfePointer?.max_nsu || '0'}</strong>
+                </span>
+                <span>
+                  Inicializado:{' '}
+                  <strong>
+                    {dfePointer?.is_initialized ? 'Sim (Zero-Impacto OK)' : 'Pendente'}
+                  </strong>
+                </span>
+                <span>
+                  Status Worker: <strong>{dfePointer?.worker_status || 'offline'}</strong>
+                </span>
+              </div>
+            </div>
+
+            <Button
+              size="sm"
+              onClick={() => setIsRetroactiveModalOpen(true)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs shrink-0 font-semibold gap-1.5 shadow-xs"
+            >
+              <Clock className="h-3.5 w-3.5" />
+              <span>Importação Retroativa Manual</span>
+            </Button>
+          </div>
+
+          {dfeHistoryList.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500 bg-white border border-slate-200 rounded-xl">
+              Nenhum documento registrado no histórico DFe até o momento. Execute &quot;Consultar
+              Agora&quot; ou aguarde o ciclo do worker.
+            </div>
+          ) : (
+            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                      <th className="py-2.5 px-3">NSU</th>
+                      <th className="py-2.5 px-3">Chave de Acesso</th>
+                      <th className="py-2.5 px-3">Emitente</th>
+                      <th className="py-2.5 px-3">Data Emissão</th>
+                      <th className="py-2.5 px-3">Valor Total</th>
+                      <th className="py-2.5 px-3">Tipo / Schema</th>
+                      <th className="py-2.5 px-3">Origem</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {dfeHistoryList.map((hist) => (
+                      <tr key={hist.id} className="hover:bg-slate-50/60 transition-colors">
+                        <td className="py-2.5 px-3 font-mono font-medium text-slate-700">
+                          {hist.nsu}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-slate-800">
+                          {hist.access_key}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="font-medium text-slate-900">
+                            {hist.emitter_name || 'Desconhecido'}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            {hist.emitter_cnpj}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600">
+                          {hist.issue_date
+                            ? new Date(hist.issue_date).toLocaleDateString('pt-BR')
+                            : 'N/A'}
+                        </td>
+                        <td className="py-2.5 px-3 font-semibold text-slate-900 font-mono">
+                          {formatCurrency(hist.total_amount || 0)}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <Badge variant="outline" className="text-[10px]">
+                            {hist.document_type || 'outro'}
+                          </Badge>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <Badge
+                            variant={hist.is_backlog ? 'secondary' : 'default'}
+                            className={`text-[10px] ${
+                              hist.is_backlog
+                                ? 'bg-amber-100 text-amber-900 border-amber-200'
+                                : 'bg-emerald-100 text-emerald-900 border-emerald-200'
+                            }`}
+                          >
+                            {hist.is_backlog ? 'Backlog (NSU-START)' : 'Captura em Regime'}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 4. ABA DE MAPEAMENTOS DE APRENDIZADO (MA-t-2) */}
       {activeSubTab === 'mapeamentos' && (
         <Card className="border-slate-200 shadow-sm overflow-hidden">
@@ -894,6 +1146,63 @@ export function NfeProcessedView() {
           </CardContent>
         </Card>
       )}
+
+      {/* MODAL DE IMPORTAÇÃO RETROATIVA MANUAL (D2) */}
+      <Dialog open={isRetroactiveModalOpen} onOpenChange={setIsRetroactiveModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2 text-indigo-950">
+              <Clock className="h-5 w-5 text-indigo-600" />
+              <span>Importação Retroativa Manual (D2)</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Solicita ao worker a busca de notas autorizadas em janela retroativa configurada. As
+              notas passam pelo fluxo oficial com proteção total de deduplicação (Guard 1a).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">
+                Janela de Busca (em dias)
+              </Label>
+              <Input
+                type="number"
+                min={1}
+                max={90}
+                value={retroactiveDays}
+                onChange={(e) => setRetroactiveDays(Number(e.target.value))}
+                placeholder="30"
+                className="font-mono text-sm"
+              />
+              <p className="text-[11px] text-slate-500">
+                Padrão recomendado: últimos 30 dias. Notas já existentes no CRM serão ignoradas pela
+                deduplicação (Guard 1a).
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsRetroactiveModalOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={enqueuingCommand}
+              onClick={handleConfirmRetroactive}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            >
+              {enqueuingCommand ? 'Enfileirando...' : 'Iniciar Importação'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* MODAL DE UPLOAD DE XML */}
       <Dialog open={isUploadOpen} onOpenChange={setIsUploadOpen}>

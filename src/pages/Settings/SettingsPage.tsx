@@ -16,6 +16,8 @@ import {
   Layers,
   AlertTriangle,
   FileText,
+  KeyRound,
+  ShieldCheck,
 } from 'lucide-react'
 import { getSettings, saveSettings } from '@/services/settings'
 import { getProducts } from '@/services/products'
@@ -57,6 +59,14 @@ export default function SettingsPage() {
   const [companyCnpj, setCompanyCnpj] = useState('')
   const [familyMarginsJson, setFamilyMarginsJson] = useState('{"default": 1.4}')
   const [stockPhase, setStockPhase] = useState<'souis_master' | 'crm_cutover'>('souis_master')
+
+  // FASE 2 DFe: Certificado Digital A1 & Captura Automática (D7, D8, D9, CF-1c)
+  const [dfeEnabled, setDfeEnabled] = useState<boolean>(false)
+  const [dfePollInterval, setDfePollInterval] = useState<number>(1)
+  const [dfeToken, setDfeToken] = useState<string>('')
+  const [dfeTokenActive, setDfeTokenActive] = useState<boolean>(false)
+  const [generatingToken, setGeneratingToken] = useState<boolean>(false)
+  const [dfePointer, setDfePointer] = useState<any>(null)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -132,6 +142,20 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
           )
         }
         setStockPhase((s as any).stock_phase || 'souis_master')
+        setDfeEnabled(!!(s as any).dfe_enabled)
+        setDfePollInterval(Number((s as any).dfe_poll_interval_hours) || 1)
+        setDfeToken((s as any).dfe_worker_token || '')
+        setDfeTokenActive(!!(s as any).dfe_token_active)
+      }
+
+      // Carregar estado do ponteiro DFe para status do certificado (D7)
+      try {
+        const ptrRec = await pb.collection('dfe_pointer_state').getList(1, 1, { sort: '-created' })
+        if (ptrRec.items.length > 0) {
+          setDfePointer(ptrRec.items[0])
+        }
+      } catch {
+        /* intentionally ignored */
       }
     } catch (e) {
       console.warn('Erro ao obter configurações:', e)
@@ -217,6 +241,8 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         company_cnpj: companyCnpj.replace(/\D/g, ''),
         family_margins: familyMarginsJson.trim() ? JSON.parse(familyMarginsJson) : {},
         stock_phase: stockPhase,
+        dfe_enabled: dfeEnabled,
+        dfe_poll_interval_hours: Number(dfePollInterval) || 1,
       })
       toast({ title: 'Configurações salvas com sucesso!' })
     } catch (_) {
@@ -257,6 +283,66 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
 
   const handleUseDefaultPrompt = () => {
     setAiSystemPrompt(defaultPromptTemplate)
+  }
+
+  const handleGenerateDfeToken = async () => {
+    setGeneratingToken(true)
+    try {
+      const res = await pb.send<{ success: boolean; token?: string; message: string }>(
+        '/backend/v1/dfe/token/manage',
+        { method: 'POST', body: { action: 'generate' } },
+      )
+      if (res.success && res.token) {
+        setDfeToken(res.token)
+        setDfeTokenActive(true)
+        toast({
+          title: 'Token DFe Gerado com Sucesso!',
+          description: 'Copie o token e configure no worker Node.js.',
+          className: 'bg-emerald-600 text-white',
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao gerar token DFe',
+        description: err.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setGeneratingToken(false)
+    }
+  }
+
+  const handleRevokeDfeToken = async () => {
+    if (
+      !confirm(
+        'Tem certeza que deseja revogar o token DFe? O worker externo perderá o acesso imediatamente.',
+      )
+    ) {
+      return
+    }
+    setGeneratingToken(true)
+    try {
+      const res = await pb.send<{ success: boolean; message: string }>(
+        '/backend/v1/dfe/token/manage',
+        { method: 'POST', body: { action: 'revoke' } },
+      )
+      if (res.success) {
+        setDfeTokenActive(false)
+        toast({
+          title: 'Token DFe Revogado',
+          description:
+            'O worker não conseguirá mais consultar nem enviar notas até gerar novo token.',
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao revogar token',
+        description: err.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setGeneratingToken(false)
+    }
   }
 
   const handleConfigureWebhook = async () => {
@@ -1031,6 +1117,225 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* Seção FASE 2: Captura Automática de NF-e via Distribuição DFe (Certificado A1) */}
+        <Card className="bg-white border-indigo-200 shadow-sm">
+          <CardHeader className="pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="h-10 w-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-sm">
+                  <KeyRound className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-lg font-bold text-slate-900">
+                      Captura Automática DF-e (Certificado A1 & Worker)
+                    </CardTitle>
+                    <Badge
+                      variant="outline"
+                      className={
+                        dfeEnabled
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                          : 'bg-slate-100 text-slate-600 border-slate-200'
+                      }
+                    >
+                      {dfeEnabled ? 'Captura Ativada' : 'DESLIGADO por Padrão'}
+                    </Badge>
+                  </div>
+                  <CardDescription className="text-xs text-slate-500">
+                    Integração oficial SEFAZ (NFeDistribuicaoDFe) via Worker externo Node.js —
+                    guards D1 a D12
+                  </CardDescription>
+                </div>
+              </div>
+
+              {/* Toggle DFe (D7 - Desligado por padrão) */}
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
+                <label className="text-xs font-semibold text-slate-700 cursor-pointer flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={dfeEnabled}
+                    onChange={(e) => setDfeEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                  />
+                  <span>Ativar Captura Automática DFe</span>
+                </label>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-5">
+            {/* Aviso de Status do Certificado / Worker */}
+            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                  <ShieldCheck className="h-4 w-4 text-indigo-600" />
+                  Status Reportado do Certificado A1 & Worker (D7, D8, D9)
+                </span>
+                <Badge
+                  variant={
+                    dfePointer?.worker_status === 'online'
+                      ? 'secondary'
+                      : dfePointer?.worker_status === 'error'
+                        ? 'destructive'
+                        : 'outline'
+                  }
+                  className="capitalize font-mono text-[10px]"
+                >
+                  Worker: {dfePointer?.worker_status || 'offline'}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-slate-600">
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block">CNPJ do Certificado</span>
+                  <span className="font-mono font-medium text-slate-800">
+                    {dfePointer?.cert_cnpj || 'Não detectado'}
+                  </span>
+                </div>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block">Validade</span>
+                  <span className="font-mono font-medium text-slate-800">
+                    {dfePointer?.cert_valid_until
+                      ? new Date(dfePointer.cert_valid_until).toLocaleDateString('pt-BR')
+                      : 'N/A'}
+                  </span>
+                  {dfePointer?.cert_days_remaining !== undefined && (
+                    <span
+                      className={`text-[10px] ml-1.5 font-bold ${
+                        dfePointer.cert_days_remaining < 30 ? 'text-amber-600' : 'text-emerald-600'
+                      }`}
+                    >
+                      ({dfePointer.cert_days_remaining} dias)
+                    </span>
+                  )}
+                </div>
+                <div className="bg-white p-2 rounded border border-slate-200">
+                  <span className="text-[10px] text-slate-400 block">Último NSU / Consulta</span>
+                  <span className="font-mono font-medium text-slate-800">
+                    NSU: {dfePointer?.ult_nsu || '0'} |{' '}
+                    {dfePointer?.last_poll_at
+                      ? new Date(dfePointer.last_poll_at).toLocaleTimeString('pt-BR', {
+                          timeZone: 'America/Sao_Paulo',
+                        })
+                      : 'Nunca'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Alertas D7, D8, D9 */}
+              {(!dfePointer || !dfePointer.cert_cnpj) && (
+                <div className="text-amber-800 bg-amber-50 p-2 rounded border border-amber-200 flex items-center gap-2 mt-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                  <span>
+                    <strong>Certificado não configurado:</strong> O worker externo ainda não
+                    reportou a leitura do arquivo .pfx. Nenhuma consulta automática rodará.
+                  </span>
+                </div>
+              )}
+
+              {dfePointer?.cert_days_remaining !== undefined &&
+                dfePointer.cert_days_remaining < 30 &&
+                dfePointer.cert_days_remaining >= 0 && (
+                  <div className="text-amber-800 bg-amber-50 p-2 rounded border border-amber-200 flex items-center gap-2 mt-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                    <span>
+                      <strong>Atenção:</strong> O Certificado Digital A1 expira em menos de 30 dias
+                      ({dfePointer.cert_days_remaining} dias restantes).
+                    </span>
+                  </div>
+                )}
+
+              {dfePointer?.cert_days_remaining !== undefined &&
+                dfePointer.cert_days_remaining < 0 && (
+                  <div className="text-rose-800 bg-rose-50 p-2 rounded border border-rose-200 flex items-center gap-2 mt-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
+                    <span>
+                      <strong>CERTIFICADO DIGITAL VENCIDO:</strong> Capturas DFe suspensas com
+                      parada explícita (D9).
+                    </span>
+                  </div>
+                )}
+
+              {dfePointer?.last_error && (
+                <div className="text-rose-800 bg-rose-50 p-2 rounded border border-rose-200 flex items-center gap-2 mt-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
+                  <span>
+                    <strong>Último erro registrado:</strong> {dfePointer.last_error}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Parâmetros de Configuração: Intervalo e Token Dedicado (CF-1c, D10) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Intervalo de Consulta Periódica (Horas — D10)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={24}
+                  value={dfePollInterval}
+                  onChange={(e) => setDfePollInterval(Number(e.target.value))}
+                  placeholder="1"
+                  className="font-mono text-sm"
+                />
+                <p className="text-xs text-slate-500">
+                  Padrão SEFAZ: mínimo de 1 hora para evitar consumo indevido (cStat 656).
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="flex items-center justify-between">
+                  <span>Token Dedicado DFe (CF-1c)</span>
+                  <Badge
+                    variant="outline"
+                    className={
+                      dfeTokenActive ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                    }
+                  >
+                    {dfeTokenActive ? 'Ativo' : 'Revogado / Não Gerado'}
+                  </Badge>
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="password"
+                    readOnly
+                    value={dfeToken ? '••••••••••••••••••••••••••••••••' : ''}
+                    placeholder="Nenhum token configurado"
+                    className="font-mono text-xs bg-slate-50"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={generatingToken}
+                    onClick={handleGenerateDfeToken}
+                    className="text-xs shrink-0"
+                  >
+                    {generatingToken ? 'Gerando...' : 'Gerar Token'}
+                  </Button>
+                  {dfeTokenActive && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={generatingToken}
+                      onClick={handleRevokeDfeToken}
+                      className="text-xs shrink-0"
+                    >
+                      Revogar
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500">
+                  Token com escopo exclusivo para o worker (CF-1c). A senha do .pfx e a chave
+                  privada nunca passam pelo CRM (D9).
+                </p>
+              </div>
+            </div>
           </CardContent>
         </Card>
 

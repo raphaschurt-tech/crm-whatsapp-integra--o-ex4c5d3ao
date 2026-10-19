@@ -1,0 +1,11 @@
+{
+  "CRM_URL": "http://127.0.0.1:8090",
+  "CRM_DFE_TOKEN": "",
+  "SEFAZ_AMBIENTE": 2,
+  "SEFAZ_UF": 35,
+  "CERT_PFX_PATH": "./certs/certificado.pfx",
+  "CERT_PASSWORD": "",
+  "COMPANY_CNPJ": "",
+  "COMMAND_POLL_INTERVAL_SECONDS": 30,
+  "SEFAZ_POLL_INTERVAL_MINUTES": 60
+}

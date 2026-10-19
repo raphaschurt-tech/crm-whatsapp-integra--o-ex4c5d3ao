@@ -475,3 +475,59 @@ export interface NfeProductMapping extends RecordModel {
     [key: string]: any
   }
 }
+
+export interface DfePointerState extends RecordModel {
+  ult_nsu: string
+  max_nsu?: string
+  is_initialized: boolean
+  last_poll_at?: string
+  last_success_at?: string
+  last_error?: string
+  consecutive_failures: number
+  cert_cnpj?: string
+  cert_valid_until?: string
+  cert_days_remaining?: number
+  worker_status: 'online' | 'offline' | 'error' | 'idle'
+  cstat_last?: string
+  is_running: boolean
+}
+
+export interface DfeHistoryItem extends RecordModel {
+  access_key: string
+  nsu: string
+  schema?: string
+  model?: string
+  emitter_cnpj?: string
+  emitter_name?: string
+  issue_date?: string
+  total_amount?: number
+  nfe_number?: string
+  document_type: 'resumo' | 'nfe_completa' | 'evento' | 'outro'
+  is_backlog: boolean
+  imported_to_crm?: boolean
+  raw_xml?: string
+}
+
+export interface DfeEventRecord extends RecordModel {
+  access_key: string
+  nsu?: string
+  event_type: string
+  event_desc?: string
+  event_seq?: number
+  event_date?: string
+  protocol?: string
+  justification?: string
+  correction_text?: string
+  nfe_found_in_crm: boolean
+  accounts_payable_marked: boolean
+  raw_xml?: string
+}
+
+export interface DfeCommandRecord extends RecordModel {
+  command: 'consultar_agora' | 'importacao_retroativa' | 'reset_ponteiro'
+  params?: any
+  status: 'pendente' | 'em_execucao' | 'concluido' | 'erro'
+  result_summary?: string
+  created_by?: string
+  executed_at?: string
+}

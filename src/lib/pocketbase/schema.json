@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-19T02:49:33.223Z",
+  "generatedAt": "2026-10-19T04:06:40.981Z",
   "collections": [
     {
       "name": "users",
@@ -794,6 +794,36 @@
           "required": false,
           "system": false,
           "selectValues": ["souis_master", "crm_cutover"]
+        },
+        {
+          "name": "dfe_enabled",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "dfe_poll_interval_hours",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "dfe_worker_token",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "dfe_token_active",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "dfe_retroactive_days_default",
+          "type": "number",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": []
@@ -2033,13 +2063,6 @@
           "system": false
         },
         {
-          "name": "source_channel",
-          "type": "select",
-          "required": false,
-          "system": false,
-          "selectValues": ["manual_upload", "whatsapp"]
-        },
-        {
           "name": "souis_stock_status",
           "type": "select",
           "required": false,
@@ -2058,6 +2081,13 @@
           "required": false,
           "system": false,
           "collectionRef": "users"
+        },
+        {
+          "name": "source_channel",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["manual_upload", "whatsapp", "dfe"]
         }
       ],
       "indexes": [
@@ -2590,6 +2620,392 @@
         "CREATE UNIQUE INDEX idx_nfe_map_cnpj_code ON nfe_product_mappings (supplier_cnpj, supplier_code)",
         "CREATE INDEX idx_nfe_map_product ON nfe_product_mappings (product)"
       ]
+    },
+    {
+      "name": "dfe_pointer_state",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "view": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "create": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "update": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "ult_nsu",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "max_nsu",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_initialized",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_poll_at",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_success_at",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "last_error",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "consecutive_failures",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cert_cnpj",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cert_valid_until",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cert_days_remaining",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "worker_status",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "cstat_last",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_running",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE INDEX idx_dfe_pointer_init ON dfe_pointer_state (is_initialized)"]
+    },
+    {
+      "name": "dfe_history",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "view": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "create": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "update": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "access_key",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "nsu",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "schema",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "model",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "emitter_cnpj",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "emitter_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "issue_date",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "total_amount",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "nfe_number",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "document_type",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_backlog",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "imported_to_crm",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "raw_xml",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_dfe_hist_key ON dfe_history (access_key)",
+        "CREATE INDEX idx_dfe_hist_nsu ON dfe_history (nsu)",
+        "CREATE INDEX idx_dfe_hist_backlog ON dfe_history (is_backlog)"
+      ]
+    },
+    {
+      "name": "dfe_events",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "view": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "create": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "update": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "access_key",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "nsu",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "event_type",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "event_desc",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "event_seq",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "event_date",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "protocol",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "justification",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "correction_text",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "nfe_found_in_crm",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "accounts_payable_marked",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "raw_xml",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_dfe_events_key ON dfe_events (access_key)",
+        "CREATE INDEX idx_dfe_events_type ON dfe_events (event_type)"
+      ]
+    },
+    {
+      "name": "dfe_command_queue",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "view": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "create": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "update": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "command",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["consultar_agora", "importacao_retroativa", "reset_ponteiro"]
+        },
+        {
+          "name": "params",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "status",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["pendente", "em_execucao", "concluido", "erro"]
+        },
+        {
+          "name": "result_summary",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created_by",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "executed_at",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE INDEX idx_dfe_cmd_status ON dfe_command_queue (status)"]
     }
   ]
 }

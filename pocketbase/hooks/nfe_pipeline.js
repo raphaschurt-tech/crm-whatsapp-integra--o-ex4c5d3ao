@@ -457,7 +457,9 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
   nfeRec.set('dest_cnpj', parsed.destCnpj || '')
   nfeRec.set('c_stat', parsed.cStat || '')
   nfeRec.set('prot_nfe', parsed.nProt || '')
-  nfeRec.set('source_channel', 'manual_upload')
+  // Suporte a source_channel vindo no payload (ex: 'dfe', 'manual_upload', 'whatsapp') - CF-3b
+  const reqSourceChannel = reqData.source_channel || 'manual_upload'
+  nfeRec.set('source_channel', reqSourceChannel)
   nfeRec.set('raw_items', aggregatedItems)
   nfeRec.set('xml_payload', xmlContent)
 
