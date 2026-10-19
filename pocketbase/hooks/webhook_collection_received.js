@@ -223,11 +223,12 @@ onRecordAfterCreateSuccess((e) => {
       const msgDateTime = msgDate.getTime()
 
       let summaryRecord = null
+      // 1. Lookup com sort VÁLIDO (-last_message_at) + fallback sem sort se o sort falhar
       try {
         const found = $app.findRecordsByFilter(
           'chat_summaries',
           'canonical_phone = {:cphone}',
-          '-created',
+          '-last_message_at',
           1,
           0,
           { cphone: canonicalPhone },
@@ -236,11 +237,33 @@ onRecordAfterCreateSuccess((e) => {
           summaryRecord = found[0]
         }
       } catch (lookupErr) {
-        console.log('[CHAT-SUMMARY-LOOKUP-ERR]', lookupErr.message || String(lookupErr))
+        console.log(
+          '[CHAT-SUMMARY-LOOKUP-WARN-SORT]',
+          lookupErr.message || String(lookupErr),
+          'Tentando fallback sem sort...',
+        )
+        try {
+          const fallbackFound = $app.findRecordsByFilter(
+            'chat_summaries',
+            'canonical_phone = {:cphone}',
+            '',
+            1,
+            0,
+            { cphone: canonicalPhone },
+          )
+          if (fallbackFound && fallbackFound.length > 0) {
+            summaryRecord = fallbackFound[0]
+          }
+        } catch (fallbackErr) {
+          console.error(
+            '[CHAT-SUMMARY-LOOKUP-FAIL-ALOUD]',
+            fallbackErr.message || String(fallbackErr),
+          )
+        }
       }
 
       if (!summaryRecord) {
-        // Criar novo resumo
+        // Criar novo resumo com guarda à prova de corrida (unique canonical_phone)
         const summaryCol = $app.findCollectionByNameOrId('chat_summaries')
         const newSummary = new Record(summaryCol)
         newSummary.set('canonical_phone', canonicalPhone)
@@ -253,8 +276,50 @@ onRecordAfterCreateSuccess((e) => {
         newSummary.set('tem_mensagens', true)
         newSummary.set('last_message_id', msgId)
         newSummary.set('last_seen_message_ids', msgId ? [msgId] : [])
-        $app.save(newSummary)
-      } else {
+
+        try {
+          $app.save(newSummary)
+        } catch (saveNewErr) {
+          const errMsg = saveNewErr.message || String(saveNewErr)
+          // Se falhar por violação de unicidade de canonical_phone, recuperar por relookup e atualizar
+          if (
+            errMsg.includes('Value must be unique') ||
+            errMsg.includes('canonical_phone') ||
+            errMsg.includes('UNIQUE constraint failed')
+          ) {
+            console.log(
+              '[CHAT-SUMMARY-RACE-RECOVER]',
+              JSON.stringify({
+                canonicalPhone: canonicalPhone,
+                note: 'Colisão de índice único detectada ao criar resumo; recuperando registro existente para atualizar.',
+              }),
+            )
+            try {
+              const raceFound = $app.findRecordsByFilter(
+                'chat_summaries',
+                'canonical_phone = {:cphone}',
+                '',
+                1,
+                0,
+                { cphone: canonicalPhone },
+              )
+              if (raceFound && raceFound.length > 0) {
+                summaryRecord = raceFound[0]
+              }
+            } catch (raceLookupErr) {
+              console.error(
+                '[CHAT-SUMMARY-RACE-RELOOKUP-FAIL-ALOUD]',
+                raceLookupErr.message || String(raceLookupErr),
+              )
+            }
+          } else {
+            // Outro erro de salvamento
+            console.error('[CHAT-SUMMARY-CREATE-FAIL-ALOUD]', errMsg)
+          }
+        }
+      }
+
+      if (summaryRecord) {
         // 1e. Idempotência por messageId
         let seenIds = []
         try {

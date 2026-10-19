@@ -29,13 +29,19 @@ routerAdd('GET', '/backend/v1/run-summaries-backfill', (c) => {
       console.log('[BACKFILL-ROUTE-READ-STATES-WARN]', errRead.message || String(errRead))
     }
 
-    // 2. Carregar resumos já existentes
-    const existingSummariesSet = new Set()
+    // 2. Carregar resumos já existentes em um Map indexado por canonical_phone para permitir update
+    const summariesMap = new Map()
     try {
-      const existingSums = $app.findRecordsByFilter('chat_summaries', '', '-created', 20000, 0)
+      let existingSums = []
+      try {
+        existingSums = $app.findRecordsByFilter('chat_summaries', '', '-last_message_at', 20000, 0)
+      } catch (_) {
+        existingSums = $app.findRecordsByFilter('chat_summaries', '', '', 20000, 0)
+      }
       for (let s = 0; s < existingSums.length; s++) {
-        const cPhone = existingSums[s].getString('canonical_phone')
-        if (cPhone) existingSummariesSet.add(cPhone)
+        const rec = existingSums[s]
+        const cPhone = rec.getString('canonical_phone')
+        if (cPhone) summariesMap.set(cPhone, rec)
       }
     } catch (_) {}
 
@@ -136,22 +142,34 @@ routerAdd('GET', '/backend/v1/run-summaries-backfill', (c) => {
         const canonicalPhone = computeCanonicalPhone(rawPhone)
         if (!canonicalPhone || canonicalPhone.length < 8) continue
 
-        // 2a. Guard: se resumo já existe em chat_summaries, não reprocessar/sobrescrever
-        if (existingSummariesSet.has(canonicalPhone)) continue
-
         let conv = convMap.get(canonicalPhone)
         if (!conv) {
+          const existingDbRec = summariesMap.get(canonicalPhone)
+          let existingSeenIds = []
+          if (existingDbRec) {
+            try {
+              const rawSeen = existingDbRec.get('last_seen_message_ids')
+              if (Array.isArray(rawSeen)) existingSeenIds = rawSeen
+              else if (typeof rawSeen === 'string') existingSeenIds = JSON.parse(rawSeen)
+            } catch (_) {}
+          }
+
           conv = {
             canonicalPhone,
-            rawPhone: rawPhone || canonicalPhone,
-            firstMessageAt: '',
-            lastMessageAt: '',
-            lastMessagePreview: '',
-            lastMessageDirection: 'inbound',
-            lastMessageId: '',
-            unreadCount: 0,
+            rawPhone:
+              (existingDbRec && existingDbRec.getString('raw_phone')) || rawPhone || canonicalPhone,
+            firstMessageAt: (existingDbRec && existingDbRec.getString('first_message_at')) || '',
+            lastMessageAt: (existingDbRec && existingDbRec.getString('last_message_at')) || '',
+            lastMessagePreview:
+              (existingDbRec && existingDbRec.getString('last_message_preview')) || '',
+            lastMessageDirection:
+              (existingDbRec && existingDbRec.getString('last_message_direction')) || 'inbound',
+            lastMessageId: (existingDbRec && existingDbRec.getString('last_message_id')) || '',
+            unreadCount: (existingDbRec && Number(existingDbRec.get('unread_count'))) || 0,
             temMensagens: true,
-            lastSeenIds: [],
+            lastSeenIds: existingSeenIds,
+            isExistingRecord: Boolean(existingDbRec),
+            dbRecordId: existingDbRec ? existingDbRec.id : '',
           }
           convMap.set(canonicalPhone, conv)
         }
@@ -273,27 +291,48 @@ routerAdd('GET', '/backend/v1/run-summaries-backfill', (c) => {
 
     const summaryCol = $app.findCollectionByNameOrId('chat_summaries')
     let createdCount = 0
+    let updatedCount = 0
 
     convMap.forEach((conv, canonicalPhone) => {
-      if (existingSummariesSet.has(canonicalPhone)) return
-
       try {
-        const newRec = new Record(summaryCol)
-        newRec.set('canonical_phone', conv.canonicalPhone)
-        newRec.set('raw_phone', conv.rawPhone)
-        newRec.set('last_message_preview', conv.lastMessagePreview || 'Mensagem')
-        newRec.set('last_message_direction', conv.lastMessageDirection)
-        newRec.set('last_message_at', conv.lastMessageAt || new Date().toISOString())
-        newRec.set(
-          'first_message_at',
-          conv.firstMessageAt || conv.lastMessageAt || new Date().toISOString(),
-        )
-        newRec.set('unread_count', conv.unreadCount || 0)
-        newRec.set('tem_mensagens', true)
-        newRec.set('last_message_id', conv.lastMessageId)
-        newRec.set('last_seen_message_ids', conv.lastSeenIds)
-        $app.save(newRec)
-        createdCount++
+        const existingRec = summariesMap.get(canonicalPhone)
+        if (existingRec) {
+          // Atualizar resumo existente
+          existingRec.set('raw_phone', conv.rawPhone || existingRec.getString('raw_phone'))
+          if (conv.lastMessagePreview)
+            existingRec.set('last_message_preview', conv.lastMessagePreview)
+          if (conv.lastMessageDirection)
+            existingRec.set('last_message_direction', conv.lastMessageDirection)
+          if (conv.lastMessageAt) existingRec.set('last_message_at', conv.lastMessageAt)
+          if (!existingRec.getString('first_message_at') && conv.firstMessageAt) {
+            existingRec.set('first_message_at', conv.firstMessageAt)
+          }
+          existingRec.set('unread_count', conv.unreadCount || 0)
+          existingRec.set('tem_mensagens', true)
+          if (conv.lastMessageId) existingRec.set('last_message_id', conv.lastMessageId)
+          existingRec.set('last_seen_message_ids', conv.lastSeenIds)
+          $app.save(existingRec)
+          updatedCount++
+        } else {
+          // Criar novo resumo
+          const newRec = new Record(summaryCol)
+          newRec.set('canonical_phone', conv.canonicalPhone)
+          newRec.set('raw_phone', conv.rawPhone)
+          newRec.set('last_message_preview', conv.lastMessagePreview || 'Mensagem')
+          newRec.set('last_message_direction', conv.lastMessageDirection)
+          newRec.set('last_message_at', conv.lastMessageAt || new Date().toISOString())
+          newRec.set(
+            'first_message_at',
+            conv.firstMessageAt || conv.lastMessageAt || new Date().toISOString(),
+          )
+          newRec.set('unread_count', conv.unreadCount || 0)
+          newRec.set('tem_mensagens', true)
+          newRec.set('last_message_id', conv.lastMessageId)
+          newRec.set('last_seen_message_ids', conv.lastSeenIds)
+          $app.save(newRec)
+          summariesMap.set(canonicalPhone, newRec)
+          createdCount++
+        }
       } catch (saveErr) {
         console.log('[BACKFILL-SAVE-ERR]', canonicalPhone, saveErr.message || String(saveErr))
       }
@@ -316,6 +355,7 @@ routerAdd('GET', '/backend/v1/run-summaries-backfill', (c) => {
       totalMessagesProcessed,
       conversationsFound: convMap.size,
       createdCount,
+      updatedCount,
     })
   } catch (err) {
     return c.json(500, { error: err.message || String(err) })

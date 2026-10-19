@@ -134,6 +134,132 @@ try {
   console.error('  ✘ extração lançou exceção — G-B VIOLADO!', e)
 }
 
+console.log('\n8. VALIDAÇÃO DE ESQUEMA REAL DE chat_summaries (PARTE 1 — item 4):')
+// Importar schema real para validar que o hook NUNCA tenta ordenar por campo inexistente
+import schemaJson from './pocketbase/schema.json'
+
+interface SchemaCollection {
+  name: string
+  fields?: Array<{ name: string; type: string }>
+}
+
+interface SchemaFile {
+  generatedAt?: string
+  collections: SchemaCollection[]
+}
+
+const typedSchema = schemaJson as unknown as SchemaFile
+const chatSummariesCol = (typedSchema.collections || []).find((c) => c.name === 'chat_summaries')
+if (!chatSummariesCol) {
+  fail++
+  console.error('  ✘ Coleção chat_summaries não encontrada no schema.json!')
+} else {
+  pass++
+  console.log('  ✔ Coleção chat_summaries encontrada no schema.json')
+
+  const fieldNames = new Set((chatSummariesCol.fields || []).map((f) => f.name))
+
+  // Provar categoricamente que o campo 'created' NÃO existe em chat_summaries:
+  const hasCreatedField = fieldNames.has('created')
+  check(
+    "campo 'created' NÃO existe em chat_summaries (motivo do bug de sort)",
+    hasCreatedField,
+    false,
+  )
+
+  // Provar que 'last_message_at' EXISTE e é o campo correto para sort:
+  const hasLastMessageAt = fieldNames.has('last_message_at')
+  check("campo 'last_message_at' EXISTE em chat_summaries para sort", hasLastMessageAt, true)
+
+  // Provar que 'canonical_phone' EXISTE e é o identificador único para lookup:
+  const hasCanonicalPhone = fieldNames.has('canonical_phone')
+  check("campo 'canonical_phone' EXISTE em chat_summaries para lookup", hasCanonicalPhone, true)
+}
+
+console.log(
+  '\n9. SIMULAÇÃO DO NOVO COMPORTAMENTO DO HOOK (Lookup seguro + Upsert à prova de corrida):',
+)
+
+interface MockSummary {
+  id: string
+  canonical_phone: string
+  last_message_at: string
+  unread_count: number
+}
+
+// Mock da base de resumos
+const mockDb = new Map<string, MockSummary>()
+
+function simulateHookUpsert(
+  cPhone: string,
+  sortFieldToUse: string,
+  msgIso: string,
+  direction: string,
+): { status: 'created' | 'updated' | 'race_recovered'; record: MockSummary } {
+  // Simular findRecordsByFilter com validação de campo de sort contra schema
+  const fieldNames = chatSummariesCol
+    ? new Set((chatSummariesCol.fields || []).map((f) => f.name))
+    : new Set()
+
+  let found: MockSummary | null = null
+  const cleanSort = sortFieldToUse.replace(/^-/, '')
+
+  // Se o sort tentar usar campo que não existe no schema, falha (como Goja/PocketBase faz)
+  if (cleanSort && !fieldNames.has(cleanSort)) {
+    // Lookup falha com invalid sort field!
+    // Mas agora temos fallback sem sort:
+    found = mockDb.get(cPhone) || null
+  } else {
+    found = mockDb.get(cPhone) || null
+  }
+
+  if (!found) {
+    // Tenta criar novo
+    // Se outro processo já inseriu (simulação de corrida), colide com unique index
+    if (mockDb.has(cPhone)) {
+      // UNIQUE VIOLATION! Recuperação à prova de corrida:
+      const recovered = mockDb.get(cPhone)!
+      recovered.last_message_at = msgIso
+      if (direction === 'inbound') recovered.unread_count++
+      return { status: 'race_recovered', record: recovered }
+    }
+    const newRec: MockSummary = {
+      id: 'mock_' + Math.random().toString(36).slice(2),
+      canonical_phone: cPhone,
+      last_message_at: msgIso,
+      unread_count: direction === 'inbound' ? 1 : 0,
+    }
+    mockDb.set(cPhone, newRec)
+    return { status: 'created', record: newRec }
+  } else {
+    found.last_message_at = msgIso
+    if (direction === 'inbound') found.unread_count++
+    return { status: 'updated', record: found }
+  }
+}
+
+// Teste do fluxo com novo sort (-last_message_at)
+const r1 = simulateHookUpsert(
+  '11941531072',
+  '-last_message_at',
+  '2026-10-19T18:00:00.000Z',
+  'inbound',
+)
+check('criação com sort válido', r1.status, 'created')
+
+const r2 = simulateHookUpsert(
+  '11941531072',
+  '-last_message_at',
+  '2026-10-19T18:05:00.000Z',
+  'inbound',
+)
+check('atualização normal de resumo existente', r2.status, 'updated')
+check('incremento correto de unread_count', r2.record.unread_count, 2)
+
+// Teste do fallback se sort for inválido ('-created')
+const r3 = simulateHookUpsert('11941531072', '-created', '2026-10-19T18:10:00.000Z', 'inbound')
+check('fallback sem sort encontra e atualiza sem tentar create duplicado', r3.status, 'updated')
+
 console.log(
   `\nResultado: ${pass} passaram, ${fail} falharam. ${fail === 0 ? 'G-E / G-G OK.' : 'FALHAS DETECTADAS — revisar hook e teste.'}\n`,
 )

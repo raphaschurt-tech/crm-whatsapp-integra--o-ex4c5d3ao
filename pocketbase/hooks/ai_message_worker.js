@@ -36,7 +36,12 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
 
     const existingSummariesSet = new Set()
     try {
-      const existingSums = $app.findRecordsByFilter('chat_summaries', '', '-created', 10000, 0)
+      let existingSums = []
+      try {
+        existingSums = $app.findRecordsByFilter('chat_summaries', '', '-last_message_at', 10000, 0)
+      } catch (_) {
+        existingSums = $app.findRecordsByFilter('chat_summaries', '', '', 10000, 0)
+      }
       for (let j = 0; j < existingSums.length; j++) {
         const cPhone = existingSums[j].getString('canonical_phone')
         if (cPhone) existingSummariesSet.add(cPhone)
