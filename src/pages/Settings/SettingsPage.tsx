@@ -15,6 +15,7 @@ import {
   Clock,
   Layers,
   AlertTriangle,
+  FileText,
 } from 'lucide-react'
 import { getSettings, saveSettings } from '@/services/settings'
 import { getProducts } from '@/services/products'
@@ -51,6 +52,11 @@ export default function SettingsPage() {
   const [allowedFamilies, setAllowedFamilies] = useState<string[]>([])
   const [productsList, setProductsList] = useState<Product[]>([])
   const [loadingProducts, setLoadingProducts] = useState(false)
+
+  // PROMPT 2: CNPJ da Empresa (S7), Margens por Família (S4) e Fase de Estoque (F4)
+  const [companyCnpj, setCompanyCnpj] = useState('')
+  const [familyMarginsJson, setFamilyMarginsJson] = useState('{"default": 1.4}')
+  const [stockPhase, setStockPhase] = useState<'souis_master' | 'crm_cutover'>('souis_master')
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -118,6 +124,14 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         )
         setAiExcludedSkus((s as any).ai_excluded_skus || '')
         setAllowedFamilies(Array.isArray(s.allowed_families) ? s.allowed_families : [])
+        setCompanyCnpj((s as any).company_cnpj || '')
+        if ((s as any).family_margins) {
+          const rawM = (s as any).family_margins
+          setFamilyMarginsJson(
+            typeof rawM === 'object' ? JSON.stringify(rawM, null, 2) : String(rawM),
+          )
+        }
+        setStockPhase((s as any).stock_phase || 'souis_master')
       }
     } catch (e) {
       console.warn('Erro ao obter configurações:', e)
@@ -200,6 +214,9 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         ai_auto_close_message: aiAutoCloseMessage,
         ai_excluded_skus: aiExcludedSkus,
         allowed_families: allowedFamilies,
+        company_cnpj: companyCnpj.replace(/\D/g, ''),
+        family_margins: familyMarginsJson.trim() ? JSON.parse(familyMarginsJson) : {},
+        stock_phase: stockPhase,
       })
       toast({ title: 'Configurações salvas com sucesso!' })
     } catch (_) {
@@ -1014,6 +1031,84 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* Seção PROMPT 2: Ingestão de NF-e, Regras Fiscais e Controle de Estoque */}
+        <Card className="bg-white border-blue-200 shadow-sm">
+          <CardHeader className="pb-4">
+            <div className="flex items-center gap-2">
+              <div className="h-10 w-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle className="text-lg font-bold text-slate-900">
+                  Pipeline Fiscal NF-e e Mestre de Estoque
+                </CardTitle>
+                <CardDescription className="text-xs text-slate-500">
+                  Parâmetros de segurança para conferência de destinatário (S7), cálculo de preço de
+                  venda (S4) e controle de fase de estoque (F4)
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <Label className="flex items-center justify-between">
+                <span>CNPJ da Empresa (Destinatário Canônico — S7)</span>
+                <span className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">
+                  Crítico / Guarda de Cegueira
+                </span>
+              </Label>
+              <Input
+                value={companyCnpj}
+                onChange={(e) => setCompanyCnpj(e.target.value)}
+                placeholder="Ex: 12.345.678/0001-90 ou 14 dígitos"
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-slate-500">
+                Se este campo estiver vazio, o pipeline <strong>não processará nenhuma nota</strong>{' '}
+                (Guarda de Cegueira). Se o destinatário do XML for diferente deste CNPJ, a nota é
+                retida na Fila de Revisão.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Fator de Margem por Família de Peças (JSON — S4-FINAL / Guard 6a)</Label>
+              <textarea
+                value={familyMarginsJson}
+                onChange={(e) => setFamilyMarginsJson(e.target.value)}
+                rows={4}
+                className="w-full text-xs font-mono p-3 rounded-lg border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                placeholder='{"default": 1.4, "AMORTECEDOR": 1.5, "PASTILHA": 1.45}'
+              />
+              <p className="text-xs text-slate-500">
+                O preço sugerido é calculado por: <code>Custo Real da NF × Fator da Família</code>{' '}
+                (apenas se a SOU.IS mandar preço 0/vazio). Se a família não tiver margem definida,
+                nenhum preço é sugerido (Guard 6a). Preço sugerido nunca abaixo do custo (Guard 6b).
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Mestre do Estoque (Fase de Operação — F4)</Label>
+              <select
+                value={stockPhase}
+                onChange={(e) => setStockPhase(e.target.value as any)}
+                className="w-full h-10 px-3 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="souis_master">
+                  Fase 1: SOU.IS é o MESTRE do Estoque (Ativo — CRM apenas lembra de lançar no ERP)
+                </option>
+                <option value="crm_cutover" disabled>
+                  Fase 2: CRM Mestre do Estoque (Disponível no Cutover final)
+                </option>
+              </select>
+              <p className="text-xs text-slate-500">
+                Na Fase 1, o CRM não movimenta estoque na compra; a entrada física e contábil é
+                lançada manualmente no SOU.IS com o custo da NF e propagada via sincronização.
+              </p>
+            </div>
           </CardContent>
         </Card>
 

@@ -519,13 +519,13 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
     const price110 = p.price_110
     const price130 = p.price_130
 
+    // S4-g / S4-g+: Guards de preservação de preço e custo quando a view manda 0/vazio
+    // Preço vindo da SOU.IS (> 0) tem SEMPRE prioridade.
+    // Mas ausência não é preço: quando basePrice <= 0, NUNCA sobrescrever o preço lançado pelo CRM/NF-e.
+    // Idem para custo (S4-g+) se o valor for <= 0.
     const fieldsToSet = {
       name: name,
-      price: basePrice,
-      cost: basePrice,
       stock_quantity: stockQty,
-      price_110: price110,
-      price_130: price130,
       supplier: 'SOU.IS',
       is_purchased: true,
       product_type: 'comprado',
@@ -539,6 +539,13 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
       is_active: true, // Se veio na sync, fica ativo (ou é reativado)
     }
 
+    if (basePrice > 0) {
+      fieldsToSet.price = basePrice
+      fieldsToSet.cost = basePrice
+      fieldsToSet.price_110 = price110
+      fieldsToSet.price_130 = price130
+    }
+
     receivedSkusMap[sku] = true
 
     try {
@@ -549,6 +556,21 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
         const fieldName = ALLOWED_SYNC_FIELDS[f]
         if (fieldsToSet[fieldName] !== undefined) {
           existing.set(fieldName, fieldsToSet[fieldName])
+        }
+      }
+      // Se a view mandou 0/vazio, logar preservação se o produto já tinha preço/custo
+      if (basePrice <= 0) {
+        const curPrice = Number(existing.get('price')) || 0
+        const curCost = Number(existing.get('cost')) || 0
+        if (curPrice > 0 || curCost > 0) {
+          console.log(
+            '[S4-G-PRESERVED] Preço/Custo preservado para SKU ' +
+              sku +
+              ' (view enviou 0/vazio): preco=' +
+              curPrice +
+              ' custo=' +
+              curCost,
+          )
         }
       }
       $app.save(existing)
@@ -567,6 +589,17 @@ cronAdd('souis-view-sync-scheduled', '0 15,18 * * 1-5', () => {
         if (fieldsToSet[fieldName] !== undefined) {
           rec.set(fieldName, fieldsToSet[fieldName])
         }
+      }
+      if (basePrice > 0) {
+        rec.set('price', basePrice)
+        rec.set('cost', basePrice)
+        rec.set('price_110', price110)
+        rec.set('price_130', price130)
+      } else {
+        rec.set('price', 0)
+        rec.set('cost', 0)
+        rec.set('price_110', 0)
+        rec.set('price_130', 0)
       }
       // Campos obrigatórios ou auxiliares com valores padrão
       rec.set('reserved_quantity', 0)

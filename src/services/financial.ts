@@ -6,6 +6,7 @@ import {
   FinancialRecurringTemplate,
   NfeProcessed,
   NfePriceQueueItem,
+  NfeProductMapping,
   FinancialDashboardKpis,
   FinancialPaymentMethod,
 } from '@/types/crm'
@@ -348,28 +349,6 @@ export async function runRecurringCronManual(competence?: string): Promise<{
 // NF-E PROCESSADAS & FILA DE PREÇOS
 // ==========================================
 
-export async function getNfeProcessedList(): Promise<NfeProcessed[]> {
-  try {
-    return await pb.collection('nfe_processed').getFullList<NfeProcessed>({
-      sort: '-created',
-      expand: 'supplier',
-    })
-  } catch (_) {
-    return []
-  }
-}
-
-export async function getNfePriceQueueList(): Promise<NfePriceQueueItem[]> {
-  try {
-    return await pb.collection('nfe_price_queue').getFullList<NfePriceQueueItem>({
-      sort: '-created',
-      expand: 'nfe,resolved_by',
-    })
-  } catch (_) {
-    return []
-  }
-}
-
 // ==========================================
 // DASHBOARD RESUMO (KPIs do Mês Selecionado)
 // Deriva APENAS da coleção financeira (padrão de carga leve)
@@ -387,14 +366,6 @@ export async function getFinancialDashboardKpis(
   const endMonthIso = `${competence}-${String(lastDay).padStart(2, '0')} 23:59:59`
 
   // Buscar contas a pagar e contas a receber
-  // Para KPIs do mês selecionado:
-  // 1. A pagar do mês (ou geral para vencidos/pendentes)
-  // Conforme PROMPT 1:
-  // "cards de KPI do mês selecionado (navegação por mês): a pagar pendente, VENCIDOS (destaque vermelho),
-  // a vencer nos próximos 7 dias, a receber pendente, entradas do mês, saídas do mês e saldo (entradas − saídas)"
-
-  // 1. Payables com vencimento no mês selecionado (para a pagar pendente e saídas do mês)
-  // Mais todos os pendentes gerais para cálculo de vencidos e próximos 7 dias
   const [monthPayables, allPendingPayables, monthReceivables] = await Promise.all([
     pb.collection('accounts_payable').getFullList<AccountsPayable>({
       filter: `due_date >= "${startMonthIso}" && due_date <= "${endMonthIso}"`,
@@ -451,4 +422,105 @@ export async function getFinancialDashboardKpis(
     monthOutflows,
     monthBalance,
   }
+}
+
+// ==========================================
+// SERVIÇOS DO PIPELINE NF-E (PROMPT 2)
+// ==========================================
+
+export async function uploadNfeXml(xmlContent: string): Promise<{
+  success: boolean
+  message?: string
+  error?: string
+  access_key?: string
+  status?: string
+  duplicate?: boolean
+  exception?: boolean
+  reason?: string
+}> {
+  return pb.send('/backend/v1/nfe/upload', {
+    method: 'POST',
+    body: { xml: xmlContent },
+  })
+}
+
+export async function reconcileMatchItem(
+  queueItemId: string,
+  productId: string,
+): Promise<{
+  success: boolean
+  message?: string
+  error?: string
+  sku?: string
+  suggested_price?: number
+}> {
+  return pb.send('/backend/v1/nfe/reconcile-match', {
+    method: 'POST',
+    body: {
+      queue_item_id: queueItemId,
+      product_id: productId,
+    },
+  })
+}
+
+export async function applyQueuePrice(
+  queueItemId: string,
+  price?: number,
+): Promise<{ success: boolean; message?: string; error?: string; sku?: string; price?: number }> {
+  return pb.send('/backend/v1/nfe/apply-price', {
+    method: 'POST',
+    body: {
+      queue_item_id: queueItemId,
+      price: price,
+    },
+  })
+}
+
+export async function markSouisStockLaunched(
+  nfeId: string,
+): Promise<{ success: boolean; message?: string; error?: string }> {
+  return pb.send('/backend/v1/nfe/mark-souis-stock-launched', {
+    method: 'POST',
+    body: { nfe_id: nfeId },
+  })
+}
+
+export async function getNfeProcessedList(): Promise<NfeProcessed[]> {
+  try {
+    return await pb.collection('nfe_processed').getFullList<NfeProcessed>({
+      sort: '-created',
+      expand: 'supplier,souis_stock_launched_by',
+    })
+  } catch (_) {
+    return []
+  }
+}
+
+export async function getNfePriceQueue(status?: string): Promise<NfePriceQueueItem[]> {
+  try {
+    const filter = status ? `status = "${status}"` : ''
+    return await pb.collection('nfe_price_queue').getFullList<NfePriceQueueItem>({
+      filter,
+      sort: '-created',
+      expand: 'nfe,product,resolved_by',
+    })
+  } catch (_) {
+    return []
+  }
+}
+
+export async function getNfeProductMappings(): Promise<NfeProductMapping[]> {
+  try {
+    return await pb.collection('nfe_product_mappings').getFullList<NfeProductMapping>({
+      sort: '-created',
+      expand: 'product,confirmed_by',
+    })
+  } catch (_) {
+    return []
+  }
+}
+
+export async function deleteNfeProductMapping(id: string): Promise<boolean> {
+  await pb.collection('nfe_product_mappings').delete(id)
+  return true
 }

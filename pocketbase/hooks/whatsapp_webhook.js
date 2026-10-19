@@ -664,6 +664,96 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
     incomingText = mediaCaption
   }
 
+  // ==========================================
+  // S3 (CRÍTICA — DESVIO NO WHATSAPP PARA NF-E)
+  // ==========================================
+  // Fornecedor mandando XML no chat:
+  // Detectar se a mensagem é um arquivo XML (ou documento com .xml no nome/url/caption ou payload texto começando com XML de NFe).
+  // Se for NF-e, desviar ANTES de criar lead, antes de chat_summaries, antes de message_processing e antes da IA!
+  // IA não responde o XML, conversa não é criada, badge não sobe.
+  // Desvio é POR MENSAGEM: se mandar texto junto ou depois, segue normal.
+  const isXmlFile = Boolean(
+    (attachmentName && /\.xml$/i.test(attachmentName.trim())) ||
+    (attachmentUrl && /\.xml(\?|$)/i.test(attachmentUrl.trim())) ||
+    (attachmentType === 'document' &&
+      (attachmentName.toLowerCase().includes('.xml') ||
+        (attachmentUrl && attachmentUrl.toLowerCase().includes('.xml')))) ||
+    (incomingText &&
+      (incomingText.includes('<nfeProc') ||
+        incomingText.includes('<NFe') ||
+        incomingText.includes('<infNFe'))),
+  )
+
+  if (isXmlFile && !isFromMe) {
+    console.log(
+      '[NFE-WHATSAPP-DETECTED]',
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        messageId: messageId,
+        senderPhone: maskedSenderPhone,
+        attachmentName: attachmentName,
+        hasUrl: Boolean(attachmentUrl),
+        action: 'Desviado para pipeline NF-e (S3). Sem conversa de atendimento, sem badge, sem IA.',
+      }),
+    )
+
+    try {
+      let xmlContent = ''
+      if (attachmentUrl) {
+        try {
+          const dlRes = $http.send({
+            url: attachmentUrl,
+            method: 'GET',
+            timeout: 30,
+          })
+          if (dlRes.statusCode >= 200 && dlRes.statusCode < 300) {
+            xmlContent = dlRes.body || ''
+          }
+        } catch (dlErr) {
+          console.log('[NFE-WHATSAPP-DL-ERR]', String(dlErr))
+        }
+      } else if (
+        incomingText &&
+        (incomingText.includes('<nfeProc') ||
+          incomingText.includes('<NFe') ||
+          incomingText.includes('<infNFe'))
+      ) {
+        xmlContent = incomingText
+      }
+
+      if (xmlContent) {
+        try {
+          const appUrl = $os.getenv('PUBLIC_APP_URL') || 'http://127.0.0.1:8090'
+          const resp = $http.send({
+            url: appUrl + '/backend/v1/nfe/upload',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              xml: xmlContent,
+              source_channel: 'whatsapp',
+              sender_phone: normalizedPhone,
+              message_id: messageId,
+            }),
+            timeout: 30,
+          })
+          console.log(
+            '[NFE-WHATSAPP-PROCESSED]',
+            JSON.stringify({ status: resp.statusCode, body: resp.body }),
+          )
+        } catch (callErr) {
+          console.log('[NFE-WHATSAPP-CALL-ERR]', String(callErr))
+        }
+      }
+    } catch (nfeHookErr) {
+      console.log('[NFE-WHATSAPP-PROCESS-ERR]', String(nfeHookErr))
+    }
+
+    // Retornar 200 de imediato, NÃO chamando save de webhook_received, nem auto-criação de cliente, nem IA
+    return e.json(200, { status: 'nfe_bypassed_from_chat' })
+  }
+
   // Log sanitizado de recepção do webhook (sem expor credenciais nem telefones completos)
   console.log(
     '[WEBHOOK-RECEIVED]',

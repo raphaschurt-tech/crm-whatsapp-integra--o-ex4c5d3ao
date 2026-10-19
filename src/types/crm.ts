@@ -329,48 +329,6 @@ export interface FinancialRecurringTemplate extends RecordModel {
   }
 }
 
-export interface NfeProcessed extends RecordModel {
-  access_key: string
-  nfe_number?: string
-  series?: string
-  issue_date?: string
-  supplier_cnpj?: string
-  supplier_name?: string
-  supplier?: string
-  total_amount?: number
-  items_count?: number
-  matched_items_count?: number
-  pending_items_count?: number
-  status: 'processada' | 'pendente_reconciliacao' | 'erro' | 'cancelada'
-  xml_payload?: string
-  raw_items?: any
-  notes?: string
-  expand?: {
-    supplier?: Customer
-    [key: string]: any
-  }
-}
-
-export interface NfePriceQueueItem extends RecordModel {
-  nfe?: string
-  access_key?: string
-  sku?: string
-  supplier_code?: string
-  description: string
-  ncm?: string
-  quantity?: number
-  unit_cost?: number
-  suggested_sell_price?: number
-  status: 'pendente' | 'aplicado' | 'ignorado'
-  resolution_notes?: string
-  resolved_by?: string
-  expand?: {
-    nfe?: NfeProcessed
-    resolved_by?: User
-    [key: string]: any
-  }
-}
-
 export interface AccountsPayable extends RecordModel {
   description: string
   category?: string
@@ -435,4 +393,85 @@ export interface FinancialDashboardKpis {
   monthInflows: number
   monthOutflows: number
   monthBalance: number
+}
+
+export type NfeProcessedStatus = 'processada' | 'pendente_reconciliacao' | 'erro'
+export type NfeSouisStockStatus = 'pendente' | 'lancado' | 'nao_aplicavel'
+export type NfePriceQueueItemType =
+  | 'preco_sugerido'
+  | 'reconciliacao_item'
+  | 'ajuste_preco_existente'
+  | 'excecao'
+
+export interface NfeProcessed extends RecordModel {
+  access_key: string
+  nfe_number: string
+  series?: string
+  issue_date?: string
+  supplier?: string
+  supplier_cnpj?: string
+  supplier_name?: string
+  total_amount: number
+  status: NfeProcessedStatus
+  exception_reason?: string
+  dest_cnpj?: string
+  c_stat?: string
+  prot_nfe?: string
+  source_channel?: 'manual_upload' | 'whatsapp'
+  souis_stock_status?: NfeSouisStockStatus
+  souis_stock_launched_at?: string
+  souis_stock_launched_by?: string
+  items_count: number
+  matched_items_count: number
+  pending_items_count: number
+  raw_items?: any
+  xml_payload?: string
+  expand?: {
+    supplier?: Customer
+    souis_stock_launched_by?: User
+    [key: string]: any
+  }
+}
+
+export interface NfePriceQueueItem extends RecordModel {
+  nfe?: string
+  access_key: string
+  product?: string
+  sku?: string
+  supplier_code?: string
+  description: string
+  ncm?: string
+  quantity: number
+  unit_cost: number
+  suggested_sell_price: number
+  family?: string
+  margin_factor?: number
+  price_source_payload?: string
+  item_type?: NfePriceQueueItemType
+  raw_item_data?: any
+  status: 'pendente' | 'aplicado' | 'ignorado'
+  resolution_notes?: string
+  resolved_by?: string
+  expand?: {
+    nfe?: NfeProcessed
+    product?: Product
+    resolved_by?: User
+    [key: string]: any
+  }
+}
+
+export interface NfeProductMapping extends RecordModel {
+  supplier_cnpj: string
+  supplier_name?: string
+  supplier_code: string
+  supplier_description?: string
+  product: string
+  product_sku: string
+  product_name?: string
+  confirmed_by?: string
+  expand?: {
+    product?: Product
+    confirmed_by?: User
+    [key: string]: any
+  }
 }

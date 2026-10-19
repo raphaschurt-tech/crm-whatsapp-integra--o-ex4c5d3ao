@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-19T02:26:16.004Z",
+  "generatedAt": "2026-10-19T02:49:33.223Z",
   "collections": [
     {
       "name": "users",
@@ -775,6 +775,25 @@
           "type": "bool",
           "required": false,
           "system": false
+        },
+        {
+          "name": "company_cnpj",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "family_margins",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "stock_phase",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["souis_master", "crm_cutover"]
         }
       ],
       "indexes": []
@@ -1988,6 +2007,57 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "exception_reason",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "dest_cnpj",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "c_stat",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "prot_nfe",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "source_channel",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["manual_upload", "whatsapp"]
+        },
+        {
+          "name": "souis_stock_status",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["pendente", "lancado", "nao_aplicavel"]
+        },
+        {
+          "name": "souis_stock_launched_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "souis_stock_launched_by",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
         }
       ],
       "indexes": [
@@ -2095,6 +2165,49 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "product",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "products"
+        },
+        {
+          "name": "family",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "margin_factor",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "price_source_payload",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "item_type",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": [
+            "preco_sugerido",
+            "reconciliacao_item",
+            "ajuste_preco_existente",
+            "excecao"
+          ]
+        },
+        {
+          "name": "raw_item_data",
+          "type": "json",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -2395,6 +2508,87 @@
         "CREATE INDEX idx_fin_ar_status ON accounts_receivable (status)",
         "CREATE INDEX idx_fin_ar_due_date ON accounts_receivable (due_date)",
         "CREATE INDEX idx_fin_ar_customer ON accounts_receivable (customer)"
+      ]
+    },
+    {
+      "name": "nfe_product_mappings",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "view": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "create": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "update": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "supplier_cnpj",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "supplier_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "supplier_code",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "supplier_description",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "product",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "products"
+        },
+        {
+          "name": "product_sku",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "product_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "confirmed_by",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "users"
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE UNIQUE INDEX idx_nfe_map_cnpj_code ON nfe_product_mappings (supplier_cnpj, supplier_code)",
+        "CREATE INDEX idx_nfe_map_product ON nfe_product_mappings (product)"
       ]
     }
   ]
