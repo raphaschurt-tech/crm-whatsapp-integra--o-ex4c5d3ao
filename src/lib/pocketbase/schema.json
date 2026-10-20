@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-20T00:25:34.062Z",
+  "generatedAt": "2026-10-20T00:28:19.100Z",
   "collections": [
     {
       "name": "users",
@@ -759,12 +759,6 @@
           "system": false
         },
         {
-          "name": "allowed_families",
-          "type": "text",
-          "required": false,
-          "system": false
-        },
-        {
           "name": "sync_integrity_floor",
           "type": "number",
           "required": false,
@@ -822,6 +816,12 @@
         {
           "name": "dfe_retroactive_days_default",
           "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "allowed_families",
+          "type": "json",
           "required": false,
           "system": false
         }

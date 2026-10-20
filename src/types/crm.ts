@@ -187,6 +187,15 @@ export interface Settings extends RecordModel {
   ai_excluded_skus?: string
   allowed_families?: string[]
   sync_integrity_floor?: number
+  chat_summaries_migrated?: boolean
+  company_cnpj?: string
+  family_margins?: Record<string, number>
+  stock_phase?: 'souis_master' | 'crm_cutover'
+  dfe_enabled?: boolean
+  dfe_poll_interval_hours?: number
+  dfe_worker_token?: string
+  dfe_token_active?: boolean
+  dfe_retroactive_days_default?: number
 }
 
 export type MessageProcessingStatus = 'received' | 'processing' | 'completed' | 'failed'

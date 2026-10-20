@@ -26,12 +26,12 @@ import pb from '@/lib/pocketbase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { toast } from '@/hooks/use-toast'
-
+import { getErrorMessage } from '@/lib/pocketbase/errors'
 export default function SettingsPage() {
   // Configurações Gerais
   const [whatsappNumber, setWhatsappNumber] = useState('')
@@ -133,7 +133,24 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
             'Atendimento encerrado por inatividade. Se precisar de algo, me chame aqui que continuo te ajudando! 🙂',
         )
         setAiExcludedSkus((s as any).ai_excluded_skus || '')
-        setAllowedFamilies(Array.isArray(s.allowed_families) ? s.allowed_families : [])
+        let loadedAllowed: string[] = []
+        if (Array.isArray(s.allowed_families)) {
+          loadedAllowed = s.allowed_families
+        } else if (
+          typeof s.allowed_families === 'string' &&
+          (s.allowed_families as string).trim()
+        ) {
+          try {
+            const parsed = JSON.parse(s.allowed_families)
+            if (Array.isArray(parsed)) loadedAllowed = parsed
+          } catch (_) {
+            loadedAllowed = (s.allowed_families as string)
+              .split(',')
+              .map((f) => f.trim())
+              .filter(Boolean)
+          }
+        }
+        setAllowedFamilies(loadedAllowed)
         setCompanyCnpj((s as any).company_cnpj || '')
         if ((s as any).family_margins) {
           const rawM = (s as any).family_margins
@@ -221,6 +238,18 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
     e.preventDefault()
     setSaving(true)
     try {
+      let parsedFamilyMargins = {}
+      if (familyMarginsJson.trim()) {
+        try {
+          parsedFamilyMargins = JSON.parse(familyMarginsJson)
+        } catch (jsonErr) {
+          throw new Error(
+            'JSON de margens por família inválido: ' +
+              (jsonErr instanceof Error ? jsonErr.message : String(jsonErr)),
+          )
+        }
+      }
+
       await saveSettings({
         whatsapp_number: whatsappNumber,
         stock_api_url: stockApiUrl,
@@ -239,14 +268,19 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         ai_excluded_skus: aiExcludedSkus,
         allowed_families: allowedFamilies,
         company_cnpj: companyCnpj.replace(/\D/g, ''),
-        family_margins: familyMarginsJson.trim() ? JSON.parse(familyMarginsJson) : {},
+        family_margins: parsedFamilyMargins,
         stock_phase: stockPhase,
         dfe_enabled: dfeEnabled,
         dfe_poll_interval_hours: Number(dfePollInterval) || 1,
       })
       toast({ title: 'Configurações salvas com sucesso!' })
-    } catch (_) {
-      toast({ title: 'Erro ao salvar configurações', variant: 'destructive' })
+    } catch (err: unknown) {
+      const errorDetail = getErrorMessage(err)
+      toast({
+        title: 'Erro ao salvar configurações',
+        description: errorDetail,
+        variant: 'destructive',
+      })
     } finally {
       setSaving(false)
     }

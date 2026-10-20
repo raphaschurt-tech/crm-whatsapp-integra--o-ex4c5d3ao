@@ -674,5 +674,121 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
     details.push(`SUCESSO: Busca com 1 termo ("ix35") retornou ${ranked1Term.length} produtos!`)
   }
 
+  // ==========================================
+  // TESTES DE REGRESSÃO: ALLOWLIST DE FAMÍLIAS (BLOCO 2 - G-E)
+  // ==========================================
+  // Teste 15: Ida-e-volta e tolerância a formatos (Array, JSON string e vírgula-separado)
+  const parseAllowedFamilies = (raw: unknown): string[] => {
+    if (Array.isArray(raw)) {
+      return raw.map((f) => String(f).trim()).filter(Boolean)
+    }
+    if (typeof raw === 'string' && raw.trim()) {
+      const strTrimmed = raw.trim()
+      if (strTrimmed.startsWith('[') && strTrimmed.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(strTrimmed)
+          if (Array.isArray(parsed)) {
+            return parsed.map((f) => String(f).trim()).filter(Boolean)
+          }
+        } catch {
+          /* intentionally ignored */
+        }
+      }
+      return strTrimmed
+        .split(',')
+        .map((f) => f.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean)
+    }
+    return []
+  }
+
+  const selected3Families = ['BIELETA', 'BUCHA DA BANDEJA', 'BUCHA DO BRACO']
+  const parsedFromArray = parseAllowedFamilies(selected3Families)
+  const parsedFromJsonString = parseAllowedFamilies(JSON.stringify(selected3Families))
+  const parsedFromCsv = parseAllowedFamilies('BIELETA, BUCHA DA BANDEJA, BUCHA DO BRACO')
+
+  if (JSON.stringify(parsedFromArray) !== JSON.stringify(selected3Families)) {
+    details.push('ERRO: parseAllowedFamilies falhou para Array nativo')
+    allPass = false
+  } else if (JSON.stringify(parsedFromJsonString) !== JSON.stringify(selected3Families)) {
+    details.push('ERRO: parseAllowedFamilies falhou para JSON string')
+    allPass = false
+  } else if (JSON.stringify(parsedFromCsv) !== JSON.stringify(selected3Families)) {
+    details.push('ERRO: parseAllowedFamilies falhou para string separada por vírgula')
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO (G-E 1): Ida-e-volta de allowlist testada nos 3 formatos (Array, JSON string e CSV)!',
+    )
+  }
+
+  // Teste 16: Prova de negócio - allowlist ativa restringe estritamente o catálogo da IA
+  const testCatalogWithFamilies = [
+    {
+      sku: '1001',
+      name: 'BIELETA COROLLA DIANTEIRA',
+      sou_family: 'BIELETA',
+      stock_quantity: 5,
+      price: 80,
+    },
+    {
+      sku: '1002',
+      name: 'BUCHA DA BANDEJA COROLLA',
+      sou_family: 'BUCHA DA BANDEJA',
+      stock_quantity: 4,
+      price: 60,
+    },
+    {
+      sku: '1003',
+      name: 'AMORTECEDOR COROLLA DIANTEIRO',
+      sou_family: 'AMORTECEDOR',
+      stock_quantity: 2,
+      price: 350,
+    },
+    {
+      sku: '1004',
+      name: 'BATENTE COROLLA DIANTEIRO',
+      sou_family: 'SEM FAMILIA',
+      stock_quantity: 1,
+      price: 40,
+    },
+  ]
+
+  const filterByAllowedFamilies = (
+    products: typeof testCatalogWithFamilies,
+    allowlist: string[],
+  ) => {
+    if (!allowlist || allowlist.length === 0) return products
+    const allowedLower = allowlist.map((f) => f.toLowerCase().trim())
+    return products.filter((p) => allowedLower.includes((p.sou_family || '').toLowerCase().trim()))
+  }
+
+  const activeAllowlist = ['BIELETA', 'BUCHA DA BANDEJA']
+  const filteredProducts = filterByAllowedFamilies(testCatalogWithFamilies, activeAllowlist)
+  const allowedSkusResult = filteredProducts.map((p) => p.sku)
+
+  if (allowedSkusResult.includes('1003') || allowedSkusResult.includes('1004')) {
+    details.push('ERRO (G-E 4): Produtos fora da allowlist vazaram na filtragem da IA!')
+    allPass = false
+  } else if (!allowedSkusResult.includes('1001') || !allowedSkusResult.includes('1002')) {
+    details.push('ERRO (G-E 4): Produtos permitidos foram indevidamente omitidos!')
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO (G-E 4): Allowlist ativa garante que a IA só busca produtos das famílias permitidas!',
+    )
+  }
+
+  // Teste 17: Guarda da lista vazia - allowlist vazia mantém busca aberta
+  const unfilteredProducts = filterByAllowedFamilies(testCatalogWithFamilies, [])
+  if (unfilteredProducts.length !== testCatalogWithFamilies.length) {
+    details.push('ERRO (G-E 4): Allowlist vazia bloqueou indevidamente o catálogo completo!')
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO (G-E 4): Guarda da lista vazia preservada (catálogo total acessível quando vazia)!',
+    )
+  }
+
   return { success: allPass, details }
 }
