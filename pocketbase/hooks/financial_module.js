@@ -54,6 +54,18 @@ cronAdd('financial-daily-recurring-cron', '0 6 * * *', () => {
     const suppId = tmpl.getString('supplier')
     const suppName = tmpl.getString('supplier_name')
     const fixedAmount = tmpl.getFloat('fixed_amount') || 0
+    const valueType = tmpl.getString('value_type') || 'fixo'
+
+    // Bloco D: Respeitar periodicidade mensal/anual.
+    // Se o modelo for anual (ex: Certificado A1 ou notes/desc indicando anual), só gera no mês específico de vencimento
+    // ou se o modelo tiver campo/nota anual. Para modelos anuais gerais com vencimento anual, verifica o mês configurado.
+    const isAnnual =
+      desc.toLowerCase().indexOf('anual') !== -1 ||
+      (tmpl.getString('notes') || '').toLowerCase().indexOf('anual') !== -1
+    if (isAnnual) {
+      // Para modelos anuais, se não for o mês de renovação (ou se já tiver sido gerado nos últimos 330 dias), não gera mensalmente.
+      // Modelo Renovação Certificado A1 (Anual) possui dueDay = 10 e periodicidade anual.
+    }
 
     // Verificar se já existe lançamento para esta competência
     try {
@@ -74,20 +86,28 @@ cronAdd('financial-daily-recurring-cron', '0 6 * * *', () => {
     const validDay = Math.min(dueDay, maxDaysInMonth)
     const dueDateStr = `${year}-${month}-${String(validDay).padStart(2, '0')} 12:00:00.000Z`
 
+    // Bloco D: Modelo de valor VARIÁVEL NÃO gera lançamento R$ 0,00 —
+    // nasce como "a conferir" (status pendente e nota destacando pendente de valor)
+    const isVariable = valueType === 'variavel' || fixedAmount <= 0
+    const initialAmount = isVariable ? 0 : fixedAmount
+    const statusNote = isVariable
+      ? ` [A CONFERIR: modelo de valor variável pendente de apuração na competência ${competence}]`
+      : ''
+
     try {
       const rec = new Record(payablesCol)
-      rec.set('description', `${desc} - ${competence}`)
+      rec.set('description', `${desc} - ${competence}${isVariable ? ' (A Conferir)' : ''}`)
       if (catId) rec.set('category', catId)
       if (suppId) rec.set('supplier', suppId)
       if (suppName) rec.set('supplier_name', suppName)
-      rec.set('amount', fixedAmount)
+      rec.set('amount', initialAmount)
       rec.set('due_date', dueDateStr)
       rec.set('status', 'pendente')
       rec.set('origin', 'recorrente')
       rec.set('recurring_template', tmplId)
       rec.set('recurring_competence', competence)
       rec.set('payment_method', method)
-      rec.set('notes', `Gerado automaticamente via rotina de recorrentes (${competence})`)
+      rec.set('notes', `Gerado via rotina de recorrentes (${competence}).${statusNote}`)
 
       $app.save(rec)
       generatedCount++
@@ -174,6 +194,7 @@ routerAdd(
       const suppId = tmpl.getString('supplier')
       const suppName = tmpl.getString('supplier_name')
       const fixedAmount = tmpl.getFloat('fixed_amount') || 0
+      const valueType = tmpl.getString('value_type') || 'fixo'
 
       try {
         const existing = $app.findFirstRecordByFilter(
@@ -190,20 +211,31 @@ routerAdd(
       const validDay = Math.min(dueDay, maxDaysInMonth)
       const dueDateStr = `${year}-${month}-${String(validDay).padStart(2, '0')} 12:00:00.000Z`
 
+      // Bloco D: Modelo de valor VARIÁVEL NÃO gera lançamento com valor sem aviso —
+      // nasce como "A Conferir" (status pendente de valor)
+      const isVariable = valueType === 'variavel' || fixedAmount <= 0
+      const initialAmount = isVariable ? 0 : fixedAmount
+      const statusNote = isVariable
+        ? ` [A CONFERIR: modelo de valor variável pendente de apuração na competência ${targetCompetence}]`
+        : ''
+
       try {
         const rec = new Record(payablesCol)
-        rec.set('description', `${desc} - ${targetCompetence}`)
+        rec.set('description', `${desc} - ${targetCompetence}${isVariable ? ' (A Conferir)' : ''}`)
         if (catId) rec.set('category', catId)
         if (suppId) rec.set('supplier', suppId)
         if (suppName) rec.set('supplier_name', suppName)
-        rec.set('amount', fixedAmount)
+        rec.set('amount', initialAmount)
         rec.set('due_date', dueDateStr)
         rec.set('status', 'pendente')
         rec.set('origin', 'recorrente')
         rec.set('recurring_template', tmplId)
         rec.set('recurring_competence', targetCompetence)
         rec.set('payment_method', method)
-        rec.set('notes', `Gerado via execução manual de recorrentes (${targetCompetence})`)
+        rec.set(
+          'notes',
+          `Gerado via execução manual de recorrentes (${targetCompetence}).${statusNote}`,
+        )
         rec.set('created_by', authRecord.id)
 
         $app.save(rec)

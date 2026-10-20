@@ -466,85 +466,10 @@ migrate(
       }
     }
 
-    // 8. Seed de modelos recorrentes básicos (DAS, aluguel, luz, água, internet, pró-labore)
-    const seedRecurring = [
-      {
-        description: 'DAS - Simples Nacional',
-        catName: 'Impostos e Tributos (DAS)',
-        valueType: 'variavel',
-        fixedAmount: 0,
-        dueDay: 20,
-        method: 'boleto',
-        notes: 'Guia DAS apurada mensalmente pela contabilidade',
-      },
-      {
-        description: 'Aluguel do Imóvel',
-        catName: 'Aluguel e Condomínio',
-        valueType: 'fixo',
-        fixedAmount: 3500,
-        dueDay: 10,
-        method: 'transferencia',
-        notes: 'Locação do galpão comercial RPA Auto Peças',
-      },
-      {
-        description: 'Energia Elétrica (Enel)',
-        catName: 'Energia Elétrica',
-        valueType: 'variavel',
-        fixedAmount: 0,
-        dueDay: 15,
-        method: 'boleto',
-        notes: 'Fatura de energia elétrica',
-      },
-      {
-        description: 'Água e Saneamento (Sabesp)',
-        catName: 'Água e Saneamento',
-        valueType: 'variavel',
-        fixedAmount: 0,
-        dueDay: 18,
-        method: 'boleto',
-        notes: 'Fatura de consumo de água',
-      },
-      {
-        description: 'Internet Fibra Óptica',
-        catName: 'Internet e Telefonia',
-        valueType: 'fixo',
-        fixedAmount: 149.9,
-        dueDay: 5,
-        method: 'boleto',
-        notes: 'Link dedicado para o CRM e WhatsApp',
-      },
-      {
-        description: 'Pró-Labore - Raphael',
-        catName: 'Pró-Labore e Salários',
-        valueType: 'fixo',
-        fixedAmount: 5000,
-        dueDay: 5,
-        method: 'PIX',
-        notes: 'Retirada mensal pró-labore sócio administrador',
-      },
-    ]
-
-    for (const rec of seedRecurring) {
-      try {
-        app.findFirstRecordByFilter(
-          'financial_recurring_templates',
-          `description = "${rec.description}"`,
-        )
-      } catch (_) {
-        const record = new Record(recurringCol)
-        record.set('description', rec.description)
-        if (catMap[rec.catName]) {
-          record.set('category', catMap[rec.catName])
-        }
-        record.set('value_type', rec.valueType)
-        record.set('fixed_amount', rec.fixedAmount)
-        record.set('due_day', rec.dueDay)
-        record.set('default_payment_method', rec.method)
-        record.set('notes', rec.notes)
-        record.set('is_active', true)
-        app.save(record)
-      }
-    }
+    // 8. Seed de modelos recorrentes básicos: REMOVIDO NO BLOCO D
+    // Os 6 modelos (Internet Fibra, Pró-Labore Raphael, Aluguel do Imóvel, Enel, Sabesp, DAS)
+    // foram expurgados para evitar que novos deploys recriem os registros indesejados.
+    // Apenas o modelo "Renovação do Certificado A1 (Anual)" permanece sob a migration 0098 (Guard D9).
   },
   (app) => {
     const list = [
