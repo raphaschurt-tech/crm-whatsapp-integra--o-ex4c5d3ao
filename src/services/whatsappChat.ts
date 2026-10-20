@@ -657,55 +657,31 @@ export async function loadCustomerConversationMessages(
   const variants = getPhoneVariants(norm)
 
   const page = options?.page ?? 1
-  const perPage = options?.perPage ?? 100
+  const perPage = options?.perPage ?? 50
 
-  const filterPartsWebhook = variants.map(
-    (v) => `phone ~ "${v}" || chat ~ "${v}" || sender ~ "${v}"`,
-  )
+  // Bloco B - Performance da Conversa:
+  // 1 varredura única em webhook_received filtrando primariamente por phone
+  // (índice idx_webhook_received_phone_created)
+  const filterPartsWebhook = variants.map((v) => `phone ~ "${v}"`)
   const filterWebhook = filterPartsWebhook.join(' || ')
 
-  const filterPartsProc = variants.map((v) => `phone ~ "${v}"`)
-  const filterProc = filterPartsProc.join(' || ')
+  const webhookRes = await withRetry(
+    () =>
+      pb.collection<WebhookReceivedRecord>('webhook_received').getList(page, perPage, {
+        filter: filterWebhook,
+        sort: '-created',
+      }),
+    { retries: 2, delayMs: 400 },
+  ).catch((err) => {
+    console.warn('[loadCustomerConversationMessages] Erro ao buscar webhook_received:', err)
+    return { items: [] as WebhookReceivedRecord[] }
+  })
 
-  const [webhookList, processingList] = await Promise.all([
-    withRetry(
-      () =>
-        pb.collection<WebhookReceivedRecord>('webhook_received').getList(page, perPage, {
-          filter: filterWebhook,
-          sort: '-created',
-        }),
-      { retries: 2, delayMs: 400 },
-    )
-      .then((res) => res.items)
-      .catch(() => [] as WebhookReceivedRecord[]),
-    withRetry(
-      () =>
-        pb.collection<MessageProcessingRecord>('message_processing').getList(page, perPage, {
-          filter: filterProc,
-          sort: '-created',
-        }),
-      { retries: 2, delayMs: 400 },
-    )
-      .then((res) => res.items)
-      .catch(() => [] as MessageProcessingRecord[]),
-  ])
-
-  // Mapear respostas de IA para evitar ecos
-  const aiReplies: Array<{ text: string; time: number }> = []
-  for (const proc of processingList) {
-    const reply = (proc.aiReplyText || '').trim()
-    if (reply && (proc.replySent || proc.status === 'completed')) {
-      aiReplies.push({
-        text: reply,
-        time: new Date(proc.created).getTime(),
-      })
-    }
-  }
-
+  const webhookList = webhookRes.items
   const messagesMap = new Map<string, WhatsAppMessage>()
   const seenMessageIds = new Set<string>()
 
-  // 1. Mensagens do webhook
+  // Mensagens do webhook
   for (const rec of webhookList) {
     let text = extractMessageText(rec.text)
     const hasAttachment = Boolean(rec.attachment_url)
@@ -719,14 +695,7 @@ export async function loadCustomerConversationMessages(
     const timestamp = msgDate.getTime()
     const timeStr = formatActivityTime(msgDate)
 
-    if (isFromMe && rec.type !== 'AgentSentMessage') {
-      const isAiEcho = aiReplies.some(
-        (ai) =>
-          (ai.text === text || text.startsWith(ai.text.slice(0, 50))) &&
-          Math.abs(timestamp - ai.time) < 30 * 60 * 1000,
-      )
-      if (isAiEcho) continue
-    }
+    // Descarte de ecos locais
 
     let sender: WhatsAppSender = 'client'
     if (isFromMe) {
@@ -773,37 +742,6 @@ export async function loadCustomerConversationMessages(
 
     if (rec.messageId) {
       seenMessageIds.add(rec.messageId)
-    }
-  }
-
-  // 2. Mensagens do message_processing
-  for (const proc of processingList) {
-    if (proc.incomingText && proc.messageId && !seenMessageIds.has(proc.messageId)) {
-      const procDate = new Date(proc.created)
-      const msgId = `proc-in-${proc.id}`
-      messagesMap.set(msgId, {
-        id: msgId,
-        text: proc.incomingText,
-        time: formatActivityTime(procDate),
-        sender: 'client',
-        timestamp: procDate.getTime(),
-        messageId: proc.messageId,
-        isAudio: Boolean(proc.is_audio),
-        audioUrl: proc.audio_url || undefined,
-      })
-      seenMessageIds.add(proc.messageId)
-    }
-
-    if (proc.aiReplyText && (proc.replySent || proc.status === 'completed')) {
-      const replyDate = new Date(proc.updated || proc.created)
-      const msgId = `proc-ai-${proc.id}`
-      messagesMap.set(msgId, {
-        id: msgId,
-        text: proc.aiReplyText,
-        time: formatActivityTime(replyDate),
-        sender: 'ai',
-        timestamp: replyDate.getTime(),
-      })
     }
   }
 

@@ -1021,7 +1021,8 @@ export default function WhatsAppAtendimento() {
       }
 
       try {
-        const perPage = 100
+        // Bloco B: Carrega apenas 50 mensagens mais recentes na abertura ou por página de scroll
+        const perPage = 50
         const fetched = await loadCustomerConversationMessages(phone, { page, perPage })
 
         // Se página 1 e fetched vazio, tentar reconstrução defensiva (Guarda 5)

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-19T23:52:23.576Z",
+  "generatedAt": "2026-10-19T23:59:13.700Z",
   "collections": [
     {
       "name": "users",
@@ -948,7 +948,8 @@
         "CREATE INDEX idx_webhook_received_messageId ON webhook_received (messageId)",
         "CREATE INDEX idx_webhook_received_instanceId ON webhook_received (instanceId)",
         "CREATE INDEX idx_webhook_received_type ON webhook_received (type)",
-        "CREATE INDEX idx_webhook_received_created ON webhook_received (created DESC)"
+        "CREATE INDEX idx_webhook_received_created ON webhook_received (created DESC)",
+        "CREATE INDEX `idx_webhook_received_phone_created` ON `webhook_received` (phone, created)"
       ]
     },
     {
