@@ -57,17 +57,46 @@ cronAdd('financial-daily-recurring-cron', '0 6 * * *', () => {
     const valueType = tmpl.getString('value_type') || 'fixo'
 
     // Bloco D: Respeitar periodicidade mensal/anual.
-    // Se o modelo for anual (ex: Certificado A1 ou notes/desc indicando anual), só gera no mês específico de vencimento
-    // ou se o modelo tiver campo/nota anual. Para modelos anuais gerais com vencimento anual, verifica o mês configurado.
+    // Se o modelo for anual (ex: Certificado A1 ou notes/desc indicando anual), NÃO repete mensalmente.
+    // Verifica se já existe QUALQUER lançamento deste modelo gerado nos últimos 330 dias ou no ano corrente.
     const isAnnual =
       desc.toLowerCase().indexOf('anual') !== -1 ||
       (tmpl.getString('notes') || '').toLowerCase().indexOf('anual') !== -1
+
     if (isAnnual) {
-      // Para modelos anuais, se não for o mês de renovação (ou se já tiver sido gerado nos últimos 330 dias), não gera mensalmente.
-      // Modelo Renovação Certificado A1 (Anual) possui dueDay = 10 e periodicidade anual.
+      try {
+        const pastAnnual = $app.findRecordsByFilter(
+          'accounts_payable',
+          `recurring_template = "${tmplId}" && origin = "recorrente"`,
+          '-due_date',
+          1,
+          0,
+        )
+        if (pastAnnual && pastAnnual.length > 0) {
+          const lastDue = pastAnnual[0].getString('due_date')
+          const lastComp = pastAnnual[0].getString('recurring_competence') || ''
+          // Se já existe lançamento no mesmo ano (ex: 2026-...) ou há menos de 300 dias, pula
+          if (lastComp.startsWith(String(year))) {
+            existingCount++
+            continue
+          }
+          if (lastDue) {
+            const lastTime = new Date(lastDue).getTime()
+            const diffDays = Math.floor((brDate.getTime() - lastTime) / (1000 * 60 * 60 * 24))
+            if (diffDays >= 0 && diffDays < 300) {
+              existingCount++
+              continue
+            }
+          }
+        }
+      } catch (annualErr) {
+        console.log(
+          `[FIN-CRON] Erro ao checar periodicidade anual de "${desc}": ${String(annualErr)}`,
+        )
+      }
     }
 
-    // Verificar se já existe lançamento para esta competência
+    // Verificar se já existe lançamento para esta competência específica
     try {
       const existing = $app.findFirstRecordByFilter(
         'accounts_payable',
@@ -86,17 +115,17 @@ cronAdd('financial-daily-recurring-cron', '0 6 * * *', () => {
     const validDay = Math.min(dueDay, maxDaysInMonth)
     const dueDateStr = `${year}-${month}-${String(validDay).padStart(2, '0')} 12:00:00.000Z`
 
-    // Bloco D: Modelo de valor VARIÁVEL NÃO gera lançamento R$ 0,00 —
-    // nasce como "a conferir" (status pendente e nota destacando pendente de valor)
+    // Bloco D: Modelo de valor VARIÁVEL (ou valor <= 0) NÃO gera lançamento R$ 0,00 —
+    // nasce como pendente "a conferir", com marcação explícita na nota e descrição
     const isVariable = valueType === 'variavel' || fixedAmount <= 0
     const initialAmount = isVariable ? 0 : fixedAmount
     const statusNote = isVariable
-      ? ` [A CONFERIR: modelo de valor variável pendente de apuração na competência ${competence}]`
+      ? ` [A CONFERIR: modelo de valor variável/sem valor fixo pendente de apuração na competência ${competence}]`
       : ''
 
     try {
       const rec = new Record(payablesCol)
-      rec.set('description', `${desc} - ${competence}${isVariable ? ' (A Conferir)' : ''}`)
+      rec.set('description', `${desc} - ${competence}${isVariable ? ' [A CONFERIR]' : ''}`)
       if (catId) rec.set('category', catId)
       if (suppId) rec.set('supplier', suppId)
       if (suppName) rec.set('supplier_name', suppName)
@@ -196,6 +225,43 @@ routerAdd(
       const fixedAmount = tmpl.getFloat('fixed_amount') || 0
       const valueType = tmpl.getString('value_type') || 'fixo'
 
+      // Bloco D: Respeitar periodicidade mensal/anual também na execução manual
+      const isAnnual =
+        desc.toLowerCase().indexOf('anual') !== -1 ||
+        (tmpl.getString('notes') || '').toLowerCase().indexOf('anual') !== -1
+
+      if (isAnnual) {
+        try {
+          const pastAnnual = $app.findRecordsByFilter(
+            'accounts_payable',
+            `recurring_template = "${tmplId}" && origin = "recorrente"`,
+            '-due_date',
+            1,
+            0,
+          )
+          if (pastAnnual && pastAnnual.length > 0) {
+            const lastDue = pastAnnual[0].getString('due_date')
+            const lastComp = pastAnnual[0].getString('recurring_competence') || ''
+            if (lastComp.startsWith(String(year))) {
+              existingCount++
+              continue
+            }
+            if (lastDue) {
+              const lastTime = new Date(lastDue).getTime()
+              const diffDays = Math.floor((brDate.getTime() - lastTime) / (1000 * 60 * 60 * 24))
+              if (diffDays >= 0 && diffDays < 300) {
+                existingCount++
+                continue
+              }
+            }
+          }
+        } catch (annualErr) {
+          console.log(
+            `[FIN-CRON] Erro ao checar periodicidade anual manual de "${desc}": ${String(annualErr)}`,
+          )
+        }
+      }
+
       try {
         const existing = $app.findFirstRecordByFilter(
           'accounts_payable',
@@ -211,17 +277,17 @@ routerAdd(
       const validDay = Math.min(dueDay, maxDaysInMonth)
       const dueDateStr = `${year}-${month}-${String(validDay).padStart(2, '0')} 12:00:00.000Z`
 
-      // Bloco D: Modelo de valor VARIÁVEL NÃO gera lançamento com valor sem aviso —
-      // nasce como "A Conferir" (status pendente de valor)
+      // Bloco D: Modelo de valor VARIÁVEL (ou valor <= 0) NÃO gera lançamento R$ 0,00 —
+      // nasce como pendente "a conferir", com marcação explícita na nota e descrição
       const isVariable = valueType === 'variavel' || fixedAmount <= 0
       const initialAmount = isVariable ? 0 : fixedAmount
       const statusNote = isVariable
-        ? ` [A CONFERIR: modelo de valor variável pendente de apuração na competência ${targetCompetence}]`
+        ? ` [A CONFERIR: modelo de valor variável/sem valor fixo pendente de apuração na competência ${targetCompetence}]`
         : ''
 
       try {
         const rec = new Record(payablesCol)
-        rec.set('description', `${desc} - ${targetCompetence}${isVariable ? ' (A Conferir)' : ''}`)
+        rec.set('description', `${desc} - ${targetCompetence}${isVariable ? ' [A CONFERIR]' : ''}`)
         if (catId) rec.set('category', catId)
         if (suppId) rec.set('supplier', suppId)
         if (suppName) rec.set('supplier_name', suppName)
