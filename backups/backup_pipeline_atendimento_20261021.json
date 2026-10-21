@@ -1,0 +1,80 @@
+{
+  "backup_metadata": {
+    "timestamp_brasilia": "2026-10-21T14:15:00-03:00",
+    "timestamp_utc": "2026-10-21T17:15:00.000Z",
+    "purpose": "Backup preventivo obrigatório antes das migrações e correções BUG 2 e BUG 3",
+    "target_collections": [
+      "webhook_received",
+      "chat_summaries",
+      "message_processing",
+      "chat_control"
+    ]
+  },
+  "collections_schema": {
+    "webhook_received": {
+      "id": "pbc_704184682",
+      "name": "webhook_received",
+      "fields": [
+        { "name": "type", "type": "text" },
+        { "name": "phone", "type": "json" },
+        { "name": "fromMe", "type": "bool" },
+        { "name": "text", "type": "json" },
+        { "name": "chat", "type": "json" },
+        { "name": "sender", "type": "json" },
+        { "name": "status", "type": "text" },
+        { "name": "messageId", "type": "text" },
+        { "name": "instanceId", "type": "text" },
+        { "name": "moment", "type": "number" },
+        { "name": "is_audio", "type": "bool" },
+        { "name": "audio_url", "type": "text" },
+        { "name": "attachment_url", "type": "text", "max": 5000 },
+        { "name": "attachment_name", "type": "text" },
+        { "name": "attachment_type", "type": "text" }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_webhook_received_messageId ON webhook_received (messageId)",
+        "CREATE INDEX idx_webhook_received_instanceId ON webhook_received (instanceId)",
+        "CREATE INDEX idx_webhook_received_type ON webhook_received (type)",
+        "CREATE INDEX idx_webhook_received_created ON webhook_received (created DESC)",
+        "CREATE INDEX idx_webhook_received_phone_created ON webhook_received (phone, created)"
+      ]
+    },
+    "chat_summaries": {
+      "name": "chat_summaries",
+      "fields": [
+        { "name": "canonical_phone", "type": "text" },
+        { "name": "raw_phone", "type": "text" },
+        { "name": "last_message_preview", "type": "text" },
+        { "name": "last_message_direction", "type": "select" },
+        { "name": "last_message_at", "type": "date" },
+        { "name": "first_message_at", "type": "date" },
+        { "name": "unread_count", "type": "number" },
+        { "name": "tem_mensagens", "type": "bool" },
+        { "name": "last_message_id", "type": "text" },
+        { "name": "last_seen_message_ids", "type": "json" }
+      ]
+    },
+    "message_processing": {
+      "name": "message_processing",
+      "fields": [
+        { "name": "messageId", "type": "text" },
+        { "name": "phone", "type": "text" },
+        { "name": "status", "type": "select" },
+        { "name": "replySent", "type": "bool" },
+        { "name": "incomingText", "type": "text" },
+        { "name": "aiReplyText", "type": "text" },
+        { "name": "aiModel", "type": "text" },
+        { "name": "zapiStatus", "type": "number" },
+        { "name": "errorMessage", "type": "text" },
+        { "name": "retryCount", "type": "number" },
+        { "name": "is_audio", "type": "bool" },
+        { "name": "audio_url", "type": "text" }
+      ]
+    }
+  },
+  "protected_delivered_features_reference": {
+    "token_dfe": "0.0.215-0.0.217",
+    "hook_resumos_normalizador_canonico": "0.0.214 commit f8b2798",
+    "status": "intocados"
+  }
+}

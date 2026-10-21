@@ -302,9 +302,21 @@ routerAdd(
       zapiErrorDetail = configError || 'Credenciais Z-API não configuradas'
     }
 
+    // Função auxiliar para horário de Brasília (UTC-3) conforme regra permanente
+    const getBrasiliaTimestampSend = () => {
+      try {
+        const d = new Date()
+        const spTime = new Date(d.getTime() - 3 * 3600 * 1000)
+        return spTime.toISOString().replace('Z', '-03:00')
+      } catch (_) {
+        return new Date().toISOString()
+      }
+    }
+
     // Gravar no webhook_received com fromMe=true para que apareça de imediato no histórico do chat
     const messageId = 'agent_' + Date.now() + '_' + $security.randomString(6)
     const nowIsoAgent = new Date().toISOString()
+    let savedRecord = null
     try {
       const colWebhook = $app.findCollectionByNameOrId('webhook_received')
       const rec = new Record(colWebhook)
@@ -312,9 +324,7 @@ routerAdd(
       rec.set('phone', { phone: cleanPhone })
       rec.set('fromMe', true)
       rec.set('text', {
-        message:
-          message ||
-          (isAudio ? 'Mensagem de voz' : documentFileName ? 'Arquivo: ' + documentFileName : ''),
+        message: message || (isAudio ? '' : documentFileName ? 'Arquivo: ' + documentFileName : ''),
       })
       rec.set('chat', { phone: cleanPhone })
       rec.set('sender', { role: 'agent' })
@@ -336,6 +346,7 @@ routerAdd(
       }
 
       $app.save(rec)
+      savedRecord = rec
 
       // Atualizar last_interaction_at do customer
       try {
@@ -364,10 +375,129 @@ routerAdd(
       console.log('[AGENT-SEND-PERSIST-ERR]', dbErr.message || String(dbErr))
     }
 
+    // TRANSCRIÇÃO DE ÁUDIO OUTBOUND (GUARD FAIL-SOFT):
+    // Roda APÓS o envio e persistência inicial; NUNCA bloqueia nem derruba o envio.
+    // Em falha, grava text vazio ({ message: '' }), loga erro em horário de Brasília (UTC-3) e segue.
+    if (isAudio && audioBase64 && savedRecord) {
+      try {
+        const openaiKey = validConfigRec ? String(validConfigRec.get('openai_api_key') || '') : ''
+        if (!openaiKey) {
+          console.log(
+            '[AUDIO-TRANSCRIPTION-OUTBOUND-FAIL-SOFT]',
+            JSON.stringify({
+              timestampBrasilia: getBrasiliaTimestampSend(),
+              messageId: messageId,
+              phone: maskedPhone,
+              error: 'OpenAI API key não configurada para transcrição de áudio outbound',
+            }),
+          )
+        } else {
+          // Extrair bytes do data URI base64
+          let base64Data = audioBase64
+          let mime = 'audio/ogg'
+          if (audioBase64.startsWith('data:')) {
+            const match = audioBase64.match(/^data:([^;]+);base64,(.*)$/)
+            if (match) {
+              mime = match[1] || 'audio/ogg'
+              base64Data = match[2]
+            }
+          }
+
+          let ext = 'ogg'
+          if (mime.includes('mp3') || mime.includes('mpeg')) ext = 'mp3'
+          else if (mime.includes('wav')) ext = 'wav'
+          else if (mime.includes('m4a')) ext = 'm4a'
+          else if (mime.includes('webm')) ext = 'webm'
+
+          // Decodificar base64 usando $security.parseBase64
+          let audioBytes = null
+          try {
+            audioBytes = $security.parseBase64(base64Data)
+          } catch (decErr) {
+            console.log(
+              '[AUDIO-TRANSCRIPTION-OUTBOUND-FAIL-SOFT]',
+              JSON.stringify({
+                timestampBrasilia: getBrasiliaTimestampSend(),
+                messageId: messageId,
+                phone: maskedPhone,
+                error:
+                  'Falha ao decodificar base64 do áudio: ' + (decErr.message || String(decErr)),
+              }),
+            )
+          }
+
+          if (audioBytes) {
+            const audioFile = $filesystem.fileFromBytes(audioBytes, 'audio_outbound.' + ext)
+            const formData = new FormData()
+            formData.append('model', 'whisper-1')
+            formData.append('language', 'pt')
+            formData.append('file', audioFile)
+
+            const whisperRes = $http.send({
+              url: 'https://api.openai.com/v1/audio/transcriptions',
+              method: 'POST',
+              headers: {
+                Authorization: 'Bearer ' + openaiKey,
+              },
+              body: formData,
+              timeout: 45,
+            })
+
+            if (whisperRes.statusCode >= 200 && whisperRes.statusCode < 300) {
+              const parsed = whisperRes.json || {}
+              const transcribedText = String(parsed.text || '').trim()
+              if (transcribedText) {
+                savedRecord.set('text', { message: transcribedText })
+                $app.save(savedRecord)
+                console.log(
+                  '[AUDIO-TRANSCRIPTION-OUTBOUND-SUCCESS]',
+                  JSON.stringify({
+                    timestampBrasilia: getBrasiliaTimestampSend(),
+                    messageId: messageId,
+                    phone: maskedPhone,
+                    textLength: transcribedText.length,
+                  }),
+                )
+              }
+            } else {
+              const errBody = whisperRes.json || whisperRes.body || {}
+              console.log(
+                '[AUDIO-TRANSCRIPTION-OUTBOUND-FAIL-SOFT]',
+                JSON.stringify({
+                  timestampBrasilia: getBrasiliaTimestampSend(),
+                  messageId: messageId,
+                  phone: maskedPhone,
+                  error:
+                    'Whisper HTTP ' +
+                    whisperRes.statusCode +
+                    ': ' +
+                    (errBody.error
+                      ? errBody.error.message || JSON.stringify(errBody.error)
+                      : String(whisperRes.body || '')),
+                }),
+              )
+            }
+          }
+        }
+      } catch (whisperOutEx) {
+        console.log(
+          '[AUDIO-TRANSCRIPTION-OUTBOUND-FAIL-SOFT]',
+          JSON.stringify({
+            timestampBrasilia: getBrasiliaTimestampSend(),
+            messageId: messageId,
+            phone: maskedPhone,
+            error:
+              'Exceção na transcrição outbound: ' + (whisperOutEx.message || String(whisperOutEx)),
+          }),
+        )
+      }
+    }
+
     console.log(
       '[AGENT-MESSAGE-SENT]',
       JSON.stringify({
         timestamp: new Date().toISOString(),
+        timestampBrasilia: getBrasiliaTimestampSend(),
         phone: maskedPhone,
         zapiSuccess: zapiSuccess,
         zapiHttpStatus: zapiHttpStatus,

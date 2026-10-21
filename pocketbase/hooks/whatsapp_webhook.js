@@ -797,12 +797,23 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   }
 
   // ==========================================
-  // TRANSCRIÇÃO DE ÁUDIO VIA WHISPER (SE FOR ÁUDIO E NÃO FOR FROM_ME)
+  // TRANSCRIÇÃO DE ÁUDIO VIA WHISPER (INBOUND E OUTBOUND fromMe=true)
   // ==========================================
+  // Função auxiliar para horário de Brasília (UTC-3) conforme regra permanente do projeto
+  const getBrasiliaTimestampWebhook = () => {
+    try {
+      const d = new Date()
+      const spTime = new Date(d.getTime() - 3 * 3600 * 1000)
+      return spTime.toISOString().replace('Z', '-03:00')
+    } catch (_) {
+      return new Date().toISOString()
+    }
+  }
+
   let transcriptionFailed = false
   let transcriptionError = ''
 
-  if (isAudio && !isFromMe) {
+  if (isAudio) {
     const openaiKey = validConfigRec ? String(validConfigRec.get('openai_api_key') || '') : ''
 
     if (!rawAudioUrl) {
@@ -811,7 +822,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       console.log(
         '[AUDIO-TRANSCRIPTION-ERROR]',
         JSON.stringify({
+          timestampBrasilia: getBrasiliaTimestampWebhook(),
           messageId: messageId,
+          fromMe: isFromMe,
           error: transcriptionError,
           senderPhone: maskedSenderPhone,
         }),
@@ -822,7 +835,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       console.log(
         '[AUDIO-TRANSCRIPTION-ERROR]',
         JSON.stringify({
+          timestampBrasilia: getBrasiliaTimestampWebhook(),
           messageId: messageId,
+          fromMe: isFromMe,
           error: transcriptionError,
           senderPhone: maskedSenderPhone,
         }),
@@ -832,7 +847,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         console.log(
           '[AUDIO-DOWNLOAD-START]',
           JSON.stringify({
+            timestampBrasilia: getBrasiliaTimestampWebhook(),
             messageId: messageId,
+            fromMe: isFromMe,
             senderPhone: maskedSenderPhone,
           }),
         )
@@ -858,7 +875,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             console.log(
               '[AUDIO-TRANSCRIPTION-REJECTED-SIZE]',
               JSON.stringify({
+                timestampBrasilia: getBrasiliaTimestampWebhook(),
                 messageId: messageId,
+                fromMe: isFromMe,
                 size: fileSize,
                 limit: MAX_WHISPER_SIZE,
                 senderPhone: maskedSenderPhone,
@@ -880,7 +899,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             console.log(
               '[AUDIO-WHISPER-CALL]',
               JSON.stringify({
+                timestampBrasilia: getBrasiliaTimestampWebhook(),
                 messageId: messageId,
+                fromMe: isFromMe,
                 fileName: fileName,
                 fileSize: fileSize,
                 senderPhone: maskedSenderPhone,
@@ -906,7 +927,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
                 console.log(
                   '[AUDIO-TRANSCRIPTION-SUCCESS]',
                   JSON.stringify({
+                    timestampBrasilia: getBrasiliaTimestampWebhook(),
                     messageId: messageId,
+                    fromMe: isFromMe,
                     senderPhone: maskedSenderPhone,
                     textLength: transcribedText.length,
                   }),
@@ -938,7 +961,9 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         console.log(
           '[AUDIO-TRANSCRIPTION-FAILED]',
           JSON.stringify({
+            timestampBrasilia: getBrasiliaTimestampWebhook(),
             messageId: messageId,
+            fromMe: isFromMe,
             senderPhone: maskedSenderPhone,
             error: transcriptionError,
           }),
