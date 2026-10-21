@@ -1356,17 +1356,21 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                   <Badge
                     variant="outline"
                     className={
-                      dfeTokenActive ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+                      dfeTokenActive
+                        ? 'bg-emerald-50 text-emerald-700'
+                        : dfeToken
+                          ? 'bg-rose-50 text-rose-700'
+                          : 'bg-slate-100 text-slate-500'
                     }
                   >
-                    {dfeTokenActive ? 'Ativo' : 'Revogado / Não Gerado'}
+                    {dfeTokenActive ? 'Ativo' : dfeToken ? 'Revogado' : 'Não Gerado'}
                   </Badge>
                 </Label>
                 <div className="flex items-center gap-2">
                   <Input
                     type="password"
                     readOnly
-                    value={dfeToken ? '••••••••••••••••••••••••••••••••' : ''}
+                    value={dfeTokenActive && dfeToken ? '••••••••••••••••••••••••••••••••' : ''}
                     placeholder="Nenhum token configurado"
                     className="font-mono text-xs bg-slate-50"
                   />
