@@ -18,6 +18,8 @@ import {
   FileText,
   KeyRound,
   ShieldCheck,
+  Copy,
+  Check,
 } from 'lucide-react'
 import { getSettings, saveSettings } from '@/services/settings'
 import { getProducts } from '@/services/products'
@@ -67,6 +69,8 @@ export default function SettingsPage() {
   const [dfeTokenActive, setDfeTokenActive] = useState<boolean>(false)
   const [generatingToken, setGeneratingToken] = useState<boolean>(false)
   const [dfePointer, setDfePointer] = useState<any>(null)
+  const [newlyGeneratedToken, setNewlyGeneratedToken] = useState<string | null>(null)
+  const [copiedToken, setCopiedToken] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -329,6 +333,8 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
       if (res.success && res.token) {
         setDfeToken(res.token)
         setDfeTokenActive(true)
+        setNewlyGeneratedToken(res.token)
+        setCopiedToken(false)
         toast({
           title: 'Token DFe Gerado com Sucesso!',
           description: 'Copie o token e configure no worker Node.js.',
@@ -343,6 +349,26 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
       })
     } finally {
       setGeneratingToken(false)
+    }
+  }
+
+  const handleCopyNewToken = async () => {
+    if (!newlyGeneratedToken) return
+    try {
+      await navigator.clipboard.writeText(newlyGeneratedToken)
+      setCopiedToken(true)
+      toast({
+        title: 'Token copiado!',
+        description: 'Cole o token no arquivo .env ou configuração do worker Node.js.',
+        className: 'bg-emerald-600 text-white',
+      })
+      setTimeout(() => setCopiedToken(false), 3000)
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao copiar token',
+        description: 'Selecione o texto e copie manualmente.',
+        variant: 'destructive',
+      })
     }
   }
 
@@ -362,6 +388,9 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
       )
       if (res.success) {
         setDfeTokenActive(false)
+        setDfeToken('')
+        setNewlyGeneratedToken(null)
+        setCopiedToken(false)
         toast({
           title: 'Token DFe Revogado',
           description:
@@ -1364,6 +1393,45 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                     </Button>
                   )}
                 </div>
+
+                {newlyGeneratedToken && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                    <div className="flex items-center gap-1.5 text-amber-800 text-xs font-semibold">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                      <span>
+                        Copie o token agora — ele não será exibido novamente após fechar ou
+                        recarregar esta tela
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="text"
+                        readOnly
+                        value={newlyGeneratedToken}
+                        className="font-mono text-xs bg-white text-slate-900 border-amber-300 font-bold select-all"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleCopyNewToken}
+                        className="text-xs shrink-0 bg-amber-600 hover:bg-amber-700 text-white flex items-center gap-1.5"
+                      >
+                        {copiedToken ? (
+                          <>
+                            <Check className="h-3.5 w-3.5" />
+                            Copiado
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5" />
+                            Copiar Token
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 <p className="text-xs text-slate-500">
                   Token com escopo exclusivo para o worker (CF-1c). A senha do .pfx e a chave
                   privada nunca passam pelo CRM (D9).
