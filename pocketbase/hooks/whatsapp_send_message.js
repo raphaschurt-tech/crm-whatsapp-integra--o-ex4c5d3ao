@@ -334,13 +334,25 @@ routerAdd(
       rec.set('moment', Math.floor(Date.now() / 1000))
 
       if (isAudio) {
-        rec.set('attachment_url', audioBase64)
+        if (audioBase64.length > 5000) {
+          rec.set('attachment_data', audioBase64)
+          // Mantém attachment_url seguro sem estourar os 5000 chars
+          rec.set('attachment_url', '')
+          rec.set('audio_url', '')
+        } else {
+          rec.set('attachment_url', audioBase64)
+          rec.set('audio_url', audioBase64)
+        }
         rec.set('attachment_name', 'Mensagem de voz')
         rec.set('attachment_type', 'audio')
         rec.set('is_audio', true)
-        rec.set('audio_url', audioBase64)
       } else if (documentBase64) {
-        rec.set('attachment_url', documentBase64)
+        if (documentBase64.length > 5000) {
+          rec.set('attachment_data', documentBase64)
+          rec.set('attachment_url', '')
+        } else {
+          rec.set('attachment_url', documentBase64)
+        }
         rec.set('attachment_name', documentFileName || (isImage ? 'imagem.png' : 'documento.pdf'))
         rec.set('attachment_type', isImage ? 'image' : 'document')
       }

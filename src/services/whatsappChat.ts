@@ -209,6 +209,7 @@ export interface WebhookReceivedRecord extends RecordModel {
   is_audio?: boolean
   audio_url?: string
   attachment_url?: string
+  attachment_data?: string
   attachment_name?: string
   attachment_type?: string
 }
@@ -684,7 +685,8 @@ export async function loadCustomerConversationMessages(
   // Mensagens do webhook
   for (const rec of webhookList) {
     let text = extractMessageText(rec.text)
-    const hasAttachment = Boolean(rec.attachment_url)
+    const effectiveAttUrl = rec.attachment_data || rec.attachment_url
+    const hasAttachment = Boolean(effectiveAttUrl)
     if (!text && !hasAttachment) continue
     if (!text && hasAttachment) {
       text = rec.attachment_name ? `Arquivo: ${rec.attachment_name}` : ''
@@ -729,7 +731,7 @@ export async function loadCustomerConversationMessages(
       messageId: rec.messageId,
       isAudio: Boolean(rec.is_audio),
       audioUrl: rec.audio_url || undefined,
-      attachmentUrl: rec.attachment_url || undefined,
+      attachmentUrl: rec.attachment_data || rec.attachment_url || undefined,
       attachmentName: rec.attachment_name || undefined,
       attachmentType:
         rec.attachment_type === 'image' ||
@@ -1315,7 +1317,8 @@ function buildWhatsAppCustomerListFromRecords(
     if (!normalized) continue
 
     let text = extractMessageText(rec.text)
-    const hasAttachment = Boolean(rec.attachment_url)
+    const effectiveAttUrl = rec.attachment_data || rec.attachment_url
+    const hasAttachment = Boolean(effectiveAttUrl)
     if (!text && !hasAttachment) continue
     if (!text && hasAttachment) {
       text = rec.attachment_name ? `Arquivo: ${rec.attachment_name}` : ''
@@ -1385,7 +1388,7 @@ function buildWhatsAppCustomerListFromRecords(
       messageId: rec.messageId,
       isAudio: Boolean(rec.is_audio),
       audioUrl: rec.audio_url || undefined,
-      attachmentUrl: rec.attachment_url || undefined,
+      attachmentUrl: rec.attachment_data || rec.attachment_url || undefined,
       attachmentName: rec.attachment_name || undefined,
       attachmentType:
         rec.attachment_type === 'image' ||

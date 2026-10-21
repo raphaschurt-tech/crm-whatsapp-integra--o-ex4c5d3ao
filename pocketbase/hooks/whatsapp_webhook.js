@@ -1156,7 +1156,12 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         rec.set('audio_url', rawAudioUrl)
       }
       if (attachmentUrl) {
-        rec.set('attachment_url', attachmentUrl)
+        if (attachmentUrl.length > 5000) {
+          rec.set('attachment_data', attachmentUrl)
+          rec.set('attachment_url', '')
+        } else {
+          rec.set('attachment_url', attachmentUrl)
+        }
         rec.set('attachment_type', attachmentType)
         rec.set('attachment_name', attachmentName)
       }
@@ -1201,7 +1206,12 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         rec.set('audio_url', rawAudioUrl)
       }
       if (attachmentUrl) {
-        rec.set('attachment_url', attachmentUrl)
+        if (attachmentUrl.length > 5000) {
+          rec.set('attachment_data', attachmentUrl)
+          rec.set('attachment_url', '')
+        } else {
+          rec.set('attachment_url', attachmentUrl)
+        }
         rec.set('attachment_type', attachmentType)
         rec.set('attachment_name', attachmentName)
       }
