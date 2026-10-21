@@ -260,6 +260,136 @@ check('incremento correto de unread_count', r2.record.unread_count, 2)
 const r3 = simulateHookUpsert('11941531072', '-created', '2026-10-19T18:10:00.000Z', 'inbound')
 check('fallback sem sort encontra e atualiza sem tentar create duplicado', r3.status, 'updated')
 
+// ============================================================
+// 10. TESTE DE REGRESSÃO G-E (BUG 1) — normalização de last_seen_message_ids
+// ============================================================
+// Garante que o hook webhook_collection_received:
+// 1. Converte []byte do Go (array de inteiros ASCII) de volta em strings de IDs válidos
+// 2. Nunca aceita nem grava array numérico de bytes como IDs
+// 3. Converte valores corrompidos ou ilegíveis para [] e reprocessa
+// 4. Sempre grava array canônico de strings, sem números nem nulos
+// ============================================================
+
+function normalizeSeenIds(raw: unknown): string[] {
+  if (!raw) return []
+
+  if (typeof raw === 'string') {
+    const trimmed = (raw as string).trim()
+    if (!trimmed) return []
+    try {
+      const parsed = JSON.parse(trimmed)
+      return normalizeSeenIds(parsed)
+    } catch (_) {
+      return []
+    }
+  }
+
+  if (Array.isArray(raw)) {
+    if (raw.length === 0) return []
+
+    const isByteArray = raw.every(
+      (item) => typeof item === 'number' && Number.isInteger(item) && item >= 0 && item <= 255,
+    )
+    if (isByteArray) {
+      try {
+        const cleanBytes = raw[raw.length - 1] === 0 ? raw.slice(0, -1) : raw
+        const jsonStr = String.fromCharCode.apply(null, cleanBytes).trim()
+        if (jsonStr) {
+          const parsed = JSON.parse(jsonStr)
+          return normalizeSeenIds(parsed)
+        }
+      } catch {
+        /* intentionally ignored */
+      }
+      return []
+    }
+
+    const stringOnlyIds: string[] = []
+    for (let i = 0; i < raw.length; i++) {
+      const item = raw[i]
+      if (typeof item === 'string' && item.trim().length > 0) {
+        stringOnlyIds.push(item.trim())
+      }
+    }
+    return stringOnlyIds
+  }
+
+  return []
+}
+
+console.log('\n10. TESTE DE REGRESSÃO G-E — normalização de last_seen_message_ids (BUG 1):')
+
+// Cenário A: Array de strings válido preservado intacto
+const validStringArray = ['MSG_01', 'MSG_02', 'MSG_03']
+check(
+  'Array de strings válidas é preservado',
+  JSON.stringify(normalizeSeenIds(validStringArray)),
+  JSON.stringify(['MSG_01', 'MSG_02', 'MSG_03']),
+)
+
+// Cenário B: []byte do Go contendo JSON de array de strings ['MSG_A', 'MSG_B']
+const sampleJsonString = JSON.stringify(['MSG_A', 'MSG_B'])
+const sampleBytes = Array.from(sampleJsonString).map((c) => c.charCodeAt(0))
+sampleBytes.push(0) // adiciona byte nulo final \0 como Goja às vezes produz
+check(
+  '[]byte do Go é convertido em array canônico de strings',
+  JSON.stringify(normalizeSeenIds(sampleBytes)),
+  JSON.stringify(['MSG_A', 'MSG_B']),
+)
+
+// Cenário C: Array corrompido com bytes que não formam JSON válido -> fallback para []
+const corruptBytes = [53, 44, 52, 52, 999] // contém número > 255 ou bytes inválidos
+check(
+  'Bytes corrompidos não-JSON retornam [] para reprocessar',
+  JSON.stringify(normalizeSeenIds(corruptBytes)),
+  JSON.stringify([]),
+)
+
+// Cenário D: Array misto (números + strings) tem números eliminados, mantendo apenas strings
+const mixedArray = ['MSG_VALID_1', 42, null, undefined, 'MSG_VALID_2', 99]
+check(
+  'Array misto rejeita números e mantém estritamente strings',
+  JSON.stringify(normalizeSeenIds(mixedArray)),
+  JSON.stringify(['MSG_VALID_1', 'MSG_VALID_2']),
+)
+
+// Cenário E: String JSON contendo array de IDs
+const jsonArrayStr = '["ID_1", "ID_2"]'
+check(
+  'String JSON é parseada e normalizada para array de strings',
+  JSON.stringify(normalizeSeenIds(jsonArrayStr)),
+  JSON.stringify(['ID_1', 'ID_2']),
+)
+
+// Cenário F: String ilegível -> []
+check(
+  'String corrompida retorna []',
+  JSON.stringify(normalizeSeenIds('{not a json array}')),
+  JSON.stringify([]),
+)
+
+// Cenário G: Valores falsy / nulos -> []
+check('Null retorna []', JSON.stringify(normalizeSeenIds(null)), JSON.stringify([]))
+check('Undefined retorna []', JSON.stringify(normalizeSeenIds(undefined)), JSON.stringify([]))
+check(
+  'Objeto inesperado retorna []',
+  JSON.stringify(normalizeSeenIds({ foo: 'bar' })),
+  JSON.stringify([]),
+)
+
+// Cenário H: Simulação do hook recebendo registro corrompido e salvando nova mensagem
+const simulatedCorruptedSeen = sampleBytes // bytes preexistentes
+let recoveredIds = normalizeSeenIds(simulatedCorruptedSeen)
+const incomingMsgId = 'MSG_INCOMING_NEW'
+if (!recoveredIds.includes(incomingMsgId)) {
+  recoveredIds.push(incomingMsgId)
+}
+check(
+  'Hook atualiza registro com byte-lixo preexistente gravando array JSON canônico de strings',
+  JSON.stringify(recoveredIds),
+  JSON.stringify(['MSG_A', 'MSG_B', 'MSG_INCOMING_NEW']),
+)
+
 console.log(
   `\nResultado: ${pass} passaram, ${fail} falharam. ${fail === 0 ? 'G-E / G-G OK.' : 'FALHAS DETECTADAS — revisar hook e teste.'}\n`,
 )

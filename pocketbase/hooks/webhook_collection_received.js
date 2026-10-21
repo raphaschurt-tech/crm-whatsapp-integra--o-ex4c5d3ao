@@ -95,6 +95,81 @@ onRecordAfterCreateSuccess((e) => {
       }),
     )
 
+    // Função auxiliar para obter timestamp formatado em horário de Brasília (UTC-3)
+    const getBrasiliaTimestamp = () => {
+      try {
+        const d = new Date()
+        const spTime = new Date(d.getTime() - 3 * 3600 * 1000)
+        return spTime.toISOString().replace('Z', '-03:00')
+      } catch (_) {
+        return new Date().toISOString()
+      }
+    }
+
+    // Normalizador canônico para last_seen_message_ids:
+    // Garante que o valor gravado seja SEMPRE um array JSON canônico contendo APENAS strings válidas.
+    // Converte []byte do Go (array de números inteiros ASCII) de volta em string -> JSON.parse -> strings.
+    // Qualquer valor corrompido ou ilegível é normalizado para [].
+    const normalizeSeenIds = (raw) => {
+      if (!raw) return []
+
+      // Se for string JSON
+      if (typeof raw === 'string') {
+        const trimmed = raw.trim()
+        if (!trimmed) return []
+        try {
+          const parsed = JSON.parse(trimmed)
+          return normalizeSeenIds(parsed)
+        } catch (_) {
+          return []
+        }
+      }
+
+      // Se for Array
+      if (Array.isArray(raw)) {
+        if (raw.length === 0) return []
+
+        // Verifica se é array de bytes ASCII do Go (números inteiros 0-255)
+        const isByteArray = raw.every(
+          (item) => typeof item === 'number' && Number.isInteger(item) && item >= 0 && item <= 255,
+        )
+        if (isByteArray) {
+          try {
+            // Ignora null terminator (\0) no fim se houver
+            const cleanBytes = raw[raw.length - 1] === 0 ? raw.slice(0, -1) : raw
+            const jsonStr = String.fromCharCode.apply(null, cleanBytes).trim()
+            if (jsonStr) {
+              const parsed = JSON.parse(jsonStr)
+              return normalizeSeenIds(parsed)
+            }
+          } catch (e) {
+            console.warn(
+              '[CHAT-SUMMARY-BYTE-PARSE-WARN]',
+              JSON.stringify({
+                timestampBrasilia: getBrasiliaTimestamp(),
+                reason: 'Falha ao converter []byte em JSON, redefinindo para []',
+                error: e.message || String(e),
+              }),
+            )
+          }
+          return []
+        }
+
+        // Array regular: filtrar EXCLUSIVAMENTE strings não-vazias
+        const stringOnlyIds = []
+        for (let i = 0; i < raw.length; i++) {
+          const item = raw[i]
+          if (typeof item === 'string' && item.trim().length > 0) {
+            stringOnlyIds.push(item.trim())
+          }
+        }
+        return stringOnlyIds
+      }
+
+      // Objeto ou qualquer outro tipo inesperado
+      return []
+    }
+
     // ==========================================
     // UPSERT DO RESUMO DA CONVERSA (chat_summaries)
     // ==========================================
@@ -320,20 +395,38 @@ onRecordAfterCreateSuccess((e) => {
       }
 
       if (summaryRecord) {
-        // 1e. Idempotência por messageId
+        // 1e. Idempotência por messageId com normalização robusta
         let seenIds = []
         try {
           const rawSeen = summaryRecord.get('last_seen_message_ids')
-          if (Array.isArray(rawSeen)) seenIds = rawSeen
-          else if (typeof rawSeen === 'string') seenIds = JSON.parse(rawSeen)
-        } catch (_) {}
+          seenIds = normalizeSeenIds(rawSeen)
+          if (seenIds.length === 0) {
+            const rawSeenStr = summaryRecord.getString('last_seen_message_ids')
+            if (rawSeenStr) {
+              seenIds = normalizeSeenIds(rawSeenStr)
+            }
+          }
+        } catch (normErr) {
+          console.warn(
+            '[CHAT-SUMMARY-NORM-IDS-WARN]',
+            JSON.stringify({
+              timestampBrasilia: getBrasiliaTimestamp(),
+              canonicalPhone: canonicalPhone,
+              error: normErr.message || String(normErr),
+            }),
+          )
+          seenIds = []
+        }
 
         const isDuplicate =
           msgId && (summaryRecord.getString('last_message_id') === msgId || seenIds.includes(msgId))
 
         if (!isDuplicate) {
           if (msgId) {
-            seenIds.push(msgId)
+            // Garante que não adicione duplicado e que msgId seja string
+            if (!seenIds.includes(msgId)) {
+              seenIds.push(String(msgId).trim())
+            }
             if (seenIds.length > 50) {
               seenIds = seenIds.slice(-50)
             }
@@ -370,9 +463,17 @@ onRecordAfterCreateSuccess((e) => {
     }
   } catch (err) {
     // FAIL-ALOUD EXPLÍCITO: Log de erro alto para qualquer falha não capturada no processamento do resumo
+    // Sempre com timestamp em horário de Brasília (UTC-3)
+    let bTimestamp = new Date().toISOString()
+    try {
+      const d = new Date()
+      bTimestamp = new Date(d.getTime() - 3 * 3600 * 1000).toISOString().replace('Z', '-03:00')
+    } catch (_) {}
+
     console.error(
       '[WEBHOOK-COLLECTION-RECEIVED-ERROR-FAIL-ALOUD]',
       JSON.stringify({
+        timestampBrasilia: bTimestamp,
         timestamp: new Date().toISOString(),
         error: err.message || String(err),
         stack: err.stack || undefined,
