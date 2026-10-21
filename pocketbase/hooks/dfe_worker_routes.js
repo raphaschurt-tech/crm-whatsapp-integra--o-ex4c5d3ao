@@ -666,6 +666,7 @@ routerAdd('POST', '/backend/v1/dfe/token/manage', (e) => {
         message: 'Novo Token DFe gerado com sucesso. Copie e configure no worker Node.js.',
       })
     } else if (action === 'revoke') {
+      settingsRec.set('dfe_worker_token', '')
       settingsRec.set('dfe_token_active', false)
       $app.save(settingsRec)
 
