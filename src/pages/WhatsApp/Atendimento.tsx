@@ -630,7 +630,8 @@ export default function WhatsAppAtendimento() {
 
       const key = norm.length === 10 || norm.length === 11 ? `55${norm}` : norm
       const text = extractMessageText(rec.text)
-      const hasAttachment = Boolean(rec.attachment_url)
+      const effectiveAttUrl = rec.attachment_data || rec.attachment_url
+      const hasAttachment = Boolean(effectiveAttUrl)
       if (!text && !hasAttachment) {
         triggerDebouncedFetch()
         return
@@ -651,7 +652,7 @@ export default function WhatsAppAtendimento() {
         messageId: rec.messageId,
         isAudio: Boolean(rec.is_audio),
         audioUrl: rec.audio_url || undefined,
-        attachmentUrl: rec.attachment_url || undefined,
+        attachmentUrl: effectiveAttUrl || undefined,
         attachmentName: rec.attachment_name || undefined,
         attachmentType:
           rec.attachment_type === 'image' ||
