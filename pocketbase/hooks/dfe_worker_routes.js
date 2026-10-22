@@ -5,15 +5,49 @@
 
 // 0. Rota: POST /backend/v1/dfe/ingest (Worker empurra XML capturado no DFe para o MESMO pipeline de ingestão - D1, CF-3b)
 routerAdd('POST', '/backend/v1/dfe/ingest', (e) => {
+  let headersObj = {}
+  let queryObj = {}
+  try {
+    const reqInfo = e.requestInfo()
+    headersObj = (reqInfo && reqInfo.headers) || {}
+    queryObj = (reqInfo && reqInfo.query) || {}
+  } catch (_) {
+    headersObj = {}
+    queryObj = {}
+  }
+
+  try {
+    const headerNames = Object.keys(headersObj)
+    console.log(
+      '[DFE-AUTH-DEBUG] Rota: POST /backend/v1/dfe/ingest | Headers recebidos (' +
+        headerNames.length +
+        '): ' +
+        JSON.stringify(headerNames) +
+        ' | Query keys: ' +
+        JSON.stringify(Object.keys(queryObj)),
+    )
+  } catch (logErr) {
+    console.log('[DFE-AUTH-DEBUG] Falha ao logar headers:', String(logErr))
+  }
+
   const authHeader =
-    e.requestInfo().headers['x-dfe-token'] ||
-    e.requestInfo().headers['authorization'] ||
-    e.requestInfo().headers['x-api-key'] ||
+    headersObj['x-dfe-token'] ||
+    headersObj['X-DFe-Token'] ||
+    headersObj['X-DFE-TOKEN'] ||
+    headersObj['authorization'] ||
+    headersObj['Authorization'] ||
+    headersObj['x-api-key'] ||
+    headersObj['X-Api-Key'] ||
     ''
 
   let token = String(authHeader).trim()
   if (token.toLowerCase().startsWith('bearer ')) {
     token = token.slice(7).trim()
+  }
+
+  if (!token) {
+    const queryToken = queryObj['dfe_token'] || queryObj['dfeToken'] || queryObj['token'] || ''
+    token = String(queryToken).trim()
   }
 
   if (!token) {
@@ -76,10 +110,39 @@ routerAdd('POST', '/backend/v1/dfe/ingest', (e) => {
 
 // 1. Rota: GET /backend/v1/dfe/status (Worker lê estado do ponteiro e configurações DFe)
 routerAdd('GET', '/backend/v1/dfe/status', (e) => {
+  let headersObj = {}
+  let queryObj = {}
+  try {
+    const reqInfo = e.requestInfo()
+    headersObj = (reqInfo && reqInfo.headers) || {}
+    queryObj = (reqInfo && reqInfo.query) || {}
+  } catch (_) {
+    headersObj = {}
+    queryObj = {}
+  }
+
+  try {
+    const headerNames = Object.keys(headersObj)
+    console.log(
+      '[DFE-AUTH-DEBUG] Rota: GET /backend/v1/dfe/status | Headers recebidos (' +
+        headerNames.length +
+        '): ' +
+        JSON.stringify(headerNames) +
+        ' | Query keys: ' +
+        JSON.stringify(Object.keys(queryObj)),
+    )
+  } catch (logErr) {
+    console.log('[DFE-AUTH-DEBUG] Falha ao logar headers:', String(logErr))
+  }
+
   const authHeader =
-    e.requestInfo().headers['x-dfe-token'] ||
-    e.requestInfo().headers['authorization'] ||
-    e.requestInfo().headers['x-api-key'] ||
+    headersObj['x-dfe-token'] ||
+    headersObj['X-DFe-Token'] ||
+    headersObj['X-DFE-TOKEN'] ||
+    headersObj['authorization'] ||
+    headersObj['Authorization'] ||
+    headersObj['x-api-key'] ||
+    headersObj['X-Api-Key'] ||
     ''
 
   let token = String(authHeader).trim()
@@ -88,9 +151,14 @@ routerAdd('GET', '/backend/v1/dfe/status', (e) => {
   }
 
   if (!token) {
+    const queryToken = queryObj['dfe_token'] || queryObj['dfeToken'] || queryObj['token'] || ''
+    token = String(queryToken).trim()
+  }
+
+  if (!token) {
     return e.json(401, {
       success: false,
-      error: 'Token DFe não fornecido (header X-DFe-Token obrigatório).',
+      error: 'Token DFe não fornecido.',
     })
   }
 
@@ -147,15 +215,49 @@ routerAdd('GET', '/backend/v1/dfe/status', (e) => {
 
 // 2. Rota: POST /backend/v1/dfe/pointer (Worker atualiza ponteiro e status)
 routerAdd('POST', '/backend/v1/dfe/pointer', (e) => {
+  let headersObj = {}
+  let queryObj = {}
+  try {
+    const reqInfo = e.requestInfo()
+    headersObj = (reqInfo && reqInfo.headers) || {}
+    queryObj = (reqInfo && reqInfo.query) || {}
+  } catch (_) {
+    headersObj = {}
+    queryObj = {}
+  }
+
+  try {
+    const headerNames = Object.keys(headersObj)
+    console.log(
+      '[DFE-AUTH-DEBUG] Rota: POST /backend/v1/dfe/pointer | Headers recebidos (' +
+        headerNames.length +
+        '): ' +
+        JSON.stringify(headerNames) +
+        ' | Query keys: ' +
+        JSON.stringify(Object.keys(queryObj)),
+    )
+  } catch (logErr) {
+    console.log('[DFE-AUTH-DEBUG] Falha ao logar headers:', String(logErr))
+  }
+
   const authHeader =
-    e.requestInfo().headers['x-dfe-token'] ||
-    e.requestInfo().headers['authorization'] ||
-    e.requestInfo().headers['x-api-key'] ||
+    headersObj['x-dfe-token'] ||
+    headersObj['X-DFe-Token'] ||
+    headersObj['X-DFE-TOKEN'] ||
+    headersObj['authorization'] ||
+    headersObj['Authorization'] ||
+    headersObj['x-api-key'] ||
+    headersObj['X-Api-Key'] ||
     ''
 
   let token = String(authHeader).trim()
   if (token.toLowerCase().startsWith('bearer ')) {
     token = token.slice(7).trim()
+  }
+
+  if (!token) {
+    const queryToken = queryObj['dfe_token'] || queryObj['dfeToken'] || queryObj['token'] || ''
+    token = String(queryToken).trim()
   }
 
   if (!token) {
@@ -245,15 +347,49 @@ routerAdd('POST', '/backend/v1/dfe/pointer', (e) => {
 
 // 3. Rota: GET /backend/v1/dfe/commands (Worker lê comandos pendentes - CF-1b)
 routerAdd('GET', '/backend/v1/dfe/commands', (e) => {
+  let headersObj = {}
+  let queryObj = {}
+  try {
+    const reqInfo = e.requestInfo()
+    headersObj = (reqInfo && reqInfo.headers) || {}
+    queryObj = (reqInfo && reqInfo.query) || {}
+  } catch (_) {
+    headersObj = {}
+    queryObj = {}
+  }
+
+  try {
+    const headerNames = Object.keys(headersObj)
+    console.log(
+      '[DFE-AUTH-DEBUG] Rota: GET /backend/v1/dfe/commands | Headers recebidos (' +
+        headerNames.length +
+        '): ' +
+        JSON.stringify(headerNames) +
+        ' | Query keys: ' +
+        JSON.stringify(Object.keys(queryObj)),
+    )
+  } catch (logErr) {
+    console.log('[DFE-AUTH-DEBUG] Falha ao logar headers:', String(logErr))
+  }
+
   const authHeader =
-    e.requestInfo().headers['x-dfe-token'] ||
-    e.requestInfo().headers['authorization'] ||
-    e.requestInfo().headers['x-api-key'] ||
+    headersObj['x-dfe-token'] ||
+    headersObj['X-DFe-Token'] ||
+    headersObj['X-DFE-TOKEN'] ||
+    headersObj['authorization'] ||
+    headersObj['Authorization'] ||
+    headersObj['x-api-key'] ||
+    headersObj['X-Api-Key'] ||
     ''
 
   let token = String(authHeader).trim()
   if (token.toLowerCase().startsWith('bearer ')) {
     token = token.slice(7).trim()
+  }
+
+  if (!token) {
+    const queryToken = queryObj['dfe_token'] || queryObj['dfeToken'] || queryObj['token'] || ''
+    token = String(queryToken).trim()
   }
 
   if (!token) {
@@ -300,15 +436,49 @@ routerAdd('GET', '/backend/v1/dfe/commands', (e) => {
 
 // 4. Rota: POST /backend/v1/dfe/commands/{id}/ack (Worker atualiza status de comando)
 routerAdd('POST', '/backend/v1/dfe/commands/{id}/ack', (e) => {
+  let headersObj = {}
+  let queryObj = {}
+  try {
+    const reqInfo = e.requestInfo()
+    headersObj = (reqInfo && reqInfo.headers) || {}
+    queryObj = (reqInfo && reqInfo.query) || {}
+  } catch (_) {
+    headersObj = {}
+    queryObj = {}
+  }
+
+  try {
+    const headerNames = Object.keys(headersObj)
+    console.log(
+      '[DFE-AUTH-DEBUG] Rota: POST /backend/v1/dfe/commands/{id}/ack | Headers recebidos (' +
+        headerNames.length +
+        '): ' +
+        JSON.stringify(headerNames) +
+        ' | Query keys: ' +
+        JSON.stringify(Object.keys(queryObj)),
+    )
+  } catch (logErr) {
+    console.log('[DFE-AUTH-DEBUG] Falha ao logar headers:', String(logErr))
+  }
+
   const authHeader =
-    e.requestInfo().headers['x-dfe-token'] ||
-    e.requestInfo().headers['authorization'] ||
-    e.requestInfo().headers['x-api-key'] ||
+    headersObj['x-dfe-token'] ||
+    headersObj['X-DFe-Token'] ||
+    headersObj['X-DFE-TOKEN'] ||
+    headersObj['authorization'] ||
+    headersObj['Authorization'] ||
+    headersObj['x-api-key'] ||
+    headersObj['X-Api-Key'] ||
     ''
 
   let token = String(authHeader).trim()
   if (token.toLowerCase().startsWith('bearer ')) {
     token = token.slice(7).trim()
+  }
+
+  if (!token) {
+    const queryToken = queryObj['dfe_token'] || queryObj['dfeToken'] || queryObj['token'] || ''
+    token = String(queryToken).trim()
   }
 
   if (!token) {
@@ -362,15 +532,49 @@ routerAdd('POST', '/backend/v1/dfe/commands/{id}/ack', (e) => {
 
 // 5. Rota: POST /backend/v1/dfe/history (Registrar backlog zero-impacto ou histórico DFe - D2)
 routerAdd('POST', '/backend/v1/dfe/history', (e) => {
+  let headersObj = {}
+  let queryObj = {}
+  try {
+    const reqInfo = e.requestInfo()
+    headersObj = (reqInfo && reqInfo.headers) || {}
+    queryObj = (reqInfo && reqInfo.query) || {}
+  } catch (_) {
+    headersObj = {}
+    queryObj = {}
+  }
+
+  try {
+    const headerNames = Object.keys(headersObj)
+    console.log(
+      '[DFE-AUTH-DEBUG] Rota: POST /backend/v1/dfe/history | Headers recebidos (' +
+        headerNames.length +
+        '): ' +
+        JSON.stringify(headerNames) +
+        ' | Query keys: ' +
+        JSON.stringify(Object.keys(queryObj)),
+    )
+  } catch (logErr) {
+    console.log('[DFE-AUTH-DEBUG] Falha ao logar headers:', String(logErr))
+  }
+
   const authHeader =
-    e.requestInfo().headers['x-dfe-token'] ||
-    e.requestInfo().headers['authorization'] ||
-    e.requestInfo().headers['x-api-key'] ||
+    headersObj['x-dfe-token'] ||
+    headersObj['X-DFe-Token'] ||
+    headersObj['X-DFE-TOKEN'] ||
+    headersObj['authorization'] ||
+    headersObj['Authorization'] ||
+    headersObj['x-api-key'] ||
+    headersObj['X-Api-Key'] ||
     ''
 
   let token = String(authHeader).trim()
   if (token.toLowerCase().startsWith('bearer ')) {
     token = token.slice(7).trim()
+  }
+
+  if (!token) {
+    const queryToken = queryObj['dfe_token'] || queryObj['dfeToken'] || queryObj['token'] || ''
+    token = String(queryToken).trim()
   }
 
   if (!token) {
@@ -435,15 +639,49 @@ routerAdd('POST', '/backend/v1/dfe/history', (e) => {
 
 // 6. Rota: POST /backend/v1/dfe/event (Worker empurra eventos da SEFAZ: cancelamento, CC-e - D5)
 routerAdd('POST', '/backend/v1/dfe/event', (e) => {
+  let headersObj = {}
+  let queryObj = {}
+  try {
+    const reqInfo = e.requestInfo()
+    headersObj = (reqInfo && reqInfo.headers) || {}
+    queryObj = (reqInfo && reqInfo.query) || {}
+  } catch (_) {
+    headersObj = {}
+    queryObj = {}
+  }
+
+  try {
+    const headerNames = Object.keys(headersObj)
+    console.log(
+      '[DFE-AUTH-DEBUG] Rota: POST /backend/v1/dfe/event | Headers recebidos (' +
+        headerNames.length +
+        '): ' +
+        JSON.stringify(headerNames) +
+        ' | Query keys: ' +
+        JSON.stringify(Object.keys(queryObj)),
+    )
+  } catch (logErr) {
+    console.log('[DFE-AUTH-DEBUG] Falha ao logar headers:', String(logErr))
+  }
+
   const authHeader =
-    e.requestInfo().headers['x-dfe-token'] ||
-    e.requestInfo().headers['authorization'] ||
-    e.requestInfo().headers['x-api-key'] ||
+    headersObj['x-dfe-token'] ||
+    headersObj['X-DFe-Token'] ||
+    headersObj['X-DFE-TOKEN'] ||
+    headersObj['authorization'] ||
+    headersObj['Authorization'] ||
+    headersObj['x-api-key'] ||
+    headersObj['X-Api-Key'] ||
     ''
 
   let token = String(authHeader).trim()
   if (token.toLowerCase().startsWith('bearer ')) {
     token = token.slice(7).trim()
+  }
+
+  if (!token) {
+    const queryToken = queryObj['dfe_token'] || queryObj['dfeToken'] || queryObj['token'] || ''
+    token = String(queryToken).trim()
   }
 
   if (!token) {

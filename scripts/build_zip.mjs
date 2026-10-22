@@ -112,12 +112,24 @@ const workerDir = path.resolve('worker-dfe')
 const publicDir = path.resolve('public')
 const zipOutPath = path.join(publicDir, 'worker-dfe.zip')
 
+// Lista explícita dos 8 arquivos do pacote worker-dfe (nunca node_modules ou config.json real)
+const allowedFiles = [
+  'certUtils.js',
+  'config.example.json',
+  'crmClient.js',
+  'dfeAdapter.js',
+  'index.js',
+  'package.json',
+  'README.md',
+  'test-simulation.js',
+]
+
 const files = fs
   .readdirSync(workerDir)
-  .filter((name) => !name.startsWith('.') && name !== 'node_modules')
+  .filter((name) => allowedFiles.includes(name))
   .sort()
 
-console.log('Arquivos encontrados em worker-dfe/:', files)
+console.log('Arquivos incluídos no worker-dfe.zip:', files)
 
 const entries = files.map((filename) => {
   const filePath = path.join(workerDir, filename)
@@ -137,6 +149,8 @@ if (!fs.existsSync(publicDir)) {
 }
 
 fs.writeFileSync(zipOutPath, zipBuffer)
+const base64Zip = zipBuffer.toString('base64')
+fs.writeFileSync(path.join(publicDir, 'worker-dfe.zip.b64'), base64Zip)
 console.log(`[ZIP-OK] Gerado com sucesso: ${zipOutPath} (${zipBuffer.length} bytes)`)
 
 // Verificação de descompressão e integridade

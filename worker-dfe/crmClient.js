@@ -19,9 +19,16 @@ class CrmClient {
     }
   }
 
+  buildUrl(endpoint) {
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
+    const separator = cleanEndpoint.includes('?') ? '&' : '?'
+    const query = this.token ? `${separator}dfe_token=${encodeURIComponent(this.token)}` : ''
+    return `${this.baseUrl}${cleanEndpoint}${query}`
+  }
+
   async getStatus() {
     try {
-      const res = await axios.get(`${this.baseUrl}/backend/v1/dfe/status`, {
+      const res = await axios.get(this.buildUrl('/backend/v1/dfe/status'), {
         headers: this.getHeaders(),
         timeout: 10000,
       })
@@ -35,7 +42,7 @@ class CrmClient {
 
   async updatePointer(data) {
     try {
-      const res = await axios.post(`${this.baseUrl}/backend/v1/dfe/pointer`, data, {
+      const res = await axios.post(this.buildUrl('/backend/v1/dfe/pointer'), data, {
         headers: this.getHeaders(),
         timeout: 10000,
       })
@@ -49,7 +56,7 @@ class CrmClient {
 
   async getPendingCommands() {
     try {
-      const res = await axios.get(`${this.baseUrl}/backend/v1/dfe/commands`, {
+      const res = await axios.get(this.buildUrl('/backend/v1/dfe/commands'), {
         headers: this.getHeaders(),
         timeout: 10000,
       })
@@ -64,7 +71,7 @@ class CrmClient {
   async acknowledgeCommand(cmdId, status, summary) {
     try {
       const res = await axios.post(
-        `${this.baseUrl}/backend/v1/dfe/commands/${cmdId}/ack`,
+        this.buildUrl(`/backend/v1/dfe/commands/${cmdId}/ack`),
         { status, result_summary: summary },
         { headers: this.getHeaders(), timeout: 10000 },
       )
@@ -78,7 +85,7 @@ class CrmClient {
 
   async recordHistory(data) {
     try {
-      const res = await axios.post(`${this.baseUrl}/backend/v1/dfe/history`, data, {
+      const res = await axios.post(this.buildUrl('/backend/v1/dfe/history'), data, {
         headers: this.getHeaders(),
         timeout: 15000,
       })
@@ -92,7 +99,7 @@ class CrmClient {
 
   async recordEvent(data) {
     try {
-      const res = await axios.post(`${this.baseUrl}/backend/v1/dfe/event`, data, {
+      const res = await axios.post(this.buildUrl('/backend/v1/dfe/event'), data, {
         headers: this.getHeaders(),
         timeout: 15000,
       })
@@ -107,7 +114,7 @@ class CrmClient {
   async ingestXml(xmlString) {
     try {
       const res = await axios.post(
-        `${this.baseUrl}/backend/v1/dfe/ingest`,
+        this.buildUrl('/backend/v1/dfe/ingest'),
         { xml: xmlString },
         { headers: this.getHeaders(), timeout: 30000 },
       )
