@@ -1,0 +1,126 @@
+{
+  "backup_timestamp": "2026-10-22T20:30:00-03:00",
+  "reason": "Ativação Formal DF-e - Captura Real + Lançamento Automático em Contas a Pagar (G1-G9)",
+  "affected_collections": {
+    "settings": [
+      {
+        "id": "ks86suaa4vn5xd4",
+        "collectionId": "pbc_2769025244",
+        "collectionName": "settings",
+        "company_cnpj": "00496593000129",
+        "dfe_enabled": true,
+        "dfe_poll_interval_hours": 1,
+        "dfe_retroactive_days_default": 0,
+        "dfe_token_active": true,
+        "dfe_worker_token": "tKQwONk9po29YaXNYicXbng5HrLZP0kGNAbmnwDC6tcaOacD",
+        "family_margins": { "default": 1.4 },
+        "stock_phase": "souis_master",
+        "sync_integrity_floor": 0.8,
+        "chat_summaries_migrated": true,
+        "ai_enabled": false,
+        "whatsapp_number": "5511947861439"
+      }
+    ],
+    "dfe_pointer_state": [
+      {
+        "id": "1cz9gy9g3s8f2tx",
+        "collectionId": "pbc_3966208078",
+        "collectionName": "dfe_pointer_state",
+        "cert_cnpj": "00496593000129",
+        "cert_days_remaining": 47,
+        "cert_valid_until": "2026-12-08T20:10:00.000Z",
+        "consecutive_failures": 0,
+        "cstat_last": "137",
+        "is_initialized": true,
+        "is_running": false,
+        "last_error": "",
+        "last_poll_at": "2026-10-22T16:59:57.677-03:00",
+        "last_success_at": "2026-10-22T16:59:57.677-03:00",
+        "max_nsu": "000000000000002",
+        "ult_nsu": "000000000000002",
+        "worker_status": "online"
+      }
+    ],
+    "dfe_history": [
+      {
+        "id": "0g49cfwhig7ch1s",
+        "collectionId": "pbc_2275838369",
+        "collectionName": "dfe_history",
+        "access_key": "35250111222333000199550010000012341000012341",
+        "document_type": "resumo",
+        "emitter_cnpj": "11222333000199",
+        "emitter_name": "FORNECEDOR HISTORICO SOU.IS PEÇAS LTDA",
+        "imported_to_crm": false,
+        "is_backlog": true,
+        "issue_date": "2024-05-10T14:30:00-03:00",
+        "model": "55",
+        "nfe_number": "1234",
+        "nsu": "000000000000001",
+        "raw_xml": "<resNFe><chNFe>35250111222333000199550010000012341000012341</chNFe><vNF>1850.50</vNF></resNFe>",
+        "schema": "resNFe_v1.01.xsd",
+        "total_amount": 1850.5
+      },
+      {
+        "id": "qcx8gx2iwzf0mlq",
+        "collectionId": "pbc_2275838369",
+        "collectionName": "dfe_history",
+        "access_key": "35250122333444000188550010000056781000056782",
+        "document_type": "resumo",
+        "emitter_cnpj": "22333444000188",
+        "emitter_name": "DISTRIBUIDORA DE AUTO PEÇAS BRASIL S/A",
+        "imported_to_crm": false,
+        "is_backlog": true,
+        "issue_date": "2024-08-15T10:15:00-03:00",
+        "model": "55",
+        "nfe_number": "5678",
+        "nsu": "000000000000002",
+        "raw_xml": "<resNFe><chNFe>35250122333444000188550010000056781000056782</chNFe><vNF>3200.00</vNF></resNFe>",
+        "schema": "resNFe_v1.01.xsd",
+        "total_amount": 3200
+      }
+    ],
+    "dfe_events": [],
+    "nfe_processed": [],
+    "accounts_payable": [
+      {
+        "id": "gnq7r00j3ctm48q",
+        "collectionId": "pbc_203137977",
+        "collectionName": "accounts_payable",
+        "amount": 0,
+        "attachment": "",
+        "category": "ozo9igm8osbu05u",
+        "created": "2026-10-20 02:18:09.786Z",
+        "created_by": "20vr2sqduxn0gvh",
+        "description": "Renovação do Certificado A1 (Anual) - 2026-10 [A CONFERIR]",
+        "due_date": "2026-10-10 12:00:00.000Z",
+        "installment_number": 0,
+        "nfe_access_key": "",
+        "nfe_record": "",
+        "notes": "Gerado via execução manual de recorrentes (2026-10). [A CONFERIR: modelo de valor variável/sem valor fixo pendente de apuração na competência 2026-10]",
+        "origin": "recorrente",
+        "paid_at": "",
+        "payment_method": "PIX",
+        "recurring_competence": "2026-10",
+        "recurring_template": "6km2bjonw8bxb66",
+        "status": "pendente",
+        "supplier": "",
+        "supplier_name": "",
+        "total_installments": 0
+      }
+    ],
+    "dfe_command_queue": [
+      {
+        "id": "8kzdwi6gu9lphxs",
+        "collectionId": "pbc_3709441503",
+        "collectionName": "dfe_command_queue",
+        "command": "consultar_agora",
+        "created": "2026-10-20 01:02:50.094Z",
+        "created_by": "20vr2sqduxn0gvh",
+        "executed_at": "2026-10-22T15:51:53.326-03:00",
+        "params": {},
+        "result_summary": "Consulta manual executada com sucesso",
+        "status": "concluido"
+      }
+    ]
+  }
+}

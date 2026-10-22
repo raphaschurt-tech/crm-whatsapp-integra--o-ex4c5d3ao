@@ -62,8 +62,9 @@ export default function SettingsPage() {
   const [familyMarginsJson, setFamilyMarginsJson] = useState('{"default": 1.4}')
   const [stockPhase, setStockPhase] = useState<'souis_master' | 'crm_cutover'>('souis_master')
 
-  // FASE 2 DFe: Certificado Digital A1 & Captura Automática (D7, D8, D9, CF-1c)
+  // FASE 2 DFe: Certificado Digital A1 & Captura Automática (D7, D8, D9, CF-1c, G5)
   const [dfeEnabled, setDfeEnabled] = useState<boolean>(false)
+  const [dfeAutoLaunch, setDfeAutoLaunch] = useState<boolean>(false)
   const [dfePollInterval, setDfePollInterval] = useState<number>(1)
   const [dfeToken, setDfeToken] = useState<string>('')
   const [dfeTokenActive, setDfeTokenActive] = useState<boolean>(false)
@@ -71,6 +72,8 @@ export default function SettingsPage() {
   const [dfePointer, setDfePointer] = useState<any>(null)
   const [newlyGeneratedToken, setNewlyGeneratedToken] = useState<string | null>(null)
   const [copiedToken, setCopiedToken] = useState(false)
+  const [dfeCapturedCount, setDfeCapturedCount] = useState<number>(0)
+  const [dfePayablesCount, setDfePayablesCount] = useState<number>(0)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -164,17 +167,24 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         }
         setStockPhase((s as any).stock_phase || 'souis_master')
         setDfeEnabled(!!(s as any).dfe_enabled)
+        setDfeAutoLaunch(!!(s as any).dfe_auto_launch)
         setDfePollInterval(Number((s as any).dfe_poll_interval_hours) || 1)
         setDfeToken((s as any).dfe_worker_token || '')
         setDfeTokenActive(!!(s as any).dfe_token_active)
       }
 
-      // Carregar estado do ponteiro DFe para status do certificado (D7)
+      // Carregar estado do ponteiro DFe para status do certificado (D7) e métricas
       try {
-        const ptrRec = await pb.collection('dfe_pointer_state').getList(1, 1, { sort: '-created' })
+        const [ptrRec, histCountRes, payCountRes] = await Promise.all([
+          pb.collection('dfe_pointer_state').getList(1, 1, { sort: '-created' }),
+          pb.collection('dfe_history').getList(1, 1),
+          pb.collection('accounts_payable').getList(1, 1, { filter: "origin = 'dfe'" }),
+        ])
         if (ptrRec.items.length > 0) {
           setDfePointer(ptrRec.items[0])
         }
+        setDfeCapturedCount(histCountRes.totalItems || 0)
+        setDfePayablesCount(payCountRes.totalItems || 0)
       } catch {
         /* intentionally ignored */
       }
@@ -275,6 +285,7 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         family_margins: parsedFamilyMargins,
         stock_phase: stockPhase,
         dfe_enabled: dfeEnabled,
+        dfe_auto_launch: dfeAutoLaunch,
         dfe_poll_interval_hours: Number(dfePollInterval) || 1,
       })
       toast({ title: 'Configurações salvas com sucesso!' })
@@ -1214,17 +1225,36 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                 </div>
               </div>
 
-              {/* Toggle DFe (D7 - Desligado por padrão) */}
-              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
-                <label className="text-xs font-semibold text-slate-700 cursor-pointer flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={dfeEnabled}
-                    onChange={(e) => setDfeEnabled(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
-                  />
-                  <span>Ativar Captura Automática DFe</span>
-                </label>
+              {/* Toggles DFe: Captura (D7) e Lançamento Automático em Contas a Pagar (G5) */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
+                  <label className="text-xs font-semibold text-slate-700 cursor-pointer flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={dfeEnabled}
+                      onChange={(e) => setDfeEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                    />
+                    <span>Captura Automática (Worker)</span>
+                  </label>
+                </div>
+                <div
+                  className={`flex items-center gap-2 border px-3 py-1.5 rounded-lg transition-colors ${
+                    dfeAutoLaunch
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-amber-50/60 border-amber-200 text-amber-900'
+                  }`}
+                >
+                  <label className="text-xs font-semibold cursor-pointer flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={dfeAutoLaunch}
+                      onChange={(e) => setDfeAutoLaunch(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                    />
+                    <span>Lançar Automático em Contas a Pagar</span>
+                  </label>
+                </div>
               </div>
             </div>
           </CardHeader>
@@ -1249,6 +1279,59 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                 >
                   Worker: {dfePointer?.worker_status || 'offline'}
                 </Badge>
+              </div>
+
+              {/* Cards de Métricas DF-e: Modo, Capturados e Lançados em Contas a Pagar */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                <div className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
+                  <span className="text-[10px] text-slate-400 block font-medium">
+                    Modo do Worker
+                  </span>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span
+                      className={`inline-block h-2 w-2 rounded-full ${
+                        dfePointer?.worker_mode === 'real' ? 'bg-emerald-500' : 'bg-amber-500'
+                      }`}
+                    />
+                    <span className="font-bold text-slate-800 uppercase tracking-wide text-xs">
+                      {dfePointer?.worker_mode === 'real'
+                        ? 'Real (SEFAZ Produção)'
+                        : dfePointer?.worker_mode === 'simulacao'
+                          ? 'Simulação'
+                          : 'Aguardando Ciclo'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
+                  <span className="text-[10px] text-slate-400 block font-medium">
+                    Documentos Capturados
+                  </span>
+                  <span className="font-mono font-bold text-base text-slate-800 mt-0.5 block">
+                    {dfeCapturedCount}
+                  </span>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
+                  <span className="text-[10px] text-slate-400 block font-medium">
+                    Lançados em Contas a Pagar
+                  </span>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <span className="font-mono font-bold text-base text-emerald-700">
+                      {dfePayablesCount}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={`text-[9px] ${
+                        dfeAutoLaunch
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                          : 'bg-slate-100 text-slate-500 border-slate-200'
+                      }`}
+                    >
+                      {dfeAutoLaunch ? 'Gate Ativo' : 'Lançamento Off'}
+                    </Badge>
+                  </div>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-slate-600">

@@ -1,55 +1,155 @@
 /**
  * worker-dfe/dfeAdapter.js
- * Interface com a SEFAZ (NT 2014.002 - NFeDistribuicaoDFe) utilizando NFeWizard-io.
- * Guards: D4 (Só mod 55), D6 (XML completo vs resumo), CF-2 (50/50 paginação, cStat 656), CF-3c.
+ * Interface com a SEFAZ (NT 2014.002 - NFeDistribuicaoDFe) utilizando a API oficial de classe NFeWizard-io.
+ * Causa raiz resolvida: nfewizard-io v1.0.0+ exporta uma classe default (NFeWizard = require('nfewizard-io').default || require('nfewizard-io')).
+ * Métodos: wizard.NFE_LoadEnvironment({ config: ... }) e wizard.NFE_DistribuicaoDFePorNSU({ ultNSU }).
+ *
+ * MODO REAL AUTOMÁTICO:
+ * - Sempre que a biblioteca carregar com sucesso, opera em modo 'real'.
+ * - Fallback para 'simulacao' APENAS se o require/inicialização falhar, com log alto e visível:
+ *   [DFE-MODE] real  ou  [DFE-MODE] simulacao (com motivo).
  */
 
 const fs = require('fs')
+const path = require('path')
 const zlib = require('zlib')
 const { XMLParser } = require('fast-xml-parser')
 
 class DfeAdapter {
   constructor(config) {
-    this.config = config
+    this.config = config || {}
     this.parser = new XMLParser({
       ignoreAttributes: false,
       attributeNamePrefix: '@_',
     })
+    this.wizardInstance = null
+    this.isWizardLoaded = false
+    this.mode = 'simulacao'
+    this.modeReason = 'Inicialização pendente'
+  }
+
+  /**
+   * Tenta carregar e instanciar o NFeWizard-io (API de classe v1.0.0+)
+   */
+  async initWizard() {
+    if (this.isWizardLoaded && this.wizardInstance) {
+      return true
+    }
+
+    try {
+      let NFeWizardLib = null
+      try {
+        const requiredMod = require('nfewizard-io')
+        NFeWizardLib = requiredMod.default || requiredMod
+      } catch (reqErr) {
+        this.mode = 'simulacao'
+        this.modeReason = `Biblioteca 'nfewizard-io' não encontrada no node_modules (${reqErr.message}). Execute: npm install nfewizard-io @nfewizard/shared`
+        return false
+      }
+
+      if (typeof NFeWizardLib !== 'function') {
+        this.mode = 'simulacao'
+        this.modeReason = `Export da biblioteca 'nfewizard-io' não é uma classe/construtor (${typeof NFeWizardLib})`
+        return false
+      }
+
+      const wizard = new NFeWizardLib()
+      if (typeof wizard.NFE_LoadEnvironment !== 'function') {
+        this.mode = 'simulacao'
+        this.modeReason = `Instância NFeWizard não possui o método NFE_LoadEnvironment`
+        return false
+      }
+
+      // Resolver caminho absoluto do certificado PFX
+      const pfxPath = path.resolve(
+        process.cwd(),
+        this.config.certPfxPath || './certs/certificado.pfx',
+      )
+      if (!fs.existsSync(pfxPath)) {
+        this.mode = 'simulacao'
+        this.modeReason = `Certificado PFX não encontrado no caminho: ${pfxPath}`
+        return false
+      }
+
+      const tmpDistDir = path.resolve(process.cwd(), 'tmp/DistribuicaoDFe')
+      try {
+        if (!fs.existsSync(tmpDistDir)) {
+          fs.mkdirSync(tmpDistDir, { recursive: true })
+        }
+      } catch (_) {}
+
+      const cleanCnpj = String(this.config.cnpj || '').replace(/\D/g, '')
+      const ambienteStr = String(this.config.ambiente || '1') // '1' = Produção
+      const ufStr = String(this.config.uf || '35')
+
+      await wizard.NFE_LoadEnvironment({
+        config: {
+          ambiente: ambienteStr,
+          UF: ufStr,
+          CNPJ: cleanCnpj,
+          certificado: pfxPath,
+          senha: this.config.certPassword || '',
+          dfe: {
+            baixarXMLDistribuicao: true,
+            pathXMLDistribuicao: tmpDistDir,
+          },
+        },
+      })
+
+      this.wizardInstance = wizard
+      this.isWizardLoaded = true
+      this.mode = 'real'
+      this.modeReason = 'Conexão SEFAZ oficial ativa via NFeWizard-io'
+      return true
+    } catch (loadErr) {
+      this.wizardInstance = null
+      this.isWizardLoaded = false
+      this.mode = 'simulacao'
+      this.modeReason = `Falha ao carregar ambiente NFeWizard: ${loadErr.message}`
+      return false
+    }
+  }
+
+  /**
+   * Retorna o modo atual de operação ('real' ou 'simulacao')
+   */
+  getMode() {
+    return {
+      mode: this.mode,
+      reason: this.modeReason,
+    }
   }
 
   /**
    * Executa a consulta NFeDistribuicaoDFe por ultNSU (NT 2014.002)
-   * Se a biblioteca 'nfewizard-io' estiver disponível no ambiente, utiliza seu motor oficial.
-   * Caso contrário ou em ambiente de ensaio/simulação, possui motor de fallback com parse SOAP/mTLS.
    */
   async consultarPorUltNsu(ultNsu) {
     const formattedNsu = String(ultNsu || '0').padStart(15, '0')
-    console.log(`[DFE-POLL-QUERY] Consultando SEFAZ a partir de ultNSU: ${formattedNsu}`)
+
+    // Tentar inicializar NFeWizard oficial
+    await this.initWizard()
+
+    // Log OBRIGATÓRIO alto e visível em TODO ciclo
+    if (this.mode === 'real') {
+      console.log(
+        `[DFE-MODE] real | SEFAZ Produção Oficial (NFeWizard-io) | ultNSU: ${formattedNsu}`,
+      )
+    } else {
+      console.warn(`[DFE-MODE] simulacao | Motivo: ${this.modeReason} | ultNSU: ${formattedNsu}`)
+    }
 
     try {
-      // Tentativa de carregar nfewizard-io (D11)
-      let nfeWizard = null
-      try {
-        nfeWizard = require('nfewizard-io')
-      } catch (_) {
-        // Biblioteca não instalada no workspace local ou mock
-      }
-
-      if (nfeWizard && typeof nfeWizard.distribuicaoDFe === 'function') {
-        const certBuffer = fs.readFileSync(this.config.certPfxPath)
-        const result = await nfeWizard.distribuicaoDFe({
-          pfx: certBuffer,
-          password: this.config.certPassword,
-          cnpj: this.config.cnpj,
-          uf: this.config.uf || '35',
-          ambiente: this.config.ambiente || '2', // 1=Prod, 2=Homolog
+      if (this.mode === 'real' && this.wizardInstance) {
+        console.log(
+          `[DFE-POLL-QUERY] Consultando SEFAZ Nacional via NFE_DistribuicaoDFePorNSU (ultNSU: ${formattedNsu})...`,
+        )
+        const result = await this.wizardInstance.NFE_DistribuicaoDFePorNSU({
           ultNSU: formattedNsu,
         })
-        return this.parseSefazResponse(result)
+        return this.parseWizardResponse(result, formattedNsu)
       }
 
-      // Em ambiente de teste / fallback sem biblioteca externa instalada:
-      // Simulação estruturada com conformidade SEFAZ NT 2014.002
+      // Fallback para simulação
       return this.mockSefazResponse(formattedNsu)
     } catch (err) {
       console.error('[DFE-SEFAZ-ERR]', err.message)
@@ -58,30 +158,64 @@ class DfeAdapter {
   }
 
   /**
-   * Decodifica a resposta retornada pela SEFAZ
+   * Mapeia a resposta real retornada pela NFeWizard-io (retDistDFeInt / docZip)
+   * para o formato uniforme que o ciclo já consome:
+   * { cStat, xMotivo, ultNSU, maxNSU, docs: [{ nsu, schema, accessKey, model, rawXml, ... }] }
    */
-  parseSefazResponse(rawResponse) {
-    // Normalizar cStat, xMotivo, ultNSU, maxNSU e descompactar docZip (GZIP)
+  parseWizardResponse(rawResponse, fallbackNsu) {
+    if (!rawResponse) {
+      return {
+        cStat: '137',
+        xMotivo: 'Resposta vazia da SEFAZ',
+        ultNSU: fallbackNsu,
+        maxNSU: fallbackNsu,
+        docs: [],
+      }
+    }
+
+    const retDist = rawResponse.retDistDFeInt || rawResponse.distDFeInt || rawResponse
+
+    const cStat = String(retDist.cStat || rawResponse.cStat || '137')
+    const xMotivo = String(retDist.xMotivo || rawResponse.xMotivo || '')
+    const ultNSU = String(retDist.ultNSU || rawResponse.ultNSU || fallbackNsu)
+    const maxNSU = String(retDist.maxNSU || rawResponse.maxNSU || ultNSU)
+
     const docs = []
-    let cStat = rawResponse.cStat || '138' // 138 = Documento(s) localizado(s), 137 = Nenhum doc
-    let xMotivo = rawResponse.xMotivo || 'Documentos localizados'
-    let ultNSU = rawResponse.ultNSU || '0'
-    let maxNSU = rawResponse.maxNSU || '0'
+    const lote = retDist.loteDistDFeInt || rawResponse.loteDistDFeInt
 
-    if (rawResponse.loteDistDFeInt && Array.isArray(rawResponse.loteDistDFeInt.docZip)) {
-      for (const item of rawResponse.loteDistDFeInt.docZip) {
-        const schema = item['@_schema'] || ''
-        const nsu = item['@_NSU'] || ''
-        const base64Content = item['#text'] || item
+    if (lote && lote.docZip) {
+      const docZipArray = Array.isArray(lote.docZip) ? lote.docZip : [lote.docZip]
 
+      for (const item of docZipArray) {
+        if (!item) continue
+
+        const schema = item['@_schema'] || item.schema || ''
+        const nsu = item['@_NSU'] || item.NSU || ''
+        let base64Content = item['#text'] || item.content || item
+
+        if (typeof base64Content === 'object' && base64Content !== null) {
+          base64Content = base64Content['#text'] || ''
+        }
+
+        let unzippedXml = ''
         try {
-          const zipBuffer = Buffer.from(base64Content, 'base64')
-          const unzippedXml = zlib.gunzipSync(zipBuffer).toString('utf-8')
+          if (typeof base64Content === 'string' && base64Content.trim()) {
+            const zipBuffer = Buffer.from(base64Content.trim(), 'base64')
+            unzippedXml = zlib.gunzipSync(zipBuffer).toString('utf-8')
+          }
+        } catch (unzipErr) {
+          // Se não estiver comprimido em gzip, pode ser o próprio XML bruto
+          if (typeof base64Content === 'string' && base64Content.includes('<')) {
+            unzippedXml = base64Content
+          } else {
+            console.error(`[DFE-UNZIP-ERR] Falha ao descompactar NSU ${nsu}: ${unzipErr.message}`)
+            continue
+          }
+        }
 
+        if (unzippedXml) {
           const docParsed = this.analyzeUnzippedDoc(unzippedXml, schema, nsu)
           docs.push(docParsed)
-        } catch (e) {
-          console.error(`[DFE-UNZIP-ERR] Falha ao descompactar NSU ${nsu}: ${e.message}`)
         }
       }
     }
@@ -96,7 +230,7 @@ class DfeAdapter {
   }
 
   /**
-   * Analisa documento descompactado
+   * Analisa documento descompactado (NF-e, resumo, evento)
    */
   analyzeUnzippedDoc(xmlString, schema, nsu) {
     const isSummary = schema.includes('resNFe') || xmlString.includes('<resNFe')
@@ -105,7 +239,8 @@ class DfeAdapter {
     const isEvent =
       schema.includes('procEvento') ||
       xmlString.includes('<procEventoNFe') ||
-      xmlString.includes('<retEnvEvento')
+      xmlString.includes('<retEnvEvento') ||
+      xmlString.includes('<infEvento')
 
     let accessKey = ''
     let emitterCnpj = ''
@@ -115,10 +250,11 @@ class DfeAdapter {
     let nfeNumber = ''
     let model = '55'
     let eventType = ''
+    let eventSeq = 1
     let justification = ''
     let protocol = ''
 
-    // Extração básica via regex para robustez
+    // Extração da chave de acesso (44 dígitos)
     const chMatch =
       xmlString.match(/<chNFe>([0-9]{44})<\/chNFe>/i) ||
       xmlString.match(/Id=["']NFe([0-9]{44})["']/i) ||
@@ -149,6 +285,9 @@ class DfeAdapter {
       const tpEventoMatch = xmlString.match(/<tpEvento>([0-9]+)<\/tpEvento>/i)
       if (tpEventoMatch) eventType = tpEventoMatch[1]
 
+      const seqMatch = xmlString.match(/<nSeqEvento>([0-9]+)<\/nSeqEvento>/i)
+      if (seqMatch) eventSeq = parseInt(seqMatch[1], 10) || 1
+
       const xJustMatch = xmlString.match(/<xJust>([^<]+)<\/xJust>/i)
       if (xJustMatch) justification = xJustMatch[1]
 
@@ -170,6 +309,7 @@ class DfeAdapter {
       isFullNfe,
       isEvent,
       eventType,
+      eventSeq,
       justification,
       protocol,
       rawXml: xmlString,
@@ -177,11 +317,10 @@ class DfeAdapter {
   }
 
   /**
-   * Mock / Ensaio para validação quando SEFAZ real não estiver conectada
+   * Mock / Ensaio para validação quando NFeWizard não estiver instalado
    */
   mockSefazResponse(ultNsu) {
     const currentNsu = parseInt(ultNsu, 10) || 0
-    // Se ultNsu é 0, simula a primeira carga de histórico (backlog de ensaio)
     if (currentNsu === 0) {
       return {
         cStat: '138',
@@ -225,7 +364,6 @@ class DfeAdapter {
       }
     }
 
-    // Se ultNSU >= 2, nenhum novo documento
     return {
       cStat: '137',
       xMotivo: 'Nenhum documento localizado para o NSU informado',

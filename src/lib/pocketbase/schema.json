@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-22T18:31:44.059Z",
+  "generatedAt": "2026-10-22T20:15:10.458Z",
   "collections": [
     {
       "name": "users",
@@ -822,6 +822,12 @@
         {
           "name": "allowed_families",
           "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "dfe_auto_launch",
+          "type": "bool",
           "required": false,
           "system": false
         }
@@ -2309,13 +2315,6 @@
           "selectValues": ["pendente", "pago", "cancelado"]
         },
         {
-          "name": "origin",
-          "type": "select",
-          "required": true,
-          "system": false,
-          "selectValues": ["manual", "nfe", "recorrente"]
-        },
-        {
           "name": "nfe_access_key",
           "type": "text",
           "required": false,
@@ -2406,6 +2405,13 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "origin",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["manual", "nfe", "recorrente", "dfe"]
         }
       ],
       "indexes": [
@@ -2730,6 +2736,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "worker_mode",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": ["CREATE INDEX idx_dfe_pointer_init ON dfe_pointer_state (is_initialized)"]
@@ -2944,7 +2956,8 @@
       ],
       "indexes": [
         "CREATE INDEX idx_dfe_events_key ON dfe_events (access_key)",
-        "CREATE INDEX idx_dfe_events_type ON dfe_events (event_type)"
+        "CREATE INDEX idx_dfe_events_type ON dfe_events (event_type)",
+        "CREATE UNIQUE INDEX `idx_dfe_events_dedupe` ON `dfe_events` (access_key, event_type, event_seq)"
       ]
     },
     {

@@ -493,55 +493,153 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
     })
   }
 
-  // 3. Contas a Pagar
+  // 3. Contas a Pagar (G1, G2, G3, G4, G5, G7)
   let payablesCreated = 0
-  try {
-    const apCol = $app.findCollectionByNameOrId('accounts_payable')
-    let catNfeId = ''
-    try {
-      const catNfe = $app.findFirstRecordByFilter(
-        'financial_categories',
-        "name ~ 'Fornecedores' && type = 'despesa'",
-      )
-      if (catNfe) catNfeId = catNfe.id
-    } catch (_) {}
+  let autoLaunchBlockedReason = ''
 
-    for (let p = 0; p < parsed.installments.length; p++) {
-      const inst = parsed.installments[p]
-      const apRec = new Record(apCol)
-      apRec.set(
-        'description',
-        'NF-e ' +
-          (parsed.nfeNumber ? '#' + parsed.nfeNumber : '') +
-          ' - ' +
-          (parsed.emitName || 'Fornecedor') +
-          ' (' +
-          inst.installment_number +
-          '/' +
-          inst.total_installments +
-          ')',
-      )
-      if (catNfeId) apRec.set('category', catNfeId)
-      if (supplierRec) apRec.set('supplier', supplierRec.id)
-      apRec.set('supplier_name', parsed.emitName || '')
-      apRec.set('amount', inst.amount)
-      apRec.set(
-        'due_date',
-        inst.due_date ? inst.due_date.slice(0, 10) : getBrasiliaIsoDate().slice(0, 10),
-      )
-      apRec.set('status', 'pendente')
-      apRec.set('origin', 'nfe')
-      apRec.set('nfe_access_key', accessKey)
-      apRec.set('nfe_record', nfeRec.id)
-      apRec.set('installment_number', inst.installment_number)
-      apRec.set('total_installments', inst.total_installments)
-      apRec.set('payment_method', 'boleto')
-      apRec.set('notes', 'Gerado automaticamente pelo Pipeline NF-e. Chave: ' + accessKey)
-      $app.save(apRec)
-      payablesCreated++
+  // G5 — Chave de controle: se source_channel === 'dfe', verificar flag dfe_auto_launch em settings
+  let dfeAutoLaunchActive = false
+  try {
+    const stRec = $app.findFirstRecordByFilter('settings', "id != ''")
+    if (stRec) {
+      dfeAutoLaunchActive = stRec.getBool('dfe_auto_launch')
     }
-  } catch (apErr) {
-    console.log('[NFE-PAYABLES-ERR]', String(apErr))
+  } catch (_) {}
+
+  // G3 — Backlog de ensaio blindado: se a access_key consta em dfe_history com is_backlog=true → bloqueado para sempre
+  let isBacklogKey = false
+  try {
+    const backlogRec = $app.findFirstRecordByFilter(
+      'dfe_history',
+      'access_key = {:k} && is_backlog = true',
+      { k: accessKey },
+    )
+    if (backlogRec) {
+      isBacklogKey = true
+    }
+  } catch (_) {}
+
+  let canCreatePayables = true
+  if (isBacklogKey) {
+    canCreatePayables = false
+    autoLaunchBlockedReason =
+      'G3: Backlog de ensaio blindado permanente (is_backlog=true no dfe_history).'
+    console.log(
+      '[DFE-LAUNCH-BLOCKED-G3]',
+      JSON.stringify({
+        accessKey: accessKey,
+        horarioBrasilia: getBrasiliaIsoDate(),
+        reason: autoLaunchBlockedReason,
+      }),
+    )
+  } else if (reqSourceChannel === 'dfe' && !dfeAutoLaunchActive) {
+    canCreatePayables = false
+    autoLaunchBlockedReason = 'G5: Lançamento automático DF-e desativado (dfe_auto_launch = false).'
+    console.log(
+      '[DFE-LAUNCH-BLOCKED-G5]',
+      JSON.stringify({
+        accessKey: accessKey,
+        horarioBrasilia: getBrasiliaIsoDate(),
+        sourceChannel: reqSourceChannel,
+        reason: autoLaunchBlockedReason,
+      }),
+    )
+  }
+
+  if (canCreatePayables) {
+    try {
+      const apCol = $app.findCollectionByNameOrId('accounts_payable')
+      let catNfeId = ''
+      try {
+        const catNfe = $app.findFirstRecordByFilter(
+          'financial_categories',
+          "name ~ 'Fornecedores' && type = 'despesa'",
+        )
+        if (catNfe) catNfeId = catNfe.id
+      } catch (_) {}
+
+      // Obter NSU para auditoria (G7)
+      let nsuForAudit = reqData.nsu || ''
+      if (!nsuForAudit) {
+        try {
+          const histRec = $app.findFirstRecordByFilter('dfe_history', 'access_key = {:k}', {
+            k: accessKey,
+          })
+          if (histRec) nsuForAudit = histRec.getString('nsu') || ''
+        } catch (_) {}
+      }
+
+      const apOrigin = reqSourceChannel === 'dfe' ? 'dfe' : 'nfe'
+      const originLabel = reqSourceChannel === 'dfe' ? 'DFe automático' : 'NF-e de entrada'
+
+      for (let p = 0; p < parsed.installments.length; p++) {
+        const inst = parsed.installments[p]
+        const apRec = new Record(apCol)
+        apRec.set(
+          'description',
+          'NF-e ' +
+            (parsed.nfeNumber ? '#' + parsed.nfeNumber : '') +
+            ' - ' +
+            (parsed.emitName || 'Fornecedor') +
+            ' (' +
+            inst.installment_number +
+            '/' +
+            inst.total_installments +
+            ')',
+        )
+        if (catNfeId) apRec.set('category', catNfeId)
+        if (supplierRec) apRec.set('supplier', supplierRec.id)
+        apRec.set('supplier_name', parsed.emitName || '')
+        apRec.set('amount', inst.amount)
+        apRec.set(
+          'due_date',
+          inst.due_date ? inst.due_date.slice(0, 10) : getBrasiliaIsoDate().slice(0, 10),
+        )
+        apRec.set('status', 'pendente')
+        apRec.set('origin', apOrigin)
+        apRec.set('nfe_access_key', accessKey)
+        apRec.set('nfe_record', nfeRec.id)
+        apRec.set('installment_number', inst.installment_number)
+        apRec.set('total_installments', inst.total_installments)
+        apRec.set('payment_method', 'boleto')
+        apRec.set(
+          'notes',
+          'Gerado automaticamente via ' +
+            originLabel +
+            '. Chave: ' +
+            accessKey +
+            (nsuForAudit ? ' | NSU: ' + nsuForAudit : '') +
+            ' | Emissão: ' +
+            (parsed.dhEmi || 'N/A') +
+            ' | Registro: ' +
+            getBrasiliaIsoDate(),
+        )
+        $app.save(apRec)
+        payablesCreated++
+
+        // G7 — Auditoria: cada lançamento registra chave de acesso, NSU, data/hora Brasília e origem
+        console.log(
+          '[DFE-PROCESSED-LAUNCH]',
+          JSON.stringify({
+            accessKey: accessKey,
+            nsu: nsuForAudit || 'N/A',
+            horarioBrasilia: getBrasiliaIsoDate(),
+            origem: apOrigin,
+            origemDescricao: originLabel,
+            payableId: apRec.id,
+            parcela: inst.installment_number + '/' + inst.total_installments,
+            valor: inst.amount,
+            fornecedor: parsed.emitName,
+            fornecedorCnpj: parsed.emitCnpj,
+            vencimento: inst.due_date
+              ? inst.due_date.slice(0, 10)
+              : getBrasiliaIsoDate().slice(0, 10),
+          }),
+        )
+      }
+    } catch (apErr) {
+      console.log('[NFE-PAYABLES-ERR]', String(apErr))
+    }
   }
 
   // 4. Matching em Camadas (MA-t / MA-t-2)
@@ -724,6 +822,7 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
     matched_items: matchedCount,
     pending_items: pendingCount,
     payables_count: payablesCreated,
+    auto_launch_blocked_reason: autoLaunchBlockedReason || undefined,
     souis_stock_status: 'pendente',
   })
 })

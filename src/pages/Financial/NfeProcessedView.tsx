@@ -51,10 +51,12 @@ export function NfeProcessedView() {
     'nfe' | 'pauta' | 'excecoes' | 'mapeamentos' | 'historico_dfe'
   >('nfe')
 
-  // Estado da FASE 2: Captura DFe (D2, D7, CF-1b, CF-1d)
+  // Estado da FASE 2: Captura DFe (D2, D7, CF-1b, CF-1d, G5)
   const [dfePointer, setDfePointer] = useState<any>(null)
   const [companyCnpjConfigured, setCompanyCnpjConfigured] = useState<string>('')
   const [dfeHistoryList, setDfeHistoryList] = useState<any[]>([])
+  const [dfePayablesCount, setDfePayablesCount] = useState<number>(0)
+  const [dfeAutoLaunchEnabled, setDfeAutoLaunchEnabled] = useState<boolean>(false)
   const [enqueuingCommand, setEnqueuingCommand] = useState<boolean>(false)
   const [retroactiveDays, setRetroactiveDays] = useState<number>(30)
   const [isRetroactiveModalOpen, setIsRetroactiveModalOpen] = useState<boolean>(false)
@@ -90,7 +92,7 @@ export function NfeProcessedView() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [nfes, queue, maps, pointer, hist, appSettings] = await Promise.all([
+      const [nfes, queue, maps, pointer, hist, appSettings, payablesDfe] = await Promise.all([
         getNfeProcessedList(),
         getNfePriceQueue(),
         getNfeProductMappings(),
@@ -100,18 +102,26 @@ export function NfeProcessedView() {
           .catch(() => ({ items: [] })),
         pb
           .collection('dfe_history')
-          .getList(1, 50, { sort: '-created' })
+          .getList(1, 100, { sort: '-created' })
           .catch(() => ({ items: [] })),
         getSettings().catch(() => null),
+        pb
+          .collection('accounts_payable')
+          .getList(1, 1, { filter: "origin = 'dfe'" })
+          .catch(() => ({ totalItems: 0, items: [] })),
       ])
       setNfeList(nfes)
       setPriceQueue(queue)
       setMappings(maps)
-      if (appSettings && appSettings.company_cnpj) {
-        setCompanyCnpjConfigured(String(appSettings.company_cnpj).replace(/\D/g, ''))
+      if (appSettings) {
+        if (appSettings.company_cnpj) {
+          setCompanyCnpjConfigured(String(appSettings.company_cnpj).replace(/\D/g, ''))
+        }
+        setDfeAutoLaunchEnabled(Boolean((appSettings as any).dfe_auto_launch))
       }
       if (pointer.items.length > 0) setDfePointer(pointer.items[0])
       setDfeHistoryList(hist.items)
+      setDfePayablesCount(payablesDfe.totalItems || 0)
     } catch (err: any) {
       toast({
         title: 'Erro ao carregar dados',
@@ -1006,16 +1016,24 @@ export function NfeProcessedView() {
               </p>
               <div className="flex items-center gap-4 pt-1 font-mono text-[11px] text-slate-600 flex-wrap">
                 <span>
+                  Modo Worker:{' '}
+                  <strong className="uppercase">
+                    {dfePointer?.worker_mode === 'real'
+                      ? 'REAL (SEFAZ)'
+                      : dfePointer?.worker_mode === 'simulacao'
+                        ? 'SIMULAÇÃO'
+                        : 'AGUARDANDO'}
+                  </strong>
+                </span>
+                <span>
                   Ponteiro ultNSU: <strong>{dfePointer?.ult_nsu || '0'}</strong>
                 </span>
                 <span>
                   maxNSU: <strong>{dfePointer?.max_nsu || '0'}</strong>
                 </span>
                 <span>
-                  Inicializado:{' '}
-                  <strong>
-                    {dfePointer?.is_initialized ? 'Sim (Zero-Impacto OK)' : 'Pendente'}
-                  </strong>
+                  Lançados em CP: <strong>{dfePayablesCount}</strong> (
+                  {dfeAutoLaunchEnabled ? 'Gate Ativo' : 'Gate Off'})
                 </span>
                 <span>
                   Status Worker: <strong>{dfePointer?.worker_status || 'offline'}</strong>

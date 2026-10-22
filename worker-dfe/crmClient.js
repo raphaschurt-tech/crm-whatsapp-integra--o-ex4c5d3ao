@@ -111,11 +111,11 @@ class CrmClient {
     }
   }
 
-  async ingestXml(xmlString) {
+  async ingestXml(xmlString, nsu = '') {
     try {
       const res = await axios.post(
         this.buildUrl('/backend/v1/dfe/ingest'),
-        { xml: xmlString },
+        { xml: xmlString, nsu: nsu },
         { headers: this.getHeaders(), timeout: 30000 },
       )
       return res.data

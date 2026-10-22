@@ -46,8 +46,8 @@ const CRM_DFE_TOKEN = process.env.CRM_DFE_TOKEN || config.CRM_DFE_TOKEN || ''
 const CERT_PFX_PATH = process.env.CERT_PFX_PATH || config.CERT_PFX_PATH || './certs/certificado.pfx'
 const CERT_PASSWORD = process.env.CERT_PASSWORD || config.CERT_PASSWORD || ''
 const COMPANY_CNPJ = (process.env.COMPANY_CNPJ || config.COMPANY_CNPJ || '').replace(/\D/g, '')
-const SEFAZ_AMBIENTE = process.env.SEFAZ_AMBIENTE || config.SEFAZ_AMBIENTE || 2
-const SEFAZ_UF = process.env.SEFAZ_UF || config.SEFAZ_UF || 35
+const SEFAZ_AMBIENTE = String(process.env.SEFAZ_AMBIENTE || config.SEFAZ_AMBIENTE || '1')
+const SEFAZ_UF = String(process.env.SEFAZ_UF || config.SEFAZ_UF || '35')
 const COMMAND_POLL_INTERVAL_SEC = parseInt(
   process.env.COMMAND_POLL_INTERVAL_SECONDS || config.COMMAND_POLL_INTERVAL_SECONDS || '30',
   10,
@@ -146,6 +146,7 @@ async function runDfeCycle(trigger = 'cron') {
   }
 
   const { dfe_enabled, company_cnpj, pointer } = crmStatus
+  const currentModeInfo = dfeAdapter.getMode()
 
   // Toggle DFe ligado/desligado (D7)
   if (!dfe_enabled && trigger === 'cron') {
@@ -164,6 +165,7 @@ async function runDfeCycle(trigger = 'cron') {
       await crm.updatePointer({
         error: certValidation.error,
         worker_status: 'error',
+        worker_mode: currentModeInfo.mode,
         cert_cnpj: certValidation.certInfo ? certValidation.certInfo.extractedCnpj : '',
         cert_valid_until: certValidation.certInfo ? certValidation.certInfo.notAfter : '',
         cert_days_remaining: certValidation.certInfo ? certValidation.certInfo.daysRemaining : 0,
@@ -204,6 +206,7 @@ async function runDfeCycle(trigger = 'cron') {
         )
         await crm.updatePointer({
           cstat_last: '656',
+          worker_mode: dfeAdapter.getMode().mode,
           error: 'cStat 656: Consumo indevido SEFAZ. Aguardando próximo ciclo de 1 hora.',
         })
         keepPaging = false
@@ -220,6 +223,7 @@ async function runDfeCycle(trigger = 'cron') {
           max_nsu: maxNSU || currentUltNsu,
           is_initialized: true,
           cstat_last: cStat,
+          worker_mode: dfeAdapter.getMode().mode,
           cert_cnpj: cert.extractedCnpj,
           cert_valid_until: cert.notAfter,
           cert_days_remaining: cert.daysRemaining,
@@ -264,6 +268,7 @@ async function runDfeCycle(trigger = 'cron') {
           max_nsu: maxNSU,
           is_initialized: ultNSU >= maxNSU, // Finaliza bootstrap se chegou no maxNSU
           cstat_last: cStat,
+          worker_mode: dfeAdapter.getMode().mode,
           cert_cnpj: cert.extractedCnpj,
           cert_valid_until: cert.notAfter,
           cert_days_remaining: cert.daysRemaining,
@@ -332,9 +337,9 @@ async function runDfeCycle(trigger = 'cron') {
           // NF-e COMPLETA: Ingestão no pipeline oficial (D1, CF-3b)
           if (doc.isFullNfe && doc.rawXml) {
             console.log(
-              `[DFE-INGEST] Enviando NF-e completa para pipeline oficial CRM (Chave: ${doc.accessKey})...`,
+              `[DFE-INGEST] Enviando NF-e completa para pipeline oficial CRM (Chave: ${doc.accessKey}, NSU: ${doc.nsu})...`,
             )
-            const ingestRes = await crm.ingestXml(doc.rawXml)
+            const ingestRes = await crm.ingestXml(doc.rawXml, doc.nsu)
             if (ingestRes.duplicate) {
               totalDuplicates++
               console.log(
@@ -372,6 +377,7 @@ async function runDfeCycle(trigger = 'cron') {
           max_nsu: maxNSU,
           is_initialized: true,
           cstat_last: cStat,
+          worker_mode: dfeAdapter.getMode().mode,
           cert_cnpj: cert.extractedCnpj,
           cert_valid_until: cert.notAfter,
           cert_days_remaining: cert.daysRemaining,
@@ -394,6 +400,7 @@ async function runDfeCycle(trigger = 'cron') {
     try {
       await crm.updatePointer({
         error: cycleErr.message,
+        worker_mode: dfeAdapter.getMode().mode,
         cstat_last: 'FALHA',
       })
     } catch (_) {}

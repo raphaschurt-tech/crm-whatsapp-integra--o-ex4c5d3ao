@@ -80,7 +80,7 @@ routerAdd('POST', '/backend/v1/dfe/ingest', (e) => {
     }
 
     // Encaminhar para o pipeline de NF-e via chamada HTTP interna (porta 8090)
-    // CF-3b: Aceita XML bruto no MESMO formato do upload manual, marcando origem "dfe"
+    // CF-3b: Aceita XML bruto no MESMO formato do upload manual, marcando origem "dfe" e repassando NSU se fornecido
     const appUrl = $os.getenv('APP_URL') || 'http://127.0.0.1:8090'
     const res = $http.send({
       url: appUrl + '/backend/v1/nfe/upload',
@@ -91,6 +91,7 @@ routerAdd('POST', '/backend/v1/dfe/ingest', (e) => {
       body: JSON.stringify({
         xml: xmlContent,
         source_channel: 'dfe',
+        nsu: body.nsu || '',
       }),
       timeout: 30,
     })
@@ -308,6 +309,7 @@ routerAdd('POST', '/backend/v1/dfe/pointer', (e) => {
       pointerRec.set('is_initialized', Boolean(body.is_initialized))
     if (body.is_running !== undefined) pointerRec.set('is_running', Boolean(body.is_running))
     if (body.cstat_last !== undefined) pointerRec.set('cstat_last', String(body.cstat_last))
+    if (body.worker_mode !== undefined) pointerRec.set('worker_mode', String(body.worker_mode))
 
     if (body.success) {
       pointerRec.set('last_success_at', bIso)
@@ -725,6 +727,40 @@ routerAdd('POST', '/backend/v1/dfe/event', (e) => {
       bIso = new Date().toISOString()
     }
 
+    const eventSeq = Number(body.event_seq) || 1
+
+    // G6 — Idempotência do evento: verificar se o evento já existe (access_key + event_type + event_seq)
+    let existingEvent = null
+    try {
+      existingEvent = $app.findFirstRecordByFilter(
+        'dfe_events',
+        'access_key = {:key} && event_type = {:type} && event_seq = {:seq}',
+        { key: accessKey, type: eventType, seq: eventSeq },
+      )
+    } catch (_) {}
+
+    if (existingEvent) {
+      console.log(
+        '[DFE-EVENT-DEDUPE]',
+        JSON.stringify({
+          accessKey: accessKey,
+          eventType: eventType,
+          eventSeq: eventSeq,
+          horarioBrasilia: bIso,
+          duplicate: true,
+          eventId: existingEvent.id,
+        }),
+      )
+      return e.json(200, {
+        success: true,
+        duplicate: true,
+        event_id: existingEvent.id,
+        nfe_found: existingEvent.getBool('nfe_found_in_crm'),
+        accounts_payable_marked: existingEvent.getBool('accounts_payable_marked'),
+        message: 'Evento SEFAZ já registrado anteriormente. Deduplicação idempotente mantida (G6).',
+      })
+    }
+
     // 1. Gravar registro em dfe_events
     const eventCol = $app.findCollectionByNameOrId('dfe_events')
     const eventRec = new Record(eventCol)
@@ -737,7 +773,7 @@ routerAdd('POST', '/backend/v1/dfe/event', (e) => {
         body.event_desc || (eventType === '110111' ? 'Cancelamento de NF-e' : 'Carta de Correção'),
       ),
     )
-    if (body.event_seq) eventRec.set('event_seq', Number(body.event_seq) || 1)
+    eventRec.set('event_seq', eventSeq)
     eventRec.set('event_date', String(body.event_date || bIso))
     if (body.protocol) eventRec.set('protocol', String(body.protocol))
     if (body.justification) eventRec.set('justification', String(body.justification))

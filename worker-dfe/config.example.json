@@ -1,11 +1,11 @@
 {
-  "CRM_URL": "http://127.0.0.1:8090",
+  "CRM_URL": "https://crm-whatsapp-integracao-aee3e.shrd03.internal.goskip.dev",
   "CRM_DFE_TOKEN": "",
-  "SEFAZ_AMBIENTE": 2,
-  "SEFAZ_UF": 35,
+  "SEFAZ_AMBIENTE": "1",
+  "SEFAZ_UF": "35",
   "CERT_PFX_PATH": "./certs/certificado.pfx",
   "CERT_PASSWORD": "",
-  "COMPANY_CNPJ": "",
+  "COMPANY_CNPJ": "00496593000129",
   "COMMAND_POLL_INTERVAL_SECONDS": 30,
   "SEFAZ_POLL_INTERVAL_MINUTES": 60
 }
