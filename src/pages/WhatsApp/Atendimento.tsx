@@ -1049,7 +1049,12 @@ export default function WhatsAppAtendimento() {
             mergedMessages = [...current.messages, ...newOnes]
           } else {
             // Substitui o preview sintético da lista pelas mensagens reais
-            mergedMessages = fetched
+            // NUNCA substituir current.messages por array vazio: se fetched vier vazio, preserva as mensagens já presentes
+            if (fetched.length > 0) {
+              mergedMessages = fetched
+            } else {
+              mergedMessages = current.messages || []
+            }
           }
 
           mergedMessages.sort((a, b) => a.timestamp - b.timestamp)

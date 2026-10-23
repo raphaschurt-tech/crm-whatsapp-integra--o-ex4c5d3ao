@@ -661,15 +661,17 @@ export async function loadCustomerConversationMessages(
   const perPage = options?.perPage ?? 50
 
   // Bloco B - Performance da Conversa:
-  // 1 varredura única em webhook_received filtrando primariamente por phone
-  // (índice idx_webhook_received_phone_created)
-  const filterPartsWebhook = variants.map((v) => `phone ~ "${v}"`)
+  // Varredura em webhook_received filtrando primariamente por phone (ou chat como fallback)
+  // Utiliza variantes mais específicas (com 8+ dígitos) para query direta
+  const validVariants = variants.filter((v) => v.length >= 8)
+  const targetVariants = validVariants.length > 0 ? validVariants : variants
+  const filterPartsWebhook = targetVariants.map((v) => `phone ~ "${v}" || chat ~ "${v}"`)
   const filterWebhook = filterPartsWebhook.join(' || ')
 
   const webhookRes = await withRetry(
     () =>
       pb.collection<WebhookReceivedRecord>('webhook_received').getList(page, perPage, {
-        filter: filterWebhook,
+        filter: filterWebhook || undefined,
         sort: '-created',
       }),
     { retries: 2, delayMs: 400 },
