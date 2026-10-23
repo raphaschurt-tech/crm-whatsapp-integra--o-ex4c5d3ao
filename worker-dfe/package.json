@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "prestart": "node -e \"try { require('./dfeAdapter').buildIcpBrasilCaFile(); } catch(e) { console.warn('[PRESTART-CA]', e.message); }\"",
-    "start": "NODE_EXTRA_CA_CERTS=./icp-brasil-ca.pem node index.js",
+    "start": "node index.js",
     "test-mock": "node test-simulation.js"
   },
   "dependencies": {

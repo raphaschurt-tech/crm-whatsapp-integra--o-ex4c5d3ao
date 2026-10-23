@@ -3,15 +3,64 @@
 import fs from 'fs'
 import path from 'path'
 import zlib from 'zlib'
+import crypto from 'crypto'
 import { createRequire } from 'module'
 
 const require = createRequire(import.meta.url)
 
-// Gerar icp-brasil-ca.pem se não existir ou a partir dos certs disponíveis
+// Gerar icp-brasil-ca.pem a partir dos certs de assinatura (@nfewizard/shared) + SEFAZ/SERPRO SSL
 try {
-  const dfeAdapter = require('../worker-dfe/dfeAdapter.js')
-  if (dfeAdapter && typeof dfeAdapter.buildIcpBrasilCaFile === 'function') {
-    dfeAdapter.buildIcpBrasilCaFile(path.resolve('worker-dfe/icp-brasil-ca.pem'))
+  const targetPemPath = path.resolve('worker-dfe/icp-brasil-ca.pem')
+  const sefazPemPath = path.resolve('worker-dfe/sefaz-ssl-ca.pem')
+
+  const loadedPems = []
+
+  // 1. Varrer pasta de certs de assinatura se existir
+  const sharedCertDir = path.resolve('node_modules/@nfewizard/shared/resources/certs')
+  if (fs.existsSync(sharedCertDir) && fs.statSync(sharedCertDir).isDirectory()) {
+    const files = fs.readdirSync(sharedCertDir).filter((f) => !f.startsWith('.'))
+    for (const f of files) {
+      try {
+        const buf = fs.readFileSync(path.join(sharedCertDir, f))
+        const text = buf.toString('utf8')
+        if (text.includes('-----BEGIN CERTIFICATE-----')) {
+          loadedPems.push(text.trim())
+        } else {
+          const x509 = new crypto.X509Certificate(buf)
+          loadedPems.push(x509.toString().trim())
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Se não leu de node_modules, ler os existentes do próprio icp-brasil-ca.pem
+  if (loadedPems.length === 0 && fs.existsSync(targetPemPath)) {
+    const curText = fs.readFileSync(targetPemPath, 'utf8')
+    const regex = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g
+    const matches = curText.match(regex) || []
+    for (const m of matches) {
+      loadedPems.push(m.trim())
+    }
+  }
+
+  // 2. Incorporar sefaz-ssl-ca.pem
+  if (fs.existsSync(sefazPemPath)) {
+    const sefazText = fs.readFileSync(sefazPemPath, 'utf8')
+    const regex = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g
+    const matches = sefazText.match(regex) || []
+    for (const m of matches) {
+      const trimmed = m.trim()
+      if (!loadedPems.includes(trimmed)) {
+        loadedPems.push(trimmed)
+      }
+    }
+  }
+
+  if (loadedPems.length > 0) {
+    fs.writeFileSync(targetPemPath, loadedPems.join('\n\n') + '\n', 'utf8')
+    console.log(
+      `[PREBUILD-CA] icp-brasil-ca.pem atualizado com ${loadedPems.length} certificados (Assinatura + SERPRO SSL).`,
+    )
   }
 } catch (e) {
   console.warn(
@@ -128,7 +177,7 @@ const workerDir = path.resolve('worker-dfe')
 const publicDir = path.resolve('public')
 const zipOutPath = path.join(publicDir, 'worker-dfe.zip')
 
-// Lista explícita dos 8 arquivos do pacote worker-dfe (nunca node_modules ou config.json real)
+// Lista explícita dos arquivos do pacote worker-dfe (nunca node_modules ou config.json real)
 const allowedFiles = [
   'certUtils.js',
   'config.example.json',
@@ -138,6 +187,7 @@ const allowedFiles = [
   'index.js',
   'package.json',
   'README.md',
+  'sefaz-ssl-ca.pem',
   'test-simulation.js',
 ]
 

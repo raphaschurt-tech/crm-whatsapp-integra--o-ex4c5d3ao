@@ -20,12 +20,13 @@
 const fs = require('fs')
 const path = require('path')
 const cron = require('node-cron')
+const tls = require('tls')
 const CrmClient = require('./crmClient')
 const DfeAdapter = require('./dfeAdapter')
 const { readCertInfo } = require('./certUtils')
-const { applyIcpBrasilTlsTrust } = require('./dfeAdapter')
+const { applyIcpBrasilTlsTrust, appendPemToBundle } = require('./dfeAdapter')
 
-// Inicializar imediatamente a confiança TLS da cadeia ICP-Brasil no boot do worker
+// Inicializar imediatamente a confiança TLS da cadeia ICP-Brasil + SEFAZ SSL no boot do worker
 applyIcpBrasilTlsTrust()
 
 // Helper para log em formato Brasília (UTC-3)
@@ -73,6 +74,100 @@ const dfeAdapter = new DfeAdapter({
 })
 
 let isCycleRunning = false
+
+/**
+ * PROBE TLS DE BOOT (Item 3 do FIX):
+ * Conecta via tls.connect em www1.nfe.fazenda.gov.br:443 com validação estrita (rejectUnauthorized: true).
+ * Registra o log [DFE-TLS-CHAIN] com a cadeia apresentada pelo servidor (folha à raiz).
+ * Se o servidor apresentar certificados intermediários válidos, anexa ao bundle em memória.
+ */
+async function probeSefazTlsChain() {
+  const host = 'www1.nfe.fazenda.gov.br'
+  const port = 443
+
+  return new Promise((resolve) => {
+    console.log(`[DFE-TLS-PROBE] Iniciando probe TLS em ${host}:${port} com validação estrita...`)
+    const socket = tls.connect(
+      {
+        host,
+        port,
+        servername: host,
+        rejectUnauthorized: true,
+        timeout: 10000,
+      },
+      () => {
+        try {
+          const peerCert = socket.getPeerCertificate(true)
+          if (peerCert) {
+            const chain = []
+            let curr = peerCert
+            const seen = new Set()
+            while (curr && curr.fingerprint256 && !seen.has(curr.fingerprint256)) {
+              seen.add(curr.fingerprint256)
+              const subjectCN = curr.subject ? curr.subject.CN || curr.subject.O || 'N/A' : 'N/A'
+              const issuerCN = curr.issuer ? curr.issuer.CN || curr.issuer.O || 'N/A' : 'N/A'
+              const validTo = curr.valid_to || 'N/A'
+              chain.push({ subjectCN, issuerCN, validTo })
+
+              // Se possuir raw PEM do intermediário e não for a folha, aprender dinamicamente
+              if (curr !== peerCert && curr.raw) {
+                const derBuf = Buffer.from(curr.raw)
+                const pemStr =
+                  `-----BEGIN CERTIFICATE-----\n` +
+                  derBuf
+                    .toString('base64')
+                    .match(/.{1,64}/g)
+                    .join('\n') +
+                  `\n-----END CERTIFICATE-----`
+                if (typeof appendPemToBundle === 'function') {
+                  appendPemToBundle(pemStr)
+                }
+              }
+
+              if (curr.issuerCertificate && curr.issuerCertificate !== curr) {
+                curr = curr.issuerCertificate
+              } else {
+                break
+              }
+            }
+
+            console.log(
+              `[DFE-TLS-CHAIN] Handshake TLS OK com ${host}:443 | Cadeia (${chain.length} níveis):`,
+            )
+            chain.forEach((node, idx) => {
+              console.log(
+                `   [Level ${idx}] Subject: "${node.subjectCN}" | Issuer: "${node.issuerCN}" | Validade: ${node.validTo}`,
+              )
+            })
+          } else {
+            console.log(`[DFE-TLS-CHAIN] Conexão TLS estabelecida sem getPeerCertificate.`)
+          }
+        } catch (chainErr) {
+          console.warn(
+            `[DFE-TLS-CHAIN-WARN] Falha ao inspecionar cadeia do servidor: ${chainErr.message}`,
+          )
+        } finally {
+          socket.destroy()
+          resolve({ ok: true })
+        }
+      },
+    )
+
+    socket.on('error', (err) => {
+      console.error(
+        `[DFE-TLS-PROBE-FAIL] Falha no probe TLS com ${host}:${port}: ${err.message} (${err.code || 'UNKNOWN'})`,
+      )
+      socket.destroy()
+      resolve({ ok: false, error: err.message, code: err.code })
+    })
+
+    socket.on('timeout', () => {
+      console.warn(`[DFE-TLS-PROBE-TIMEOUT] Timeout conectando em ${host}:${port}.`)
+      socket.destroy()
+      resolve({ ok: false, error: 'TIMEOUT' })
+    })
+  })
+}
 
 /**
  * Validação de Certificado A1 (Guards D7, D8, D9)
@@ -468,8 +563,11 @@ function startWorker() {
   })
   console.log(`[INIT] Cron SEFAZ DFe agendado para rodar a cada hora (0 * * * *).`)
 
-  // 3. Execução imediata inicial de handshake
-  setTimeout(() => {
+  // 3. Execução imediata inicial de handshake e probe TLS (Item 3 do FIX)
+  setTimeout(async () => {
+    try {
+      await probeSefazTlsChain()
+    } catch (_) {}
     runDfeCycle('startup')
   }, 3000)
 }

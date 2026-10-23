@@ -21,6 +21,16 @@ describe('DF-e Adapter & Real/Simulacao Mode', () => {
     expect(res.docs).toEqual([])
   })
 
+  it('exporta funções e bundles de certificados SEFAZ SSL e ICP-Brasil', () => {
+    const { loadIcpBrasilCaBundle, appendPemToBundle } = DfeAdapter
+    expect(typeof loadIcpBrasilCaBundle).toBe('function')
+    expect(typeof appendPemToBundle).toBe('function')
+
+    const bundleInfo = loadIcpBrasilCaBundle()
+    expect(bundleInfo.count).toBeGreaterThan(0)
+    expect(bundleInfo.pemBundle).toContain('Autoridade Certificadora do SERPRO SSL')
+  })
+
   it('analisa corretamente XML descompactado de NF-e completa, resumo e evento', () => {
     const adapter = new DfeAdapter({})
 
