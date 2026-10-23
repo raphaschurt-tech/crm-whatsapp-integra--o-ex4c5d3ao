@@ -2,7 +2,7 @@
  * worker-dfe/dfeAdapter.js
  * Interface com a SEFAZ (NT 2014.002 - NFeDistribuicaoDFe) utilizando a API oficial de classe NFeWizard-io.
  * Causa raiz resolvida: nfewizard-io v1.0.0+ exporta uma classe default (NFeWizard = require('nfewizard-io').default || require('nfewizard-io')).
- * Métodos: wizard.NFE_LoadEnvironment({ config: ... }) e wizard.NFE_DistribuicaoDFePorNSU({ ultNSU }).
+ * Métodos: wizard.NFE_LoadEnvironment({ config: ... }) e wizard.NFE_DistribuicaoDFePorNSU({ cUFAutor, CNPJ, distNSU: { ultNSU } }).
  *
  * MODO REAL AUTOMÁTICO:
  * - Sempre que a biblioteca carregar com sucesso, opera em modo 'real'.
@@ -26,6 +26,54 @@ class DfeAdapter {
     this.isWizardLoaded = false
     this.mode = 'simulacao'
     this.modeReason = 'Inicialização pendente'
+    this.cleanCnpj = String(this.config.cnpj || '').replace(/\D/g, '')
+
+    const ufMap = {
+      11: 'RO',
+      12: 'AC',
+      13: 'AM',
+      14: 'RR',
+      15: 'PA',
+      16: 'AP',
+      17: 'TO',
+      21: 'MA',
+      22: 'PI',
+      23: 'CE',
+      24: 'RN',
+      25: 'PB',
+      26: 'PE',
+      27: 'AL',
+      28: 'SE',
+      29: 'BA',
+      31: 'MG',
+      32: 'ES',
+      33: 'RJ',
+      35: 'SP',
+      41: 'PR',
+      42: 'SC',
+      43: 'RS',
+      50: 'MS',
+      51: 'MT',
+      52: 'GO',
+      53: 'DF',
+    }
+    const siglaMap = Object.entries(ufMap).reduce((acc, [code, sigla]) => {
+      acc[sigla] = Number(code)
+      return acc
+    }, {})
+
+    let ufSigla = 'SP'
+    let cUfAutor = 35
+    const rawUf = this.config.uf || this.config.sefazUf || '35'
+    if (typeof rawUf === 'number' || /^\d+$/.test(String(rawUf).trim())) {
+      cUfAutor = Number(rawUf)
+      ufSigla = ufMap[cUfAutor] || 'SP'
+    } else {
+      ufSigla = String(rawUf).trim().toUpperCase()
+      cUfAutor = siglaMap[ufSigla] || 35
+    }
+    this.ufSigla = ufSigla
+    this.cUfAutor = cUfAutor
   }
 
   /**
@@ -80,7 +128,6 @@ class DfeAdapter {
 
       const cleanCnpj = String(this.config.cnpj || '').replace(/\D/g, '')
       const ambienteNum = Number(this.config.ambiente || '1') // 1 = Produção
-      const ufStr = String(this.config.uf || 'SP')
 
       await wizard.NFE_LoadEnvironment({
         config: {
@@ -92,7 +139,7 @@ class DfeAdapter {
             pathRetornoEmJSON: tmpDistDir,
             pathCertificado: pfxPath,
             senhaCertificado: this.config.certPassword || '',
-            UF: ufStr,
+            UF: this.ufSigla,
             CPFCNPJ: cleanCnpj,
           },
           nfe: {
@@ -107,7 +154,6 @@ class DfeAdapter {
           },
         },
       })
-
       this.wizardInstance = wizard
       this.isWizardLoaded = true
       this.mode = 'real'
@@ -153,11 +199,51 @@ class DfeAdapter {
     try {
       if (this.mode === 'real' && this.wizardInstance) {
         console.log(
-          `[DFE-POLL-QUERY] Consultando SEFAZ Nacional via NFE_DistribuicaoDFePorNSU (ultNSU: ${formattedNsu})...`,
+          `[DFE-POLL-QUERY] Consultando SEFAZ Nacional via NFeWizard (ultNSU: ${formattedNsu}, cUFAutor: ${this.cUfAutor || 35}, CNPJ: ${this.cleanCnpj})...`,
         )
-        const result = await this.wizardInstance.NFE_DistribuicaoDFePorNSU({
-          ultNSU: formattedNsu,
-        })
+
+        // Payload estruturado estritamente segundo o schema da NT 2014.002 / NFeDistribuicaoDFe
+        // Schema espera: cUFAutor (Number), CNPJ (String 14 dígitos), distNSU { ultNSU (String 15 dígitos) }
+        const payload = {
+          cUFAutor: Number(this.cUfAutor || 35),
+          CNPJ: String(this.cleanCnpj || '').replace(/\D/g, ''),
+          distNSU: {
+            ultNSU: formattedNsu,
+          },
+        }
+
+        let result = null
+        try {
+          if (typeof this.wizardInstance.NFE_DistribuicaoDFePorNSU === 'function') {
+            result = await this.wizardInstance.NFE_DistribuicaoDFePorNSU(payload)
+          } else if (typeof this.wizardInstance.NFE_DistribuicaoDFePorUltNSU === 'function') {
+            result = await this.wizardInstance.NFE_DistribuicaoDFePorUltNSU(payload)
+          } else if (typeof this.wizardInstance.NFE_DistribuicaoDFe === 'function') {
+            result = await this.wizardInstance.NFE_DistribuicaoDFe(payload)
+          } else {
+            throw new Error('Nenhum método compatível de Distribuição DFe encontrado no NFeWizard.')
+          }
+        } catch (callErr) {
+          // Se NFE_DistribuicaoDFePorNSU rejeitou a assinatura ou schema, tentar NFE_DistribuicaoDFePorUltNSU ou NFE_DistribuicaoDFe genérico
+          if (
+            typeof this.wizardInstance.NFE_DistribuicaoDFePorUltNSU === 'function' &&
+            callErr.message &&
+            !callErr.message.includes('cStat')
+          ) {
+            console.warn('[DFE-RETRY] Tentando via NFE_DistribuicaoDFePorUltNSU...')
+            result = await this.wizardInstance.NFE_DistribuicaoDFePorUltNSU(payload)
+          } else if (
+            typeof this.wizardInstance.NFE_DistribuicaoDFe === 'function' &&
+            callErr.message &&
+            !callErr.message.includes('cStat')
+          ) {
+            console.warn('[DFE-RETRY] Tentando via NFE_DistribuicaoDFe...')
+            result = await this.wizardInstance.NFE_DistribuicaoDFe(payload)
+          } else {
+            throw callErr
+          }
+        }
+
         return this.parseWizardResponse(result, formattedNsu)
       }
 
