@@ -31,6 +31,135 @@ const DfeAdapter = require('./dfeAdapter')
 const { readCertInfo } = require('./certUtils')
 const { applyIcpBrasilTlsTrust, appendPemToBundle } = require('./dfeAdapter')
 
+/**
+ * Requisito 3: Mascarar senhaCertificado em QUALQUER saída de log do worker.
+ * O [ValidateEnvironment] da lib imprime a senha em aberto.
+ * Sanitizar a saída no boot do worker interceptando os métodos de log do console
+ * e substituindo o valor real da senha por ****** em qualquer linha ou argumento
+ * que contenha "senhaCertificado", sem desligar os demais logs da lib.
+ */
+function installPasswordLogSanitizer(rawPassword) {
+  if (console.__dfePasswordSanitizerInstalled) return
+  console.__dfePasswordSanitizerInstalled = true
+
+  const passStr = rawPassword ? String(rawPassword).trim() : ''
+  const passRegex =
+    passStr && passStr.length >= 2
+      ? new RegExp(passStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+      : null
+
+  // Regexes para capturar padrões comuns como:
+  // "senhaCertificado": "minhasenha" ou senhaCertificado: 'minhasenha' ou senhaCertificado = minhasenha
+  const keyValRegex = /([`"']?senhaCertificado[`"']?\s*[:=]\s*[`"'])([^`"'\r\n]+)([`"'])/gi
+  const plainKeyRegex = /(senhaCertificado\s*[:=]\s*)([^\s,}{;]+)/gi
+
+  function sanitizeString(str) {
+    if (typeof str !== 'string') return str
+    let sanitized = str
+
+    // Se contiver a chave "senhaCertificado"
+    if (/senhaCertificado/i.test(sanitized)) {
+      sanitized = sanitized.replace(keyValRegex, '$1******$3')
+      sanitized = sanitized.replace(plainKeyRegex, '$1******')
+    }
+
+    // Se a senha real estiver presente na saída, mesmo em outro formato
+    if (passRegex && passRegex.test(sanitized)) {
+      sanitized = sanitized.replace(passRegex, '******')
+    }
+
+    return sanitized
+  }
+
+  function sanitizeArg(arg) {
+    if (typeof arg === 'string') {
+      return sanitizeString(arg)
+    }
+    if (typeof arg === 'object' && arg !== null) {
+      try {
+        // Se for um objeto com senhaCertificado, clona raso ou formata
+        const json = JSON.stringify(arg)
+        if (/senhaCertificado/i.test(json) || (passRegex && passRegex.test(json))) {
+          return JSON.parse(sanitizeString(json))
+        }
+      } catch (_) {
+        // Fallback caso JSON.stringify falhe (ciclos)
+      }
+    }
+    return arg
+  }
+
+  const origLog = console.log.bind(console)
+  const origWarn = console.warn.bind(console)
+  const origError = console.error.bind(console)
+  const origInfo = console.info ? console.info.bind(console) : origLog
+  const origDebug = console.debug ? console.debug.bind(console) : origLog
+
+  console.log = function (...args) {
+    origLog(...args.map(sanitizeArg))
+  }
+  console.warn = function (...args) {
+    origWarn(...args.map(sanitizeArg))
+  }
+  console.error = function (...args) {
+    origError(...args.map(sanitizeArg))
+  }
+  if (console.info) {
+    console.info = function (...args) {
+      origInfo(...args.map(sanitizeArg))
+    }
+  }
+  if (console.debug) {
+    console.debug = function (...args) {
+      origDebug(...args.map(sanitizeArg))
+    }
+  }
+
+  // Interceptar também process.stdout.write e process.stderr.write por blindagem total contra saídas diretas da lib
+  try {
+    const origStdoutWrite = process.stdout.write.bind(process.stdout)
+    process.stdout.write = function (chunk, encoding, callback) {
+      if (typeof chunk === 'string') {
+        return origStdoutWrite(sanitizeString(chunk), encoding, callback)
+      } else if (Buffer.isBuffer(chunk)) {
+        const text = chunk.toString(encoding || 'utf8')
+        if (/senhaCertificado/i.test(text) || (passRegex && passRegex.test(text))) {
+          const sanitized = sanitizeString(text)
+          return origStdoutWrite(Buffer.from(sanitized, encoding || 'utf8'), encoding, callback)
+        }
+      }
+      return origStdoutWrite(chunk, encoding, callback)
+    }
+
+    const origStderrWrite = process.stderr.write.bind(process.stderr)
+    process.stderr.write = function (chunk, encoding, callback) {
+      if (typeof chunk === 'string') {
+        return origStderrWrite(sanitizeString(chunk), encoding, callback)
+      } else if (Buffer.isBuffer(chunk)) {
+        const text = chunk.toString(encoding || 'utf8')
+        if (/senhaCertificado/i.test(text) || (passRegex && passRegex.test(text))) {
+          const sanitized = sanitizeString(text)
+          return origStderrWrite(Buffer.from(sanitized, encoding || 'utf8'), encoding, callback)
+        }
+      }
+      return origStderrWrite(chunk, encoding, callback)
+    }
+  } catch (_) {}
+}
+
+// Helper para verificar se um retorno SEFAZ ou erro é cStat 656/496 ou mensagem "Consumo Indevido"
+function isRateLimitResponse(cStat, xMotivo, rawErrorMsg) {
+  const code = String(cStat || '').trim()
+  const motivo = String(xMotivo || '').toLowerCase()
+  const err = String(rawErrorMsg || '').toLowerCase()
+
+  if (code === '656' || code === '496') return true
+  if (motivo.includes('consumo indevido')) return true
+  if (err.includes('consumo indevido') || err.includes('656') || err.includes('496')) return true
+
+  return false
+}
+
 // 1. Inicializar imediatamente a confiança TLS da cadeia ICP-Brasil + SEFAZ SSL e interceptador universal no boot do worker
 // DEVE rodar antes de qualquer require ou chamada de bibliotecas externas (nfewizard-io / @nfewizard/shared)
 applyIcpBrasilTlsTrust()
@@ -63,6 +192,9 @@ const COMMAND_POLL_INTERVAL_SEC = parseInt(
   process.env.COMMAND_POLL_INTERVAL_SECONDS || config.COMMAND_POLL_INTERVAL_SECONDS || '30',
   10,
 )
+
+// Requisito 3: Instalar sanitizador de logs com a senha do certificado logo após ler a configuração
+installPasswordLogSanitizer(CERT_PASSWORD)
 
 if (!CRM_DFE_TOKEN) {
   console.warn(
@@ -374,22 +506,51 @@ async function runDfeCycle(trigger = 'cron') {
 
   try {
     while (keepPaging) {
-      const sefazRes = await dfeAdapter.consultarPorUltNsu(currentUltNsu)
+      let sefazRes = null
+      try {
+        sefazRes = await dfeAdapter.consultarPorUltNsu(currentUltNsu)
+      } catch (pollErr) {
+        // Se a lib lançou exceção com "Consumo Indevido" ou cStat 656/496 (Requisitos 1 e 2)
+        if (isRateLimitResponse('', '', pollErr.message)) {
+          console.warn(
+            `[DFE-RATE-LIMIT] Aguardando janela SEFAZ (1h) | Regra de ritmo NT 2014.002 (cStat 656/496 / Consumo Indevido). Ciclo encerrado com sucesso até a próxima hora.`,
+          )
+          await crm.updatePointer({
+            success: true,
+            cstat_last: '656',
+            worker_mode: dfeAdapter.getMode().mode,
+            cert_cnpj: cert.extractedCnpj,
+            cert_valid_until: cert.notAfter,
+            cert_days_remaining: cert.daysRemaining,
+          })
+          keepPaging = false
+          break
+        }
+        // Se for outro erro, relança para tratamento no catch do ciclo
+        throw pollErr
+      }
+
       const { cStat, xMotivo, ultNSU, maxNSU, docs } = sefazRes
 
       console.log(
         `[DFE-POLL-RESPONSE] cStat: ${cStat} (${xMotivo}) | Retornado ultNSU: ${ultNSU} | maxNSU: ${maxNSU} | Docs: ${docs.length}`,
       )
 
-      // CF-2 / D3-b: Tratamento de Consumo Indevido (cStat 656)
-      if (cStat === '656') {
+      // Requisitos 1 e 2: Classificar "Consumo Indevido" como ESPERA NORMAL
+      // Casar pela MENSAGEM ("Consumo Indevido") E pelo código cStat 656 (aceitar também 496).
+      // Log próprio [DFE-RATE-LIMIT] "Aguardando janela SEFAZ (1h)" emitido como warning (NUNCA como error)
+      // e o ciclo encerra COM SUCESSO até a próxima hora — sem [DFE-POLL-FAIL], sem stack de erro.
+      if (isRateLimitResponse(cStat, xMotivo)) {
         console.warn(
-          `[DFE-POLL] [656] Consumo indevido detectado pela SEFAZ. Ponteiro mantido. Ciclo abortado respeitando intervalo mínimo (CF-2).`,
+          `[DFE-RATE-LIMIT] Aguardando janela SEFAZ (1h) | cStat ${cStat} (${xMotivo || 'Consumo Indevido'}). Ciclo encerrado com sucesso até a próxima hora.`,
         )
         await crm.updatePointer({
-          cstat_last: '656',
+          success: true,
+          cstat_last: cStat || '656',
           worker_mode: dfeAdapter.getMode().mode,
-          error: 'cStat 656: Consumo indevido SEFAZ. Aguardando próximo ciclo de 1 hora.',
+          cert_cnpj: cert.extractedCnpj,
+          cert_valid_until: cert.notAfter,
+          cert_days_remaining: cert.daysRemaining,
         })
         keepPaging = false
         break
@@ -656,5 +817,14 @@ function startWorker() {
   }, 3000)
 }
 
-// Iniciar
-startWorker()
+module.exports = {
+  startWorker,
+  runDfeCycle,
+  isRateLimitResponse,
+  installPasswordLogSanitizer,
+}
+
+// Iniciar apenas se executado diretamente
+if (require.main === module) {
+  startWorker()
+}

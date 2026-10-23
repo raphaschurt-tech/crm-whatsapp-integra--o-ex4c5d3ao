@@ -594,7 +594,21 @@ class DfeAdapter {
             throw new Error('Nenhum método compatível de Distribuição DFe encontrado no NFeWizard.')
           }
         } catch (callErr) {
-          // Se NFE_DistribuicaoDFePorNSU rejeitou a assinatura ou schema, tentar NFE_DistribuicaoDFePorUltNSU ou NFE_DistribuicaoDFe genérico
+          // Requisito 2: NÃO disparar retry/fallback quando a resposta for Consumo Indevido ou cStat 656/496.
+          // 1 única consulta por ciclo: a 2ª chamada no mesmo segundo nunca passa e só estende o bloqueio.
+          const errMsg = String((callErr && callErr.message) || '')
+          const isRateLimitErr =
+            errMsg.toLowerCase().includes('consumo indevido') ||
+            errMsg.includes('656') ||
+            errMsg.includes('496')
+
+          if (isRateLimitErr) {
+            // Repassa imediatamente sem retry/fallback PorNSU->PorUltNSU
+            throw callErr
+          }
+
+          // Se NFE_DistribuicaoDFePorNSU rejeitou localmente (ex: assinatura da lib ou schema),
+          // tentar alternativas apenas se não for rejeição da SEFAZ
           if (
             typeof this.wizardInstance.NFE_DistribuicaoDFePorUltNSU === 'function' &&
             callErr.message &&
