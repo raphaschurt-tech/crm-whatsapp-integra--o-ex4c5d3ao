@@ -31,7 +31,8 @@ const DfeAdapter = require('./dfeAdapter')
 const { readCertInfo } = require('./certUtils')
 const { applyIcpBrasilTlsTrust, appendPemToBundle } = require('./dfeAdapter')
 
-// Inicializar imediatamente a confiança TLS da cadeia ICP-Brasil + SEFAZ SSL no boot do worker
+// 1. Inicializar imediatamente a confiança TLS da cadeia ICP-Brasil + SEFAZ SSL e interceptador universal no boot do worker
+// DEVE rodar antes de qualquer require ou chamada de bibliotecas externas (nfewizard-io / @nfewizard/shared)
 applyIcpBrasilTlsTrust()
 
 // Helper para log em formato Brasília (UTC-3)

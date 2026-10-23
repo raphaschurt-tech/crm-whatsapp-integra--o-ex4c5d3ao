@@ -29,6 +29,9 @@ let icpBrasilCertsCache = null
 let icpBrasilPemBundleCache = null
 let probeLearnedCertsCache = []
 let globalFullCaBundle = null
+let httpsAgentInterceptorInstalled = false
+let axiosCreatePatched = false
+let OriginalHttpsAgent = null
 
 /**
  * Lista embutida de CAs SEFAZ / SERPRO SSL oficiais (fallback de resiliência caso arquivos locais faltem)
@@ -221,6 +224,56 @@ function getFullCaBundle() {
  * (b) axios.defaults.httpsAgent = new https.Agent({ keepAlive: true, ca: FULL })
  * (c) Injeção em interceptors do axios se necessário
  */
+/**
+ * Interceptador Universal do https.Agent (FIX TLS 4.0):
+ * Intercepta o construtor do https.Agent de forma que QUALQUER agente instanciado depois do boot
+ * (inclusive o criado por @nfewizard/shared em LoadCertificate.createHttpsAgent / HttpClientBuilder)
+ * receba sua própria ca somada ao pacote FULL (tls.rootCertificates + bundle ICP + SEFAZ SSL + probe).
+ * NADA é removido ou sobrescrito da lib: a ca da própria lib é preservada e enriquecida.
+ * Requisito: Log único no boot: [DFE-TLS-INTERCEPT] https.Agent universal ativo | FULL: N certs
+ */
+function installHttpsAgentInterceptor() {
+  if (httpsAgentInterceptorInstalled) return
+  httpsAgentInterceptorInstalled = true
+
+  OriginalHttpsAgent = https.Agent
+
+  function PatchedHttpsAgent(options = {}) {
+    const full = getFullCaBundle()
+    const own = Array.isArray(options.ca) ? options.ca : options.ca ? [options.ca] : []
+    options.ca = [...own, ...full]
+    return new OriginalHttpsAgent(options)
+  }
+
+  PatchedHttpsAgent.prototype = OriginalHttpsAgent.prototype
+  https.Agent = PatchedHttpsAgent
+
+  // Plano B / Reforço: Patch espelho em axios.create para garantir que qualquer client criado
+  // pela lib (ex: AxiosHttpClient em @nfewizard/shared) ou por qualquer outro módulo
+  // tenha o httpsAgent com a ca enriquecida com FULL.
+  if (axios && !axiosCreatePatched) {
+    axiosCreatePatched = true
+    const origAxiosCreate = axios.create.bind(axios)
+    axios.create = function patchedAxiosCreate(config = {}) {
+      const full = getFullCaBundle()
+      if (!config.httpsAgent) {
+        config.httpsAgent = new https.Agent({ keepAlive: true, ca: full })
+      } else if (config.httpsAgent && config.httpsAgent.options) {
+        const own = Array.isArray(config.httpsAgent.options.ca)
+          ? config.httpsAgent.options.ca
+          : config.httpsAgent.options.ca
+            ? [config.httpsAgent.options.ca]
+            : []
+        config.httpsAgent.options.ca = [...own, ...full]
+      }
+      return origAxiosCreate(config)
+    }
+  }
+
+  const fullCount = getFullCaBundle().length
+  console.log(`[DFE-TLS-INTERCEPT] https.Agent universal ativo | FULL: ${fullCount} certs`)
+}
+
 function applyIcpBrasilTlsTrust() {
   const { count } = loadIcpBrasilCaBundle()
   const fullBundle = getFullCaBundle()
@@ -230,13 +283,21 @@ function applyIcpBrasilTlsTrust() {
   )
 
   try {
-    // (a) https.globalAgent
+    // 1. Interceptar https.Agent e axios.create universalmente
+    installHttpsAgentInterceptor()
+
+    // 2. https.globalAgent
     if (!https.globalAgent.options) {
       https.globalAgent.options = {}
     }
-    https.globalAgent.options.ca = fullBundle
+    const ownGlobal = Array.isArray(https.globalAgent.options.ca)
+      ? https.globalAgent.options.ca
+      : https.globalAgent.options.ca
+        ? [https.globalAgent.options.ca]
+        : []
+    https.globalAgent.options.ca = [...ownGlobal, ...fullBundle]
 
-    // (b) axios.defaults.httpsAgent (CRÍTICO: axios é o mesmo módulo raiz usado pela lib)
+    // 3. axios.defaults.httpsAgent (CRÍTICO: axios é o mesmo módulo raiz usado pela lib)
     if (axios) {
       const customAgent = new https.Agent({
         keepAlive: true,
@@ -253,7 +314,12 @@ function applyIcpBrasilTlsTrust() {
             if (!reqConfig.httpsAgent) {
               reqConfig.httpsAgent = customAgent
             } else if (reqConfig.httpsAgent && reqConfig.httpsAgent.options) {
-              reqConfig.httpsAgent.options.ca = fullBundle
+              const own = Array.isArray(reqConfig.httpsAgent.options.ca)
+                ? reqConfig.httpsAgent.options.ca
+                : reqConfig.httpsAgent.options.ca
+                  ? [reqConfig.httpsAgent.options.ca]
+                  : []
+              reqConfig.httpsAgent.options.ca = [...own, ...fullBundle]
             }
             return reqConfig
           })
@@ -825,4 +891,5 @@ module.exports.applyIcpBrasilTlsTrust = applyIcpBrasilTlsTrust
 module.exports.buildIcpBrasilCaFile = buildIcpBrasilCaFile
 module.exports.resolveIcpBrasilCertsDirs = resolveIcpBrasilCertsDirs
 module.exports.appendPemToBundle = appendPemToBundle
+module.exports.installHttpsAgentInterceptor = installHttpsAgentInterceptor
 module.exports.SEFAZ_SERPRO_SSL_CERTS = SEFAZ_SERPRO_SSL_CERTS

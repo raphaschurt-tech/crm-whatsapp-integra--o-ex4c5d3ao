@@ -23,8 +23,10 @@ const {
 async function runTests() {
   console.log('--- INICIANDO TESTES DO WORKER DFE (TLS + SIMULAÇÃO + MODO REAL) ---')
 
-  // 1. Testar resolução e injeção do bundle TLS ICP-Brasil
-  console.log('\n[TESTE 1] Verificando injeção de confiança TLS da cadeia ICP-Brasil...')
+  // 1. Testar resolução e injeção do bundle TLS ICP-Brasil + Interceptador https.Agent
+  console.log(
+    '\n[TESTE 1] Verificando injeção de confiança TLS e interceptador universal https.Agent...',
+  )
   const tlsResult = applyIcpBrasilTlsTrust()
   console.log(`[TESTE 1 RESULTADO] CAs ICP-Brasil carregados: ${tlsResult.count}`)
 
@@ -35,6 +37,31 @@ async function runTests() {
   } else {
     console.log('[TESTE 1 INFO] https.globalAgent.options.ca pronto.')
   }
+
+  // 1b. Testar interceptação universal do https.Agent (FIX TLS 4.0)
+  // Simula o comportamento de LoadCertificate.createHttpsAgent de @nfewizard/shared:
+  // cria um new https.Agent({ ca: [fakeCustomCa] }) e confirma que o FULL foi somado sem apagar o custom.
+  const fakeCustomCa = Buffer.from('FAKE-CUSTOM-CA-LIB')
+  const agentCreatedByLib = new https.Agent({
+    ca: [fakeCustomCa],
+    keepAlive: true,
+  })
+  const agentCaList = Array.isArray(agentCreatedByLib.options.ca)
+    ? agentCreatedByLib.options.ca
+    : []
+  const hasOriginalCustom = agentCaList.some(
+    (c) => Buffer.isBuffer(c) && c.toString() === 'FAKE-CUSTOM-CA-LIB',
+  )
+  const totalCertsInAgent = agentCaList.length
+  console.log(
+    `[TESTE 1b INTERCEPT] Agent criado pela lib com ca custom: total final=${totalCertsInAgent} | custom preservado=${hasOriginalCustom}`,
+  )
+  if (!hasOriginalCustom || totalCertsInAgent < 10) {
+    throw new Error(
+      'Falha no interceptador universal de https.Agent: ca custom não preservada ou FULL não somado!',
+    )
+  }
+  console.log('[TESTE 1b OK] Interceptador universal de https.Agent comprovado com sucesso!')
 
   // 2. Testar geração do arquivo icp-brasil-ca.pem
   console.log(
