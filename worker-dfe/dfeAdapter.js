@@ -79,19 +79,28 @@ class DfeAdapter {
       } catch (_) {}
 
       const cleanCnpj = String(this.config.cnpj || '').replace(/\D/g, '')
-      const ambienteStr = String(this.config.ambiente || '1') // '1' = Produção
-      const ufStr = String(this.config.uf || '35')
+      const ambienteNum = Number(this.config.ambiente || '1') // 1 = Produção
+      const ufStr = String(this.config.uf || 'SP')
 
       await wizard.NFE_LoadEnvironment({
         config: {
-          ambiente: ambienteStr,
-          UF: ufStr,
-          CNPJ: cleanCnpj,
-          certificado: pfxPath,
-          senha: this.config.certPassword || '',
           dfe: {
             baixarXMLDistribuicao: true,
             pathXMLDistribuicao: tmpDistDir,
+            armazenarXMLDistribuicao: true,
+            armazenarRetornoEmJSON: true,
+            pathRetornoEmJSON: tmpDistDir,
+            pathCertificado: pfxPath,
+            senhaCertificado: this.config.certPassword || '',
+            UF: ufStr,
+            CPFCNPJ: cleanCnpj,
+          },
+          nfe: {
+            ambiente: ambienteNum,
+            versaoDF: '4.00',
+          },
+          lib: {
+            useForSchemaValidation: 'validateSchemaJsBased',
           },
         },
       })
