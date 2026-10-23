@@ -23,6 +23,10 @@ const cron = require('node-cron')
 const CrmClient = require('./crmClient')
 const DfeAdapter = require('./dfeAdapter')
 const { readCertInfo } = require('./certUtils')
+const { applyIcpBrasilTlsTrust } = require('./dfeAdapter')
+
+// Inicializar imediatamente a confiança TLS da cadeia ICP-Brasil no boot do worker
+applyIcpBrasilTlsTrust()
 
 // Helper para log em formato Brasília (UTC-3)
 function getBrasiliaTimestamp() {

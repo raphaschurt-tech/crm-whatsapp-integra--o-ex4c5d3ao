@@ -1,6 +1,19 @@
 import fs from 'fs'
 import path from 'path'
 import zlib from 'zlib'
+import { createRequire } from 'module'
+
+const require = createRequire(import.meta.url)
+
+// Gerar icp-brasil-ca.pem se não existir ou a partir dos certs disponíveis
+try {
+  const dfeAdapter = require('../worker-dfe/dfeAdapter.js')
+  if (dfeAdapter && typeof dfeAdapter.buildIcpBrasilCaFile === 'function') {
+    dfeAdapter.buildIcpBrasilCaFile(path.resolve('worker-dfe/icp-brasil-ca.pem'))
+  }
+} catch (e) {
+  console.warn('[GEN-CA-WARN] Não foi possível compilar icp-brasil-ca.pem:', e.message)
+}
 
 const crcTable = new Uint32Array(256)
 for (let i = 0; i < 256; i++) {
@@ -101,16 +114,22 @@ function createZip(entries) {
   return Buffer.concat([...localHeaders, centralDirectoryBuf, eocd])
 }
 
-const files = [
+const allowedFiles = [
   'certUtils.js',
   'config.example.json',
   'crmClient.js',
   'dfeAdapter.js',
+  'icp-brasil-ca.pem',
   'index.js',
   'package.json',
   'README.md',
   'test-simulation.js',
 ]
+
+const files = fs
+  .readdirSync(path.resolve('worker-dfe'))
+  .filter((name) => allowedFiles.includes(name))
+  .sort()
 
 const entries = files.map((filename) => {
   const filePath = path.resolve('worker-dfe', filename)

@@ -13,7 +13,178 @@
 const fs = require('fs')
 const path = require('path')
 const zlib = require('zlib')
+const tls = require('tls')
+const https = require('https')
+const crypto = require('crypto')
 const { XMLParser } = require('fast-xml-parser')
+
+/**
+ * Cache global da cadeia ICP-Brasil em memória
+ */
+let icpBrasilCertsCache = null
+let icpBrasilPemBundleCache = null
+
+/**
+ * Resolve os possíveis diretórios onde a cadeia ICP-Brasil reside no ambiente
+ */
+function resolveIcpBrasilCertsDirs() {
+  const candidates = [
+    // 1. Pacote @nfewizard/shared instalado em node_modules
+    path.resolve(process.cwd(), 'node_modules/@nfewizard/shared/resources/certs'),
+    path.resolve(__dirname, 'node_modules/@nfewizard/shared/resources/certs'),
+    path.resolve(__dirname, '../node_modules/@nfewizard/shared/resources/certs'),
+    // 2. Pasta local resources/certs caso copiada no worker
+    path.resolve(__dirname, 'resources/certs'),
+    path.resolve(process.cwd(), 'resources/certs'),
+    // 3. Fallback para require.resolve caso disponível
+  ]
+
+  try {
+    const sharedPkgPath = require.resolve('@nfewizard/shared/package.json')
+    const sharedDir = path.dirname(sharedPkgPath)
+    candidates.unshift(path.resolve(sharedDir, 'resources/certs'))
+  } catch (_) {}
+
+  return candidates
+}
+
+/**
+ * Carrega e converte certificados da cadeia ICP-Brasil para PEM
+ * Converte DER (.crt/.cer binário) ou lê PEM (.pem/.crt texto)
+ * Utiliza crypto.X509Certificate (suporta Buffer DER e string PEM)
+ */
+function loadIcpBrasilCaBundle() {
+  if (icpBrasilCertsCache !== null) {
+    return {
+      certs: icpBrasilCertsCache,
+      pemBundle: icpBrasilPemBundleCache,
+      count: icpBrasilCertsCache.length,
+    }
+  }
+
+  const dirs = resolveIcpBrasilCertsDirs()
+  let targetDir = null
+  for (const dir of dirs) {
+    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      targetDir = dir
+      break
+    }
+  }
+
+  const loadedCerts = []
+  const pemParts = []
+
+  if (targetDir) {
+    try {
+      const files = fs.readdirSync(targetDir).filter((f) => !f.startsWith('.'))
+      for (const file of files) {
+        const filePath = path.join(targetDir, file)
+        try {
+          const buf = fs.readFileSync(filePath)
+          let pemString = ''
+
+          // Se já for PEM legível
+          const text = buf.toString('utf8')
+          if (text.includes('-----BEGIN CERTIFICATE-----')) {
+            pemString = text
+          } else {
+            // Conversão DER -> PEM via crypto.X509Certificate
+            const x509 = new crypto.X509Certificate(buf)
+            pemString = x509.toString()
+          }
+
+          if (pemString && pemString.includes('-----BEGIN CERTIFICATE-----')) {
+            loadedCerts.push(Buffer.from(pemString))
+            pemParts.push(pemString.trim())
+          }
+        } catch (err) {
+          // Erro silencioso em arquivo individual corrompido ou não certificado
+        }
+      }
+    } catch (readErr) {
+      console.warn(
+        `[DFE-TLS-WARN] Falha ao varrer diretório de certificados (${targetDir}): ${readErr.message}`,
+      )
+    }
+  }
+
+  // Também verificar se existe arquivo consolidado local icp-brasil-ca.pem
+  const localPemPath = path.resolve(__dirname, 'icp-brasil-ca.pem')
+  if (loadedCerts.length === 0 && fs.existsSync(localPemPath)) {
+    try {
+      const localPem = fs.readFileSync(localPemPath, 'utf8')
+      const regex = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g
+      const matches = localPem.match(regex) || []
+      for (const m of matches) {
+        loadedCerts.push(Buffer.from(m))
+        pemParts.push(m)
+      }
+    } catch (_) {}
+  }
+
+  icpBrasilCertsCache = loadedCerts
+  icpBrasilPemBundleCache = pemParts.join('\n\n')
+
+  return {
+    certs: icpBrasilCertsCache,
+    pemBundle: icpBrasilPemBundleCache,
+    count: icpBrasilCertsCache.length,
+    dirUsed: targetDir,
+  }
+}
+
+/**
+ * Injeta o bundle ICP-Brasil na confiança TLS global do processo Node.js
+ * e configura https.globalAgent.options.ca
+ */
+function applyIcpBrasilTlsTrust() {
+  const { certs, count } = loadIcpBrasilCaBundle()
+
+  // Log diagnóstico OBRIGATÓRIO (Item 4 do FIX)
+  console.log(`[DFE-TLS] CAs ICP-Brasil carregados: ${count}`)
+
+  if (count > 0) {
+    try {
+      const rootCerts = (tls.rootCertificates || []).map((c) => Buffer.from(c))
+      const combinedBundle = [...rootCerts, ...certs]
+
+      // 1. Injetar no globalAgent padrão do https
+      if (!https.globalAgent.options) {
+        https.globalAgent.options = {}
+      }
+      https.globalAgent.options.ca = combinedBundle
+
+      // 2. Garantir que NODE_EXTRA_CA_CERTS seja apontado caso exista o pem
+      const pemPath = path.resolve(__dirname, 'icp-brasil-ca.pem')
+      if (fs.existsSync(pemPath) && !process.env.NODE_EXTRA_CA_CERTS) {
+        process.env.NODE_EXTRA_CA_CERTS = pemPath
+      }
+    } catch (e) {
+      console.warn(`[DFE-TLS-WARN] Falha ao configurar https.globalAgent.options.ca: ${e.message}`)
+    }
+  } else {
+    console.warn(
+      `[DFE-TLS-WARN] Nenhum certificado ICP-Brasil foi carregado de @nfewizard/shared/resources/certs. ` +
+        `Certifique-se de executar 'npm install' no worker.`,
+    )
+  }
+
+  return { count, certs }
+}
+
+/**
+ * Constrói ou atualiza o arquivo icp-brasil-ca.pem para ser usado via NODE_EXTRA_CA_CERTS
+ */
+function buildIcpBrasilCaFile(targetPath) {
+  const outPath = targetPath || path.resolve(__dirname, 'icp-brasil-ca.pem')
+  const { pemBundle, count } = loadIcpBrasilCaBundle()
+  if (count > 0 && pemBundle) {
+    fs.writeFileSync(outPath, pemBundle, 'utf8')
+    console.log(`[DFE-TLS] Arquivo bundle gerado com sucesso: ${outPath} (${count} certificados)`)
+    return true
+  }
+  return false
+}
 
 class DfeAdapter {
   constructor(config) {
@@ -84,6 +255,9 @@ class DfeAdapter {
       return true
     }
 
+    // Injeção de confiança TLS da cadeia ICP-Brasil ANTES de inicializar o NFeWizard (FIX Itens 1, 2 e 4)
+    const { certs, count } = applyIcpBrasilTlsTrust()
+
     try {
       let NFeWizardLib = null
       try {
@@ -129,31 +303,50 @@ class DfeAdapter {
       const cleanCnpj = String(this.config.cnpj || '').replace(/\D/g, '')
       const ambienteNum = Number(this.config.ambiente || '1') // 1 = Produção
 
-      await wizard.NFE_LoadEnvironment({
-        config: {
-          dfe: {
-            baixarXMLDistribuicao: true,
-            pathXMLDistribuicao: tmpDistDir,
-            armazenarXMLDistribuicao: true,
-            armazenarRetornoEmJSON: true,
-            pathRetornoEmJSON: tmpDistDir,
-            pathCertificado: pfxPath,
-            senhaCertificado: this.config.certPassword || '',
-            UF: this.ufSigla,
-            CPFCNPJ: cleanCnpj,
-          },
-          nfe: {
-            ambiente: ambienteNum,
-            versaoDF: '4.00',
-          },
-          lib: {
-            useOpenSSL: false,
-            useForSchemaValidation: 'validateSchemaJsBased',
-            connection: { timeout: 30000 },
-            log: { exibirLogNoConsole: true, armazenarLogs: false },
-          },
+      // Objeto de configuração do NFeWizard com as opções aceitas pela lib
+      const nfeConfig = {
+        dfe: {
+          baixarXMLDistribuicao: true,
+          pathXMLDistribuicao: tmpDistDir,
+          armazenarXMLDistribuicao: true,
+          armazenarRetornoEmJSON: true,
+          pathRetornoEmJSON: tmpDistDir,
+          pathCertificado: pfxPath,
+          senhaCertificado: this.config.certPassword || '',
+          UF: this.ufSigla,
+          CPFCNPJ: cleanCnpj,
         },
+        nfe: {
+          ambiente: ambienteNum,
+          versaoDF: '4.00',
+        },
+        lib: {
+          useOpenSSL: false,
+          useForSchemaValidation: 'validateSchemaJsBased',
+          connection: {
+            timeout: 30000,
+            ...(count > 0 && {
+              ca: [...tls.rootCertificates.map((c) => Buffer.from(c)), ...certs],
+            }),
+          },
+          log: { exibirLogNoConsole: true, armazenarLogs: false },
+        },
+      }
+
+      await wizard.NFE_LoadEnvironment({
+        config: nfeConfig,
       })
+
+      // Reforço TLS: Se o environment instanciou um agent próprio (Environment.agent),
+      // garantir que as opções do agent recebam a cadeia completa ICP-Brasil
+      try {
+        const env = wizard.environment || (wizard.getEnvironment && wizard.getEnvironment())
+        if (env && env.agent && env.agent.options) {
+          const rootCerts = (tls.rootCertificates || []).map((c) => Buffer.from(c))
+          env.agent.options.ca = [...rootCerts, ...certs]
+        }
+      } catch (_) {}
+
       this.wizardInstance = wizard
       this.isWizardLoaded = true
       this.mode = 'real'
@@ -251,6 +444,19 @@ class DfeAdapter {
       return this.mockSefazResponse(formattedNsu)
     } catch (err) {
       console.error('[DFE-SEFAZ-ERR]', err.message)
+      if (
+        err.message &&
+        (err.message.includes('unable to get local issuer certificate') ||
+          err.message.includes('CERT_HAS_EXPIRED') ||
+          err.message.includes('UNABLE_TO_VERIFY_LEAF_SIGNATURE') ||
+          err.message.includes('self signed certificate'))
+      ) {
+        console.error(
+          '[DFE-TLS-DIAGNOSTIC] Falha no handshake TLS com a SEFAZ. ' +
+            'IMPORTANTE: NODE_TLS_REJECT_UNAUTHORIZED=0 JAMAIS deve ser usado (dados fiscais exigem validação estrita). ' +
+            'Verifique se a cadeia ICP-Brasil está completa em @nfewizard/shared/resources/certs e no icp-brasil-ca.pem.',
+        )
+      }
       throw err
     }
   }
@@ -473,3 +679,7 @@ class DfeAdapter {
 }
 
 module.exports = DfeAdapter
+module.exports.loadIcpBrasilCaBundle = loadIcpBrasilCaBundle
+module.exports.applyIcpBrasilTlsTrust = applyIcpBrasilTlsTrust
+module.exports.buildIcpBrasilCaFile = buildIcpBrasilCaFile
+module.exports.resolveIcpBrasilCertsDirs = resolveIcpBrasilCertsDirs

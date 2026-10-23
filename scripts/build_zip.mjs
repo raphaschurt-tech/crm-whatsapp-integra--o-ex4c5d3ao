@@ -3,6 +3,22 @@
 import fs from 'fs'
 import path from 'path'
 import zlib from 'zlib'
+import { createRequire } from 'module'
+
+const require = createRequire(import.meta.url)
+
+// Gerar icp-brasil-ca.pem se não existir ou a partir dos certs disponíveis
+try {
+  const dfeAdapter = require('../worker-dfe/dfeAdapter.js')
+  if (dfeAdapter && typeof dfeAdapter.buildIcpBrasilCaFile === 'function') {
+    dfeAdapter.buildIcpBrasilCaFile(path.resolve('worker-dfe/icp-brasil-ca.pem'))
+  }
+} catch (e) {
+  console.warn(
+    '[PREBUILD-CA-WARN] Não foi possível compilar icp-brasil-ca.pem no prebuild:',
+    e.message,
+  )
+}
 
 // CRC32 implementation
 const crcTable = new Uint32Array(256)
@@ -118,6 +134,7 @@ const allowedFiles = [
   'config.example.json',
   'crmClient.js',
   'dfeAdapter.js',
+  'icp-brasil-ca.pem',
   'index.js',
   'package.json',
   'README.md',
