@@ -16,13 +16,19 @@ const zlib = require('zlib')
 const tls = require('tls')
 const https = require('https')
 const crypto = require('crypto')
+let axios = null
+try {
+  axios = require('axios')
+} catch (_) {}
 const { XMLParser } = require('fast-xml-parser')
 
 /**
- * Cache global da cadeia ICP-Brasil em memória
+ * Cache global da cadeia de CAs em memória
  */
 let icpBrasilCertsCache = null
 let icpBrasilPemBundleCache = null
+let probeLearnedCertsCache = []
+let globalFullCaBundle = null
 
 /**
  * Lista embutida de CAs SEFAZ / SERPRO SSL oficiais (fallback de resiliência caso arquivos locais faltem)
@@ -46,6 +52,8 @@ const SEFAZ_SERPRO_SSL_CERTS = [
   `-----BEGIN CERTIFICATE-----\nMIIGoTCCBImgAwIBAgIBGzANBgkqhkiG9w0BAQ0FADCBkDELMAkGA1UEBhMCQlIx\nEzARBgNVBAoTCklDUC1CcmFzaWwxNDAyBgNVBAsTK0F1dG9yaWRhZGUgQ2VydGlm\naWNhZG9yYSBSYWl6IEJyYXNpbGVpcmEgdjIxNjA0BgNVBAMTLUFDIFNlY3JldGFy\naWEgZGEgUmVjZWl0YSBGZWRlcmFsIGRvIEJyYXNpbCB2MzAeFw0xNzA2MTkxOTA1\nMDhaFw0yMTEwMTAxOTA1MDhaMIGOMQswCQYDVQQGEwJCUjETMBEGA1UECgwKSUNQ\nLUJyYXNpbDE2MDQGA1UECwwtU2VjcmV0YXJpYSBkYSBSZWNlaXRhIEZlZGVyYWwg\nZG8gQnJhc2lsIC0gUkZCMTIwMAYDVQQDDClBdXRvcmlkYWRlIENlcnRpZmljYWRv\ncmEgZG8gU0VSUFJPUkZCIFNTTDCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoC\nggIBALGlN3qImQR5VCac9sdj1nrA9h7KXiyh58fmIYx+fF5Eo96urVKuRoYPxKB+\nIRqVSbSdhdmO+2b7qXK3N99p1/WuTHPl+m1tS8rOzwExR/d5l3W7dnnVDSWlt8Jy\n+zLnM+TX/jHtAfs5CPskidnBspCHP/6oVNwNNTwB+oOGxImsGafMGKhY92t8nSDW\nPZ+peNUegf0wR/ZRjbdvZSg57lxRym2lW2Cj4ZIwuT2/j9g41f7p6q35r2JdaPyl\nOHQ6JkZVMVKCQ61UFLWtN8cHjKynTmAFloDkCRFxrtKnIE12KpCVy8Hpd32SkU7T\n08Kgwq54t5/8sqJ5iqHpIFg/I/Un3viSmDRCzwMOwJzn7tLf04qKUWE2KQeOHSSA\nINctOx9aKQIHR1Vhpec0QbPzN4gqIsh+mQ3FJ+j6l6yfV2E3eiz5f58+kl/S88ul\nOOddsX9F+a+9Vg44IyObADNOtc+cnASSf3AOsow5USumb9Wp8qaHcRRzUl1lBPxQ\nbQQ8U/vhYrArnRKWEeJxktPGLA+Lfa2KEPYzWqmoNtiAfYD1O58YRCiRCAvnfIDA\ns55IWy90zo28G1A+GvaYZCgbVOBRyjJJmmoMK2eLETxjyG17Hr5TJSwe7A38gNff\nsOuVk095OuZmeQil/LqqUSds5pHhaUzZOpq6iVOlSE5nHfAtAgMBAAGjggEEMIIB\nADBXBgNVHSAEUDBOMEwGBmBMAQIBWzBCMEAGCCsGAQUFBwIBFjRodHRwOi8vd3d3\nLnJlY2VpdGEuZmF6ZW5kYS5nb3YuYnIvYWNyZmIvZHBjYWNyZmIucGRmMEQGA1Ud\nHwQ9MDswOaA3oDWGM2h0dHA6Ly93d3cucmVjZWl0YS5mYXplbmRhLmdvdi5ici9h\nY3JmYi9hY3JmYnYzLmNybDAfBgNVHSMEGDAWgBR1y7qQ0c5Mp5LwcbDLvrh7Mway\nKDAdBgNVHQ4EFgQUII0RXFXDAW+rVvGDzGipq8LatWMwDwYDVR0TAQH/BAUwAwEB\n/zAOBgNVHQ8BAf8EBAMCAQYwDQYJKoZIhvcNAQENBQADggIBAMCM7C1u8k+LDCPF\nVpJG6DGV7TuRaczA2oOJwuIktcGz3Q9yACGznhsDLMSF6DQxUUTePKJbQ2TXlOAL\ncL6afrUl02a6cFXt2cWylWRX0FfKiEFArhLcRayvQJt+BGeeVS6psABSPb4IHZ0u\nuQ0+YUt+tOcpeczIO+kDUPusFdH+Y9TTn4UZYChlaox8LqXp+wDizqVdrFZHShmw\n+9qOTEuTFMmHKqSsyJaOUoZuucXEdp8tuOjaT5OLm1mhiXIdwQg375eR2YmTWzHP\nXDs3R1kFY4rL5M791pn0LDOswZJuCrnPgrEoed4uMZ1hJBD4nN+UsjB7cUZqghwA\nrKOMT/SNi8L0GlUU1yQnwlQidUZMHZU1ZjEG8Y7igwe87BAdwc5Jy2YLJpS9qr0w\n2Xw3IfgHpjtxm0NAYQDL2dqzq14co7hg/GrWNVgnppW8QlFirVYCDAPGK2mpemXk\ns12/f6dZfHd9qAvDG9C8+ecnttRyFuUzIcl5PJT5qHmwtm8z2AItnRSNptgWii1t\nxG+rbSajzDk+BEA5ATOnQdqoQbU7lmFyWd42L73C0dN+aeqOC4UZk3drjOT7Govd\n0PCMMKm3q4NyGRRCuMyi8YIx//mJfekyZOXqibStxgoO9otsiZzVt6yJPXdgeSUb\nprH2k7cA+R0svaCxaLxlEu1xj8uO\n-----END CERTIFICATE-----`,
   // 9. AC RFB v3
   `-----BEGIN CERTIFICATE-----\nMIIGYDCCBEigAwIBAgIBCDANBgkqhkiG9w0BAQ0FADCBlzELMAkGA1UEBhMCQlIx\nEzARBgNVBAoTCklDUC1CcmFzaWwxPTA7BgNVBAsTNEluc3RpdHV0byBOYWNpb25h\nbCBkZSBUZWNub2xvZ2lhIGRhIEluZm9ybWFjYW8gLSBJVEkxNDAyBgNVBAMTK0F1\ndG9yaWRhZGUgQ2VydGlmaWNhZG9yYSBSYWl6IEJyYXNpbGVpcmEgdjIwHhcNMTEx\nMDIxMTIxNjI5WhcNMjExMDIxMTIxNjI5WjCBkDELMAkGA1UEBhMCQlIxEzARBgNV\nBAoTCklDUC1CcmFzaWwxNDAyBgNVBAsTK0F1dG9yaWRhZGUgQ2VydGlmaWNhZG9y\nYSBSYWl6IEJyYXNpbGVpcmEgdjIxNjA0BgNVBAMTLUFDIFNlY3JldGFyaWEgZGEg\nUmVjZWl0YSBGZWRlcmFsIGRvIEJyYXNpbCB2MzCCAiIwDQYJKoZIhvcNAQEBBQAD\nggIPADCCAgoCggIBAMFyHLTC/E6bRxhdNYhePQ9um1dASSkb6+2i8Ss0kfSEAm3K\nfmWDUxLpHaAKP2xR2NT8ju1Kpq6Mns1tZmso3VzcacHS3X5nagP/I+jwJIV+GftJ\nEp+iiPv1EkiF8hMksXk3vOaHPOA/TNpmmU/nyEB5jNSwEwwych2RTb0IvNr3bV62\noJecNNJIu+ws7Z4Rs9Wot0F13lCrVm0KRLHj2llcgu67ArTsFlkDhKNZbS3ohFuc\nGIlVlkIg/B0E2MjARjos21QJHaYcRmr2w9rF1uZkylUtbn4wYWsj5kt9BCthcjgK\nKl2oVZB9agIS0AgUcfaoia8tsl7F63l/aa2kQ9UcQewBbORR4TZPGJSKbItKylP8\n/EN86u3rPI7nsmJn6HuMVl53hhLKNupP7mtrUZHC3w2FBvD3/JNiKJaP08GFjLH6\nvEiaR2m9YhizvJUXnDL9yFbkRHU+1lDssdnVDRSNVQX1tK0IpeRAMTHz60e1yJq+\nSrGNypEOSlFdeD05xFzIjUbpKQe4Obml9wvBHF9FT2evGxknWOFxda0frZzl0UOK\n70++BSfe6BZ9UwHKXhyjOazPoXEzRK7w6fHYlGjY5XkQ6Y9qNCt6lu80zy6vAxQ/\nf1Y3w9b+ArawqyTVtb9AtcJsAxhtBf/9njiE1dSTYve5D5S94zNiIWtpDxzbAgMB\nAAGjgbswgbgwHQYDVR0OBBYEFHXLupDRzkynkvBxsMu+uHszBrIoMA8GA1UdEwEB\n/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMBQGA1UdIAQNMAswCQYFYEwBAQgwADA/\nBgNVHR8EODA2MDSgMqAwhi5odHRwOi8vYWNyYWl6LmljcGJyYXNpbC5nb3YuYnIv\nTENSYWNyYWl6djIuY3JsMB8GA1UdIwQYMBaAFAw5IDq3AR/L1yh9QaDH+kqtMiS+\nMA0GCSqGSIb3DQEBDQUAA4ICAQCJiamFONQFDtlBuOkqfglnGYufeillnVGeH6TW\np7yPEuH9Hfdq/1oN38aJmpvoWnno3GY5U/wKPokFAIizK2kASwvWSpu9hRD1kS5F\np4Qlqt1Zsm6bUOlcAD9wZylp7s1lebSj7XiO6epF4OSdeBtKl9OImeF8dhyqPnWb\nj2IrjxEzyrZ+U+Lb4bFcBI6Lp6r1NHyun+TWD3jbCkBRpJLQt7uO+5asMZYEO+L+\nfuexEb2Bb8difS4ujPpdMlctg4wm6NHTcB008C+cMkwDpeBvaWpMOZLvDvENDhQW\n4HBNHNDMdVoIsvvoxSVabrNxp02CATP0y9RubIgkmX40H+R8OXy8Cq3oipSm1t4v\n/Ihs4aCtoDLZue3Q12RgqHNaKcuwTNoK5BH5AfEYRE2LYxQ/JVrlf1hJAu0fUe2n\nhv42+i35AJVWpRrEmBk6GLejpJ/QAF1fRmdb0b1+lSLXgOfw3AzFW+e+8BdwCF/0\n6FPOvapilPMa+bsL7aabinBZ7a4Kc97cMHEW5gkQL0IL6yxYnzALHajvZrrLxwvp\nzW/os3P2ztINB12cYAkDKf5nmo2ymDHY34IUfi1hPA8EEPkhozhi5Or/W6qRABsH\niSxrSEeSKLy4V34hkShPjDtl2Ob/aU1/8A5g5BSGPBpfm/TQJc7g7MrF67lRDoAh\nDikamA==\n-----END CERTIFICATE-----`,
+  // 10. GlobalSign Root R46 (Raiz oficial da SEFAZ Nacional www1.nfe.fazenda.gov.br)
+  `-----BEGIN CERTIFICATE-----\nMIIFWjCCA0KgAwIBAgISEdK7udcjGJ5AXwqdLdDfJWfRMA0GCSqGSIb3DQEBDAUA\nMEYxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNhMRwwGgYD\nVQQDExNHbG9iYWxTaWduIFJvb3QgUjQ2MB4XDTE5MDMyMDAwMDAwMFoXDTQ2MDMy\nMDAwMDAwMFowRjELMAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYt\nc2ExHDAaBgNVBAMTE0dsb2JhbFNpZ24gUm9vdCBSNDYwggIiMA0GCSqGSIb3DQEB\nAQUAA4ICDwAwggIKAoICAQCsrHQy6LNl5brtQyYdpokNRbopiLKkHWPd08EsCVeJ\nOaFV6Wc0dwxu5FUdUiXSE2te4R2pt32JMl8Nnp8semNgQB+msLZ4j5lUlghYruQG\nvGIFAha/r6gjA7aUD7xubMLL1aa7DOn2wQL7Id5m3RerdELv8HQvJfTqa1VbkNud\n316HCkD7rRlr+/fKYIje2sGP1q7Vf9Q8g+7XFkyDRTNrJ9CG0Bwta/OrffGFqfUo\n0q3v84RLHIf8E6M6cqJaESvWJ3En7YEtbWaBkoe0G1h6zD8K+kZPTXhc+CtI4wSE\ny132tGqzZfxCnlEmIyDLPRT5ge1lFgBPGmSXZgjPjHvjK8Cd+RTyG/FWaha/LIWF\nzXg4mutCagI0GIMXTpRW+LaCtfOW3T3zvn8gdz57GSNrLNRyc0NXfeD412lPFzYE\n+cCQYDdF3uYM2HSNrpyibXRdQr4G9dlkbgIQrImwTDsHTUB+JMWKmIJ5jqSngiCN\nI/onccnfxkF0oE32kRbcRoxfKWMxWXEM2G/CtjJ9++ZdU6Z+Ffy7dXxd7Pj2Fxzs\nx2sZy/N78CsHpdlseVR2bJ0cpm4O6XkMqCNqo98bMDGfsVR7/mrLZqrcZdCinkqa\nByFrgY/bxFn63iLABJzjqls2k+g9vXqhnQt2sQvHnf3PmKgGwvgqo6GDoLclcqUC\n4wIDAQABo0IwQDAOBgNVHQ8BAf8EBAMCAYYwDwYDVR0TAQH/BAUwAwEB/zAdBgNV\nHQ4EFgQUA1yrc4GHqMywptWU4jaWSf8FmSwwDQYJKoZIhvcNAQEMBQADggIBAHx4\n7PYCLLtbfpIrXTncvtgdokIzTfnvpCo7RGkerNlFo048p9gkUbJUHJNOxO97k4Vg\nJuoJSOD1u8fpaNK7ajFxzHmuEajwmf3lH7wvqMxX63bEIaZHU1VNaL8FpO7XJqti\n2kM3S+LGteWygxk6x9PbTZ4IevPuzz5i+6zoYMzRx6Fcg0XERczzF2sUyQQCPtIk\npnnpHs6i58FZFZ8d4kuaPp92CC1r2LpXFNqD6v6MVenQTqnMdzGxRBF6XLE+0xRF\nFRhiJBPSy03OXIPBNvIQtQ6IbbjhVp+J3pZmOUdkLG5NrmJ7v2B0GbhWrJKsFjLt\nrWhV/pi60zTe9Mlhww6G9kuEYO4Ne7UyWHmRVSyBQ7N0H3qqJZ4d16GLuc1CLgSk\nZoNNiTW2bKg2SnkheCLQQrzRQDGQob4Ez8pn7fXwgNNgyYMqIgXQBztSvwyeqiv5\nu+YfjyW6hY0XHgL+XVAEV8/+LbzvXMAaq7afJMbfc2hIkCwU9D9SGuTSyxTDYWnP\n4vkYxboznxSjBF25cfe1lNj2M8FawTSLfJvdkzrnE6JwYZ+vj+vYxXX4M2bUdGc6\nN3ec592kD3ZDZopD8p/7DEJ4Y9HiD2971KE9dJeFt0g5QdYg/NA6s/rob8SKunE3\nvouXsXgxT7PntgMTzlSdriVZzH81Xwj3QEUxeCp6\n-----END CERTIFICATE-----`,
 ]
 
 /**
@@ -190,39 +198,79 @@ function loadIcpBrasilCaBundle() {
  * Injeta o bundle ICP-Brasil na confiança TLS global do processo Node.js
  * e configura https.globalAgent.options.ca
  */
+/**
+ * Constrói o bundle FULL definitivo:
+ * FULL = [...tls.rootCertificates, ...bundleICP, ...probeLearnedCerts]
+ */
+function getFullCaBundle() {
+  const { certs } = loadIcpBrasilCaBundle()
+  const rootCerts = (tls.rootCertificates || []).map((c) => Buffer.from(c))
+  const probeCerts = (probeLearnedCertsCache || []).map((c) =>
+    Buffer.isBuffer(c) ? c : Buffer.from(c),
+  )
+
+  // Unificar sem duplicar exatamente os mesmos buffers
+  const combined = [...rootCerts, ...certs, ...probeCerts]
+  globalFullCaBundle = combined
+  return combined
+}
+
+/**
+ * Injeta o bundle FULL em TODAS as vias do processo:
+ * (a) https.globalAgent.options.ca = FULL
+ * (b) axios.defaults.httpsAgent = new https.Agent({ keepAlive: true, ca: FULL })
+ * (c) Injeção em interceptors do axios se necessário
+ */
 function applyIcpBrasilTlsTrust() {
-  const { certs, count } = loadIcpBrasilCaBundle()
+  const { count } = loadIcpBrasilCaBundle()
+  const fullBundle = getFullCaBundle()
 
-  // Log diagnóstico OBRIGATÓRIO (Item 4 do FIX)
-  console.log(`[DFE-TLS] CAs ICP-Brasil carregados: ${count}`)
+  console.log(
+    `[DFE-TLS] CAs carregados: ${count} bundle + ${tls.rootCertificates ? tls.rootCertificates.length : 0} raízes Node + ${probeLearnedCertsCache.length} probe | Total FULL: ${fullBundle.length}`,
+  )
 
-  if (count > 0) {
-    try {
-      const rootCerts = (tls.rootCertificates || []).map((c) => Buffer.from(c))
-      const combinedBundle = [...rootCerts, ...certs]
-
-      // 1. Injetar no globalAgent padrão do https
-      if (!https.globalAgent.options) {
-        https.globalAgent.options = {}
-      }
-      https.globalAgent.options.ca = combinedBundle
-
-      // 2. Garantir que NODE_EXTRA_CA_CERTS seja apontado caso exista o pem
-      const pemPath = path.resolve(__dirname, 'icp-brasil-ca.pem')
-      if (fs.existsSync(pemPath) && !process.env.NODE_EXTRA_CA_CERTS) {
-        process.env.NODE_EXTRA_CA_CERTS = pemPath
-      }
-    } catch (e) {
-      console.warn(`[DFE-TLS-WARN] Falha ao configurar https.globalAgent.options.ca: ${e.message}`)
+  try {
+    // (a) https.globalAgent
+    if (!https.globalAgent.options) {
+      https.globalAgent.options = {}
     }
-  } else {
-    console.warn(
-      `[DFE-TLS-WARN] Nenhum certificado ICP-Brasil foi carregado de @nfewizard/shared/resources/certs. ` +
-        `Certifique-se de executar 'npm install' no worker.`,
-    )
+    https.globalAgent.options.ca = fullBundle
+
+    // (b) axios.defaults.httpsAgent (CRÍTICO: axios é o mesmo módulo raiz usado pela lib)
+    if (axios) {
+      const customAgent = new https.Agent({
+        keepAlive: true,
+        ca: fullBundle,
+      })
+      axios.defaults.httpsAgent = customAgent
+
+      // Adicionar request interceptor no axios como guard adicional
+      // Caso alguma requisição crie config sem httpsAgent ou com ca vazio
+      if (axios.interceptors && axios.interceptors.request) {
+        if (!axios.__dfeTlsInterceptorSet) {
+          axios.__dfeTlsInterceptorSet = true
+          axios.interceptors.request.use((reqConfig) => {
+            if (!reqConfig.httpsAgent) {
+              reqConfig.httpsAgent = customAgent
+            } else if (reqConfig.httpsAgent && reqConfig.httpsAgent.options) {
+              reqConfig.httpsAgent.options.ca = fullBundle
+            }
+            return reqConfig
+          })
+        }
+      }
+    }
+
+    // Garantir que NODE_EXTRA_CA_CERTS seja apontado caso exista o pem
+    const pemPath = path.resolve(__dirname, 'icp-brasil-ca.pem')
+    if (fs.existsSync(pemPath) && !process.env.NODE_EXTRA_CA_CERTS) {
+      process.env.NODE_EXTRA_CA_CERTS = pemPath
+    }
+  } catch (e) {
+    console.warn(`[DFE-TLS-WARN] Falha ao configurar https/axios trust: ${e.message}`)
   }
 
-  return { count, certs }
+  return { count, certs: fullBundle }
 }
 
 /**
@@ -381,9 +429,7 @@ class DfeAdapter {
           useForSchemaValidation: 'validateSchemaJsBased',
           connection: {
             timeout: 30000,
-            ...(count > 0 && {
-              ca: [...tls.rootCertificates.map((c) => Buffer.from(c)), ...certs],
-            }),
+            ca: certs,
           },
           log: { exibirLogNoConsole: true, armazenarLogs: false },
         },
@@ -393,16 +439,25 @@ class DfeAdapter {
         config: nfeConfig,
       })
 
-      // Reforço TLS: Se o environment instanciou um agent próprio (Environment.agent),
-      // garantir que as opções do agent recebam a cadeia completa ICP-Brasil
+      // Reforço TLS: Se o environment instanciou um agent próprio (Environment.agent ou HttpClient),
+      // garantir que as opções do agent recebam a cadeia FULL completa
       try {
         const env = wizard.environment || (wizard.getEnvironment && wizard.getEnvironment())
-        if (env && env.agent && env.agent.options) {
-          const rootCerts = (tls.rootCertificates || []).map((c) => Buffer.from(c))
-          env.agent.options.ca = [...rootCerts, ...certs]
+        if (env) {
+          if (env.agent && env.agent.options) {
+            env.agent.options.ca = certs
+          }
+          if (env.httpAgent && env.httpAgent.options) {
+            env.httpAgent.options.ca = certs
+          }
+          if (env.httpsAgent && env.httpsAgent.options) {
+            env.httpsAgent.options.ca = certs
+          }
+          if (env.client && env.client.defaults) {
+            env.client.defaults.httpsAgent = new https.Agent({ keepAlive: true, ca: certs })
+          }
         }
       } catch (_) {}
-
       this.wizardInstance = wizard
       this.isWizardLoaded = true
       this.mode = 'real'
@@ -743,23 +798,29 @@ function appendPemToBundle(pemString) {
   const trimmed = pemString.trim()
   if (!trimmed.includes('-----BEGIN CERTIFICATE-----')) return false
 
-  const { certs } = loadIcpBrasilCaBundle()
-  const exists = icpBrasilPemBundleCache && icpBrasilPemBundleCache.includes(trimmed)
-  if (!exists) {
-    icpBrasilCertsCache.push(Buffer.from(trimmed))
-    icpBrasilPemBundleCache += `\n\n${trimmed}`
-    try {
-      const rootCerts = (tls.rootCertificates || []).map((c) => Buffer.from(c))
-      if (!https.globalAgent.options) https.globalAgent.options = {}
-      https.globalAgent.options.ca = [...rootCerts, ...icpBrasilCertsCache]
-    } catch (_) {}
-    return true
+  loadIcpBrasilCaBundle()
+  const existsInIcp = icpBrasilPemBundleCache && icpBrasilPemBundleCache.includes(trimmed)
+  const buf = Buffer.from(trimmed)
+
+  if (!existsInIcp) {
+    if (icpBrasilCertsCache) icpBrasilCertsCache.push(buf)
+    if (icpBrasilPemBundleCache) icpBrasilPemBundleCache += `\n\n${trimmed}`
   }
-  return false
+
+  // Adicionar ao probeLearnedCertsCache se não estiver lá
+  const alreadyInProbe = probeLearnedCertsCache.some((c) => c.toString() === trimmed)
+  if (!alreadyInProbe) {
+    probeLearnedCertsCache.push(buf)
+  }
+
+  // Reaplicar confiança em todas as vias
+  applyIcpBrasilTlsTrust()
+  return true
 }
 
 module.exports = DfeAdapter
 module.exports.loadIcpBrasilCaBundle = loadIcpBrasilCaBundle
+module.exports.getFullCaBundle = getFullCaBundle
 module.exports.applyIcpBrasilTlsTrust = applyIcpBrasilTlsTrust
 module.exports.buildIcpBrasilCaFile = buildIcpBrasilCaFile
 module.exports.resolveIcpBrasilCertsDirs = resolveIcpBrasilCertsDirs

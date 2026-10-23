@@ -21,6 +21,11 @@ const fs = require('fs')
 const path = require('path')
 const cron = require('node-cron')
 const tls = require('tls')
+const crypto = require('crypto')
+let axios = null
+try {
+  axios = require('axios')
+} catch (_) {}
 const CrmClient = require('./crmClient')
 const DfeAdapter = require('./dfeAdapter')
 const { readCertInfo } = require('./certUtils')
@@ -87,6 +92,7 @@ async function probeSefazTlsChain() {
 
   return new Promise((resolve) => {
     console.log(`[DFE-TLS-PROBE] Iniciando probe TLS em ${host}:${port} com validação estrita...`)
+    const learnedPems = []
     const socket = tls.connect(
       {
         host,
@@ -109,18 +115,35 @@ async function probeSefazTlsChain() {
               const validTo = curr.valid_to || 'N/A'
               chain.push({ subjectCN, issuerCN, validTo })
 
-              // Se possuir raw PEM do intermediário e não for a folha, aprender dinamicamente
-              if (curr !== peerCert && curr.raw) {
-                const derBuf = Buffer.from(curr.raw)
-                const pemStr =
-                  `-----BEGIN CERTIFICATE-----\n` +
-                  derBuf
-                    .toString('base64')
-                    .match(/.{1,64}/g)
-                    .join('\n') +
-                  `\n-----END CERTIFICATE-----`
-                if (typeof appendPemToBundle === 'function') {
-                  appendPemToBundle(pemStr)
+              // Extrair certificado RAW de TODOS os níveis da cadeia (Item 1 do FIX)
+              // Converter DER para PEM com crypto.X509Certificate (com fallback base64 DER)
+              if (curr.raw) {
+                try {
+                  const derBuf = Buffer.from(curr.raw)
+                  let pemStr = ''
+                  try {
+                    const x509 = new crypto.X509Certificate(derBuf)
+                    pemStr = x509.toString().trim()
+                  } catch (_) {
+                    pemStr =
+                      `-----BEGIN CERTIFICATE-----\n` +
+                      derBuf
+                        .toString('base64')
+                        .match(/.{1,64}/g)
+                        .join('\n') +
+                      `\n-----END CERTIFICATE-----`
+                  }
+
+                  if (pemStr && pemStr.includes('-----BEGIN CERTIFICATE-----')) {
+                    learnedPems.push(pemStr)
+                    if (typeof appendPemToBundle === 'function') {
+                      appendPemToBundle(pemStr)
+                    }
+                  }
+                } catch (rawErr) {
+                  console.warn(
+                    `[DFE-TLS-CHAIN-WARN] Falha ao converter nível RAW DER: ${rawErr.message}`,
+                  )
                 }
               }
 
@@ -139,6 +162,33 @@ async function probeSefazTlsChain() {
                 `   [Level ${idx}] Subject: "${node.subjectCN}" | Issuer: "${node.issuerCN}" | Validade: ${node.validTo}`,
               )
             })
+
+            // Item 3 do FIX - PERSISTÊNCIA: Append da cadeia aprendida em icp-brasil-ca.pem
+            if (learnedPems.length > 0) {
+              try {
+                const caFilePath = path.resolve(__dirname, 'icp-brasil-ca.pem')
+                let existingContent = ''
+                if (fs.existsSync(caFilePath)) {
+                  existingContent = fs.readFileSync(caFilePath, 'utf8')
+                }
+                const toAppend = []
+                for (const pem of learnedPems) {
+                  if (!existingContent.includes(pem.trim())) {
+                    toAppend.push(pem.trim())
+                  }
+                }
+                if (toAppend.length > 0) {
+                  fs.appendFileSync(caFilePath, '\n\n' + toAppend.join('\n\n') + '\n', 'utf8')
+                  console.log(
+                    `[DFE-TLS-PERSIST] ${toAppend.length} certs da cadeia aprendida persistidos em icp-brasil-ca.pem.`,
+                  )
+                }
+              } catch (persistErr) {
+                console.warn(
+                  `[DFE-TLS-PERSIST-WARN] Falha ao persistir cadeia em icp-brasil-ca.pem: ${persistErr.message}`,
+                )
+              }
+            }
           } else {
             console.log(`[DFE-TLS-CHAIN] Conexão TLS estabelecida sem getPeerCertificate.`)
           }
@@ -167,6 +217,38 @@ async function probeSefazTlsChain() {
       resolve({ ok: false, error: 'TIMEOUT' })
     })
   })
+}
+
+/**
+ * PROBE HTTP DE FECHAMENTO (Item 5 do FIX):
+ * Após o probe TLS, realiza 1 request HTTPS via axios usando O MESMO defaults/agent que a lib vai usar.
+ * Loga [DFE-TLS-PROBE-HTTP] ok/erro com detalhes.
+ */
+async function probeSefazHttpViaAxios() {
+  const url = 'https://www1.nfe.fazenda.gov.br/'
+  if (!axios) {
+    console.log(`[DFE-TLS-PROBE-HTTP] axios não disponível no momento para probe HTTP.`)
+    return { ok: false, error: 'axios_not_found' }
+  }
+
+  try {
+    console.log(`[DFE-TLS-PROBE-HTTP] Testando requisição HTTPS via axios em ${url}...`)
+    // Timeout curto de 10s e accept de qualquer status HTTP (inclusive 200, 302, 403, 404, 405)
+    // O que prova o TLS é o handshake HTTPS sem erro de certificado!
+    const res = await axios.get(url, {
+      timeout: 10000,
+      validateStatus: () => true,
+    })
+    console.log(
+      `[DFE-TLS-PROBE-HTTP] ok | Status: ${res.status} | TLS Handshake HTTPS via axios validado com sucesso!`,
+    )
+    return { ok: true, status: res.status }
+  } catch (err) {
+    console.error(
+      `[DFE-TLS-PROBE-HTTP] erro | Falha no request HTTPS via axios: ${err.message} (${err.code || 'ERR'})`,
+    )
+    return { ok: false, error: err.message, code: err.code }
+  }
 }
 
 /**
@@ -563,10 +645,11 @@ function startWorker() {
   })
   console.log(`[INIT] Cron SEFAZ DFe agendado para rodar a cada hora (0 * * * *).`)
 
-  // 3. Execução imediata inicial de handshake e probe TLS (Item 3 do FIX)
+  // 3. Execução imediata inicial de handshake, probe TLS e probe HTTP (Itens 1, 2, 3 e 5 do FIX)
   setTimeout(async () => {
     try {
       await probeSefazTlsChain()
+      await probeSefazHttpViaAxios()
     } catch (_) {}
     runDfeCycle('startup')
   }, 3000)
