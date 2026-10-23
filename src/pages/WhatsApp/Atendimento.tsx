@@ -441,23 +441,46 @@ export default function WhatsAppAtendimento() {
       setCustomers((prev) => {
         if (data.length === 0) return prev
         // Preserva o nome do cliente anterior se a nova iteração veio temporariamente sem nome
+        // E PRESERVA as mensagens já carregadas de prev se oldCust tiver mais mensagens
+        // ou se newCust trouxer apenas o preview sintético de 1 mensagem (da carga via chat_summaries)
         return data.map((newCust) => {
           const oldCust = prev.find(
-            (p) => p.id === newCust.id || (p.rawPhone && p.rawPhone === newCust.rawPhone),
+            (p) =>
+              p.id === newCust.id ||
+              (p.summaryId && newCust.summaryId && p.summaryId === newCust.summaryId) ||
+              (p.canonicalPhone &&
+                newCust.canonicalPhone &&
+                p.canonicalPhone === newCust.canonicalPhone) ||
+              (p.rawPhone && p.rawPhone === newCust.rawPhone),
           )
+
+          let effectiveName = newCust.name
+          let effectiveCustomerId = newCust.customerId
+
           if (
             oldCust &&
             oldCust.name &&
             oldCust.name !== oldCust.phone &&
             (newCust.name === newCust.phone || !newCust.name)
           ) {
-            return {
-              ...newCust,
-              name: oldCust.name,
-              customerId: newCust.customerId || oldCust.customerId,
-            }
+            effectiveName = oldCust.name
+            effectiveCustomerId = newCust.customerId || oldCust.customerId
           }
-          return newCust
+
+          // Se a conversa anterior já tinha mensagens carregadas e a nova iteração tem menos mensagens
+          // OU a nova for apenas o preview sintético de 1 mensagem gerado por chat_summaries,
+          // preserva as mensagens reais já carregadas da conversa anterior.
+          const oldMsgsCount = oldCust?.messages?.length || 0
+          const newMsgsCount = newCust.messages?.length || 0
+          const shouldPreserveMessages =
+            oldCust && oldMsgsCount > 0 && (oldMsgsCount > newMsgsCount || newMsgsCount <= 1)
+
+          return {
+            ...newCust,
+            name: effectiveName,
+            customerId: effectiveCustomerId,
+            messages: shouldPreserveMessages ? oldCust.messages : newCust.messages,
+          }
         })
       })
 
