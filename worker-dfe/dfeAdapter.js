@@ -100,7 +100,10 @@ class DfeAdapter {
             versaoDF: '4.00',
           },
           lib: {
+            useOpenSSL: false,
             useForSchemaValidation: 'validateSchemaJsBased',
+            connection: { timeout: 30000 },
+            log: { exibirLogNoConsole: true, armazenarLogs: false },
           },
         },
       })
