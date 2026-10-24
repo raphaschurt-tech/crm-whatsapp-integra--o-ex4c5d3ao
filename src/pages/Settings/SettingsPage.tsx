@@ -20,7 +20,9 @@ import {
   ShieldCheck,
   Copy,
   Check,
+  Mail,
 } from 'lucide-react'
+import { ConnectorButton } from '@/components/skip/ConnectorButton'
 import { getSettings, saveSettings } from '@/services/settings'
 import { getProducts } from '@/services/products'
 import { Product } from '@/types/crm'
@@ -1592,8 +1594,8 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
             </div>
 
             {/* Lançamento Automático Canal Email */}
-            <div className="p-3.5 rounded-xl border border-blue-200 bg-blue-50/40 space-y-2">
-              <div className="flex items-center justify-between">
+            <div className="p-3.5 rounded-xl border border-blue-200 bg-blue-50/40 space-y-3">
+              <div className="flex items-center justify-between gap-4">
                 <div>
                   <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                     <FileText className="h-4 w-4 text-blue-600" />
@@ -1627,6 +1629,25 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                         : 'Lançamento Desativado (Fila de Revisão)'}
                     </span>
                   </label>
+                </div>
+              </div>
+
+              {/* Conexão com o Gmail */}
+              <div className="pt-2 border-t border-blue-200/60 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-slate-600" />
+                  <div>
+                    <span className="text-xs font-semibold text-slate-800">
+                      Conexão com a Caixa Postal (Gmail)
+                    </span>
+                    <p className="text-[11px] text-slate-500">
+                      Vincule a conta de email da empresa para o job buscar automaticamente os XMLs
+                      recebidos.
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <ConnectorButton toolkit="gmail" name="Gmail" />
                 </div>
               </div>
             </div>
