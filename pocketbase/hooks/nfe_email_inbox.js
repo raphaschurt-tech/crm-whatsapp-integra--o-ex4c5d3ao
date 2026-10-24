@@ -849,7 +849,7 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
         '[NFE-EMAIL-FETCH-UNSUCCESSFUL]',
         JSON.stringify({
           horarioBrasilia: horarioBrasilia,
-          error: fetchRes ? fetchRes.error : 'Resposta vazia do conector Gmail',
+          error: 'Falha ou resposta sem sucesso do conector Gmail em modo owner.',
         }),
       )
       return
@@ -1946,7 +1946,7 @@ routerAdd(
     if (!fetchRes || !fetchRes.successful) {
       return e.json(502, {
         success: false,
-        error: fetchRes ? fetchRes.error : 'Resposta inválida do conector Gmail',
+        error: 'Falha ou resposta sem sucesso do conector Gmail em modo owner.',
         horarioBrasilia: horarioBrasilia,
       })
     }
