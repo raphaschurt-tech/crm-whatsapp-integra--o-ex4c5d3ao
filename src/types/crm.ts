@@ -196,6 +196,8 @@ export interface Settings extends RecordModel {
   dfe_worker_token?: string
   dfe_token_active?: boolean
   dfe_retroactive_days_default?: number
+  dfe_auto_launch?: boolean
+  nfe_email_auto_launch?: boolean
 }
 
 export type MessageProcessingStatus = 'received' | 'processing' | 'completed' | 'failed'
@@ -301,7 +303,7 @@ export interface Order extends RecordModel {
 
 export type FinancialCategoryType = 'despesa' | 'receita'
 export type FinancialPaymentStatus = 'pendente' | 'pago' | 'cancelado'
-export type AccountsPayableOrigin = 'manual' | 'nfe' | 'recorrente'
+export type AccountsPayableOrigin = 'manual' | 'nfe' | 'recorrente' | 'dfe' | 'email'
 export type AccountsReceivableOrigin = 'manual' | 'orcamento' | 'recorrente'
 export type FinancialPaymentMethod =
   | 'PIX'

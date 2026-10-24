@@ -65,6 +65,7 @@ export default function SettingsPage() {
   // FASE 2 DFe: Certificado Digital A1 & Captura Automática (D7, D8, D9, CF-1c, G5)
   const [dfeEnabled, setDfeEnabled] = useState<boolean>(false)
   const [dfeAutoLaunch, setDfeAutoLaunch] = useState<boolean>(false)
+  const [nfeEmailAutoLaunch, setNfeEmailAutoLaunch] = useState<boolean>(true)
   const [dfePollInterval, setDfePollInterval] = useState<number>(1)
   const [dfeToken, setDfeToken] = useState<string>('')
   const [dfeTokenActive, setDfeTokenActive] = useState<boolean>(false)
@@ -168,6 +169,11 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         setStockPhase((s as any).stock_phase || 'souis_master')
         setDfeEnabled(!!(s as any).dfe_enabled)
         setDfeAutoLaunch(!!(s as any).dfe_auto_launch)
+        setNfeEmailAutoLaunch(
+          (s as any).nfe_email_auto_launch !== undefined
+            ? !!(s as any).nfe_email_auto_launch
+            : true,
+        )
         setDfePollInterval(Number((s as any).dfe_poll_interval_hours) || 1)
         setDfeToken((s as any).dfe_worker_token || '')
         setDfeTokenActive(!!(s as any).dfe_token_active)
@@ -286,6 +292,7 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         stock_phase: stockPhase,
         dfe_enabled: dfeEnabled,
         dfe_auto_launch: dfeAutoLaunch,
+        nfe_email_auto_launch: nfeEmailAutoLaunch,
         dfe_poll_interval_hours: Number(dfePollInterval) || 1,
       })
       toast({ title: 'Configurações salvas com sucesso!' })
@@ -1582,6 +1589,46 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                 (apenas se a SOU.IS mandar preço 0/vazio). Se a família não tiver margem definida,
                 nenhum preço é sugerido (Guard 6a). Preço sugerido nunca abaixo do custo (Guard 6b).
               </p>
+            </div>
+
+            {/* Lançamento Automático Canal Email */}
+            <div className="p-3.5 rounded-xl border border-blue-200 bg-blue-50/40 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <FileText className="h-4 w-4 text-blue-600" />
+                    <span>Lançamento Automático de NF-e recebida por Email (Gmail)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    Quando ativado, notas fiscais recebidas por email que passarem por todas as
+                    validações fiscais (chave 44 dígitos, destinatário empresa, remetente conhecido,
+                    autorizada cStat 100/150, CFOP compra direta e totais consistentes) são lançadas
+                    diretamente em Contas a Pagar. Com o lançamento desativado ou em caso de falha
+                    de validação, a nota segue para a Fila de Revisão.
+                  </p>
+                </div>
+                <div
+                  className={`flex items-center gap-2 border px-3 py-1.5 rounded-lg shrink-0 transition-colors ${
+                    nfeEmailAutoLaunch
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-amber-50/60 border-amber-200 text-amber-900'
+                  }`}
+                >
+                  <label className="text-xs font-semibold cursor-pointer flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={nfeEmailAutoLaunch}
+                      onChange={(e) => setNfeEmailAutoLaunch(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                    />
+                    <span>
+                      {nfeEmailAutoLaunch
+                        ? 'Lançamento Automático Ativo'
+                        : 'Lançamento Desativado (Fila de Revisão)'}
+                    </span>
+                  </label>
+                </div>
+              </div>
             </div>
 
             <div className="space-y-1.5">

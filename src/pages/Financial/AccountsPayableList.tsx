@@ -367,7 +367,9 @@ export function AccountsPayableList() {
             <SelectContent>
               <SelectItem value="todos">Todas Origens</SelectItem>
               <SelectItem value="manual">Manual</SelectItem>
-              <SelectItem value="nfe">NF-e</SelectItem>
+              <SelectItem value="nfe">NF-e (Geral)</SelectItem>
+              <SelectItem value="email">Email</SelectItem>
+              <SelectItem value="dfe">DF-e</SelectItem>
               <SelectItem value="recorrente">Recorrente</SelectItem>
             </SelectContent>
           </Select>
@@ -483,14 +485,24 @@ export function AccountsPayableList() {
 
                         {/* Origem e Badge NF-e com Chave */}
                         <td className="py-3 px-4 whitespace-nowrap">
-                          {isNfe ? (
+                          {isNfe || item.origin === 'dfe' || item.origin === 'email' ? (
                             <div className="flex flex-col gap-0.5">
                               <Badge
                                 variant="secondary"
-                                className="bg-blue-100 text-blue-800 hover:bg-blue-100 text-[10px] w-fit font-bold gap-1"
+                                className={`${
+                                  item.origin === 'email'
+                                    ? 'bg-sky-100 text-sky-800 hover:bg-sky-100'
+                                    : item.origin === 'dfe'
+                                      ? 'bg-indigo-100 text-indigo-800 hover:bg-indigo-100'
+                                      : 'bg-blue-100 text-blue-800 hover:bg-blue-100'
+                                } text-[10px] w-fit font-bold gap-1`}
                               >
                                 <Lock className="h-2.5 w-2.5" />
-                                NF-e
+                                {item.origin === 'email'
+                                  ? 'NF-e (Email)'
+                                  : item.origin === 'dfe'
+                                    ? 'NF-e (DF-e)'
+                                    : 'NF-e'}
                               </Badge>
                               {item.nfe_access_key && (
                                 <span

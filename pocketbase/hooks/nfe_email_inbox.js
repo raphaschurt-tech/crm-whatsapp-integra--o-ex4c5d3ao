@@ -1,8 +1,11 @@
 // pocketbase/hooks/nfe_email_inbox.js
 // Pipeline de Entrada de NF-e por Email (Gmail da empresa, modo OWNER)
-// Cron periódico a cada 15 minutos
+// Cron periódico a cada 15 minutos e Rota POST manual (/backend/v1/nfe/email-inbox/sync)
 // Regra permanente: Todos os registros e logs com horário de Brasília (UTC-3).
-// Regra da fase: TUDO para a Fila de Revisão (isException = true, nunca cria accounts_payable).
+// Regra de Lançamento:
+// - Flag nfe_email_auto_launch em settings controla o canal email (default = true).
+// - Quando ligada e passar em TODAS as validações: lança direto em Contas a Pagar (origem: 'email', 1 lançamento por parcela com vencimento de cada uma ou 1 na emissão se sem duplicatas) e alimenta pauta de preços/reconciliação de produtos.
+// - Quando desligada OU falhar em qualquer validação: encaminha para a Fila de Revisão com o motivo da exceção.
 // Todos os helpers e lógica são estritamente INLINE dentro de cada callback para compatibilidade com o VM pool do PocketBase.
 
 // 1. Cron Add: Executa a cada 15 minutos
@@ -114,6 +117,34 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
     const vNF = Number(extractXmlTag(icmsTotBlock, 'vNF') || 0)
     const vProd = Number(extractXmlTag(icmsTotBlock, 'vProd') || 0)
 
+    const cobrBlock = extractXmlTag(infNFeBlock, 'cobr')
+    const dupBlocks = extractAllXmlTags(cobrBlock, 'dup')
+    const installments = []
+
+    for (let i = 0; i < dupBlocks.length; i++) {
+      const dup = dupBlocks[i]
+      const nDup = extractXmlTag(dup, 'nDup') || String(i + 1)
+      const dVenc = extractXmlTag(dup, 'dVenc')
+      const vDup = Number(extractXmlTag(dup, 'vDup') || 0)
+      installments.push({
+        number: nDup,
+        installment_number: i + 1,
+        total_installments: dupBlocks.length,
+        due_date: dVenc,
+        amount: vDup,
+      })
+    }
+
+    if (installments.length === 0 && vNF > 0) {
+      installments.push({
+        number: '1',
+        installment_number: 1,
+        total_installments: 1,
+        due_date: dhEmi ? dhEmi.slice(0, 10) : getBrasiliaIsoDate().slice(0, 10),
+        amount: vNF,
+      })
+    }
+
     const detBlocks = extractAllXmlTags(infNFeBlock, 'det')
     const rawItems = []
 
@@ -168,6 +199,7 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
       xMotivo: xMotivo,
       totalAmount: vNF,
       itemsTotal: vProd,
+      installments: installments,
       items: rawItems,
     }
   }
@@ -245,6 +277,7 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
       }
     }
 
+    // Camada Anti-duplicação 1: Dedupe prévia por chave de acesso 44 dígitos
     let existingNfe = null
     try {
       existingNfe = $app.findFirstRecordByFilter('nfe_processed', 'access_key = {:k}', {
@@ -272,6 +305,7 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
       }
     }
 
+    // Identificação do fornecedor / remetente
     let senderKnown = false
     let supplierRec = null
 
@@ -328,15 +362,31 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
       }
     }
 
+    // Leitura das configurações (CNPJ da empresa, flag de auto launch do email, margens de famílias)
     let companyCnpj = ''
+    let nfeEmailAutoLaunchActive = true // Default LIGADO para o canal email
+    let familyMargins = {}
     try {
       const s = $app.findFirstRecordByFilter('settings', "id != ''")
       if (s) {
         companyCnpj = cleanDigits(s.getString('company_cnpj') || '')
+        // Se a coluna existir, respeita o valor dela; se não definida, default é true
+        const valFlag = s.get('nfe_email_auto_launch')
+        if (typeof valFlag === 'boolean') {
+          nfeEmailAutoLaunchActive = valFlag
+        }
+        try {
+          const rawM = s.get('family_margins')
+          if (typeof rawM === 'object' && rawM !== null) familyMargins = rawM
+          else if (typeof rawM === 'string' && rawM.trim()) familyMargins = JSON.parse(rawM)
+        } catch (_) {}
       }
     } catch (_) {}
 
+    // Validações fiscais rígidas
     const guardReasons = []
+
+    // 1. Guarda de cegueira e destinatário = CNPJ da empresa
     if (!companyCnpj || companyCnpj.length !== 14) {
       guardReasons.push(
         'GUARDA DE CEGUEIRA: CNPJ da empresa não configurado no painel de Configurações.',
@@ -347,28 +397,48 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
           (parsed.destCnpj || 'vazio') +
           ') não coincide com o CNPJ da empresa (' +
           companyCnpj +
-          ').',
+          '). Nota de terceiro encaminhada para revisão.',
       )
     }
 
-    if (!parsed.cStat || (parsed.cStat !== '100' && parsed.cStat !== '150')) {
+    // 2. Remetente conhecido do CRM (se desconhecido, segue para revisão com alerta)
+    if (!senderKnown) {
       guardReasons.push(
-        'NF-e não autorizada ou sem protocolo válido (cStat=' +
-          (parsed.cStat || 'ausente') +
+        'Remetente desconhecido: CNPJ (' +
+          (parsed.emitCnpj || 'vazio') +
+          ') ou email (' +
+          (senderEmail || 'vazio') +
+          ') não consta previamente como fornecedor/contato conhecido do CRM.',
+      )
+    }
+
+    // 3. Autorizada cStat 100 ou 150 com protocolo
+    if (!parsed.cStat || !parsed.nProt) {
+      guardReasons.push('NF-e sem protocolo de autorização (<protNFe> / <nProt> ausente).')
+    } else if (parsed.cStat !== '100' && parsed.cStat !== '150') {
+      guardReasons.push(
+        'NF-e não autorizada (cStat=' +
+          parsed.cStat +
           ' - ' +
-          (parsed.xMotivo || 'N/A') +
+          (parsed.xMotivo || 'Cancelada/Inutilizada/Denegada') +
           ').',
       )
     }
 
+    // 4. CFOP de compra direta (1102 ou 2102)
     for (let c = 0; c < parsed.items.length; c++) {
       const itCfop = String(parsed.items[c].cfop || '').trim()
       if (itCfop !== '1102' && itCfop !== '2102') {
-        guardReasons.push('CFOP não padrão para compra direta (' + itCfop + ').')
+        guardReasons.push(
+          'CFOP não padrão para compra direta (' +
+            itCfop +
+            '). Devolução, ajuste ou transferência requer revisão manual.',
+        )
         break
       }
     }
 
+    // 5. Totais batendo
     let sumItems = 0
     for (let s = 0; s < parsed.items.length; s++) {
       sumItems += parsed.items[s].vProd
@@ -376,19 +446,28 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
     const diff = Math.abs(sumItems - parsed.itemsTotal)
     if (diff > 0.05 && parsed.itemsTotal > 0) {
       guardReasons.push(
-        'Inconsistência de totais: soma ' +
+        'Inconsistência de totais: soma dos itens (' +
           sumItems.toFixed(2) +
-          ' != total ' +
+          ') difere do total de produtos da nota (' +
           parsed.itemsTotal.toFixed(2) +
-          '.',
+          ').',
       )
     }
 
-    // REGRA DA FASE: TUDO para Fila de Revisão, NUNCA cria accounts_payable
-    let exceptionReason =
-      'Entrada por email (Gmail): fase de validação — lançamento manual após revisão.'
+    // Decisão do destino:
+    // Se a flag nfe_email_auto_launch estiver DESLIGADA -> Fila de Revisão
+    // Se houver qualquer falha de validação -> Fila de Revisão com os motivos
+    // Se flag LIGADA e passou em TUDO -> Lança direto em Contas a Pagar
+    let isException = false
+    let exceptionReason = ''
+
     if (guardReasons.length > 0) {
-      exceptionReason = guardReasons.join(' | ') + ' | ' + exceptionReason
+      isException = true
+      exceptionReason = guardReasons.join(' | ')
+    } else if (!nfeEmailAutoLaunchActive) {
+      isException = true
+      exceptionReason =
+        'Lançamento automático de NF-e por email desativado (nfe_email_auto_launch = false).'
     }
 
     let emailTrail =
@@ -399,10 +478,8 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
       ' | Data do email: ' +
       (emailDate || brasiliaNow)
     if (!senderKnown) {
-      const alertMsg =
-        'ALERTA: Remetente não consta como fornecedor/contato conhecido do CRM — verifique a origem do XML.'
-      emailTrail += ' | ' + alertMsg
-      exceptionReason = alertMsg + ' | ' + exceptionReason
+      emailTrail +=
+        ' | ALERTA: Remetente não consta como fornecedor/contato conhecido do CRM — verifique a origem do XML.'
     }
 
     const aggregatedItems = aggregateRepetitiveItems(parsed.items)
@@ -429,36 +506,270 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
     nfeRec.set('raw_items', aggregatedItems)
     nfeRec.set('xml_payload', xmlContent)
     nfeRec.set('notes', emailTrail)
-    nfeRec.set('status', 'erro')
-    nfeRec.set('exception_reason', exceptionReason)
-    nfeRec.set('matched_items_count', 0)
-    nfeRec.set('pending_items_count', aggregatedItems.length)
-    nfeRec.set('souis_stock_status', 'nao_aplicavel')
+
+    if (isException) {
+      // Caminho de Exceção: Retida na Fila de Revisão
+      nfeRec.set('status', 'erro')
+      nfeRec.set('exception_reason', exceptionReason)
+      nfeRec.set('matched_items_count', 0)
+      nfeRec.set('pending_items_count', aggregatedItems.length)
+      nfeRec.set('souis_stock_status', 'nao_aplicavel')
+      $app.save(nfeRec)
+
+      const queueCol = $app.findCollectionByNameOrId('nfe_price_queue')
+      const qRec = new Record(queueCol)
+      qRec.set('nfe', nfeRec.id)
+      qRec.set('access_key', accessKey)
+      qRec.set('supplier_code', '')
+      qRec.set('description', 'Nota recebida por email retida em revisão: ' + exceptionReason)
+      qRec.set('status', 'pendente')
+      qRec.set('item_type', 'excecao')
+      qRec.set('resolution_notes', emailTrail)
+      $app.save(qRec)
+
+      console.log(
+        '[NFE-EMAIL-REVIEW-QUEUED]',
+        JSON.stringify({
+          horarioBrasilia: brasiliaNow,
+          accessKey: accessKey,
+          nfeNumber: parsed.nfeNumber,
+          totalAmount: parsed.totalAmount,
+          senderKnown: senderKnown,
+          senderEmail: senderEmail,
+          messageId: gmailMsgId,
+          nfeId: nfeRec.id,
+          reason: exceptionReason,
+        }),
+      )
+
+      return {
+        success: true,
+        access_key: accessKey,
+        nfe_number: parsed.nfeNumber,
+        nfe_id: nfeRec.id,
+        sender_known: senderKnown,
+        status: 'fila_revisao',
+        reason: exceptionReason,
+      }
+    }
+
+    // Caminho de Lançamento Automático Direto em Contas a Pagar (G1–G7, canal email)
+    let payablesCreated = 0
+    try {
+      const apCol = $app.findCollectionByNameOrId('accounts_payable')
+      let catNfeId = ''
+      try {
+        const catNfe = $app.findFirstRecordByFilter(
+          'financial_categories',
+          "name ~ 'Fornecedores' && type = 'despesa'",
+        )
+        if (catNfe) catNfeId = catNfe.id
+      } catch (_) {}
+
+      for (let p = 0; p < parsed.installments.length; p++) {
+        const inst = parsed.installments[p]
+        const apRec = new Record(apCol)
+        apRec.set(
+          'description',
+          'NF-e ' +
+            (parsed.nfeNumber ? '#' + parsed.nfeNumber : '') +
+            ' - ' +
+            (parsed.emitName || 'Fornecedor') +
+            ' (' +
+            inst.installment_number +
+            '/' +
+            inst.total_installments +
+            ')',
+        )
+        if (catNfeId) apRec.set('category', catNfeId)
+        if (supplierRec) apRec.set('supplier', supplierRec.id)
+        apRec.set('supplier_name', parsed.emitName || '')
+        apRec.set('amount', inst.amount)
+        apRec.set('due_date', inst.due_date ? inst.due_date.slice(0, 10) : brasiliaNow.slice(0, 10))
+        apRec.set('status', 'pendente')
+        apRec.set('origin', 'email')
+        apRec.set('nfe_access_key', accessKey)
+        apRec.set('nfe_record', nfeRec.id)
+        apRec.set('installment_number', inst.installment_number)
+        apRec.set('total_installments', inst.total_installments)
+        apRec.set('payment_method', 'boleto')
+        apRec.set(
+          'notes',
+          'Gerado automaticamente via NF-e recebida por email. Chave: ' +
+            accessKey +
+            ' | Remetente: ' +
+            (senderEmail || senderName || 'Desconhecido') +
+            ' | Assunto: ' +
+            (subject || 'Sem assunto') +
+            ' | Data do email: ' +
+            (emailDate || brasiliaNow) +
+            ' | Emissão NF: ' +
+            (parsed.dhEmi || 'N/A') +
+            ' | Registro: ' +
+            brasiliaNow,
+        )
+        $app.save(apRec)
+        payablesCreated++
+
+        console.log(
+          '[NFE-EMAIL-AUTO-LAUNCH]',
+          JSON.stringify({
+            accessKey: accessKey,
+            horarioBrasilia: brasiliaNow,
+            origem: 'email',
+            payableId: apRec.id,
+            parcela: inst.installment_number + '/' + inst.total_installments,
+            valor: inst.amount,
+            fornecedor: parsed.emitName,
+            fornecedorCnpj: parsed.emitCnpj,
+            vencimento: inst.due_date ? inst.due_date.slice(0, 10) : brasiliaNow.slice(0, 10),
+          }),
+        )
+      }
+    } catch (apErr) {
+      console.log('[NFE-EMAIL-PAYABLES-ERR]', String(apErr))
+    }
+
+    // Matching de itens em camadas e Pauta de Preços (igual WhatsApp / DF-e)
+    let matchedCount = 0
+    let pendingCount = 0
+    const queueCol = $app.findCollectionByNameOrId('nfe_price_queue')
+
+    for (let i = 0; i < aggregatedItems.length; i++) {
+      const item = aggregatedItems[i]
+      const supplierCode = String(item.cProd || '').trim()
+      const desc = String(item.xProd || '').trim()
+      let matchedProduct = null
+
+      // Camada 1: Aprendizado (nfe_product_mappings)
+      if (parsed.emitCnpj && supplierCode) {
+        try {
+          const learned = $app.findRecordsByFilter(
+            'nfe_product_mappings',
+            'supplier_cnpj = {:cnpj} && supplier_code = {:code}',
+            '-created',
+            1,
+            0,
+            { cnpj: parsed.emitCnpj, code: supplierCode },
+          )
+          if (learned && learned.length > 0) {
+            const prodId = learned[0].getString('product')
+            if (prodId) {
+              matchedProduct = $app.findRecordById('products', prodId)
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Camada 2: reduced_code exato
+      if (!matchedProduct && supplierCode) {
+        try {
+          const foundByReduced = $app.findRecordsByFilter(
+            'products',
+            'reduced_code = {:rcode} && is_active = true',
+            'created',
+            5,
+            0,
+            { rcode: supplierCode },
+          )
+          if (foundByReduced && foundByReduced.length === 1) {
+            matchedProduct = foundByReduced[0]
+          }
+        } catch (_) {}
+      }
+
+      if (matchedProduct) {
+        matchedCount++
+        const sku = matchedProduct.getString('sku')
+        const curProductPrice = Number(matchedProduct.get('price')) || 0
+        const curProductCost = Number(matchedProduct.get('cost')) || 0
+        const unitCost = Number(item.unit_cost) || 0
+        const familyName = matchedProduct.getString('sou_family') || ''
+
+        // Gravar CUSTO REAL no produto (log [STOCK-IN])
+        if (unitCost > 0) {
+          matchedProduct.set('cost', unitCost)
+          $app.save(matchedProduct)
+          console.log(
+            '[STOCK-IN]',
+            JSON.stringify({
+              sku: sku,
+              origem: 'email',
+              custoAnterior: curProductCost,
+              custoRealGravado: unitCost,
+              nfAccessKey: accessKey,
+              horarioBrasilia: brasiliaNow,
+            }),
+          )
+        }
+
+        const marginFactor = Number(familyMargins[familyName] || familyMargins['default'] || 0)
+        let suggestedPrice = 0
+        if (marginFactor > 0 && unitCost > 0) {
+          suggestedPrice = Number((unitCost * marginFactor).toFixed(2))
+          if (suggestedPrice < unitCost) suggestedPrice = unitCost
+        }
+
+        const isSouisPriceZero = curProductPrice <= 0
+
+        const qRec = new Record(queueCol)
+        qRec.set('nfe', nfeRec.id)
+        qRec.set('access_key', accessKey)
+        qRec.set('product', matchedProduct.id)
+        qRec.set('sku', sku)
+        qRec.set('supplier_code', supplierCode)
+        qRec.set('description', desc)
+        qRec.set('ncm', item.ncm || '')
+        qRec.set('quantity', item.qCom || 0)
+        qRec.set('unit_cost', unitCost)
+        qRec.set('suggested_sell_price', suggestedPrice)
+        qRec.set('family', familyName)
+        qRec.set('margin_factor', marginFactor)
+        qRec.set(
+          'price_source_payload',
+          isSouisPriceZero
+            ? 'SOU.IS view preco=0/vazio (elegível para lançamento de preço CRM)'
+            : 'SOU.IS tem preco existente: ' + curProductPrice,
+        )
+        qRec.set('status', 'pendente')
+        qRec.set('item_type', isSouisPriceZero ? 'preco_sugerido' : 'ajuste_preco_existente')
+        qRec.set('raw_item_data', item)
+        $app.save(qRec)
+      } else {
+        pendingCount++
+        const qRec = new Record(queueCol)
+        qRec.set('nfe', nfeRec.id)
+        qRec.set('access_key', accessKey)
+        qRec.set('supplier_code', supplierCode)
+        qRec.set('description', desc)
+        qRec.set('ncm', item.ncm || '')
+        qRec.set('quantity', item.qCom || 0)
+        qRec.set('unit_cost', item.unit_cost || 0)
+        qRec.set('suggested_sell_price', 0)
+        qRec.set('status', 'pendente')
+        qRec.set('item_type', 'reconciliacao_item')
+        qRec.set('raw_item_data', item)
+        $app.save(qRec)
+      }
+    }
+
+    nfeRec.set('matched_items_count', matchedCount)
+    nfeRec.set('pending_items_count', pendingCount)
+    nfeRec.set('status', pendingCount > 0 ? 'pendente_reconciliacao' : 'processada')
+    nfeRec.set('souis_stock_status', 'pendente')
     $app.save(nfeRec)
 
-    const queueCol = $app.findCollectionByNameOrId('nfe_price_queue')
-    const qRec = new Record(queueCol)
-    qRec.set('nfe', nfeRec.id)
-    qRec.set('access_key', accessKey)
-    qRec.set('supplier_code', '')
-    qRec.set('description', 'Nota recebida por email: ' + exceptionReason)
-    qRec.set('status', 'pendente')
-    qRec.set('item_type', 'excecao')
-    qRec.set('resolution_notes', emailTrail)
-    $app.save(qRec)
-
     console.log(
-      '[NFE-EMAIL-INGESTED]',
+      '[NFE-EMAIL-AUTO-LAUNCHED-SUCCESS]',
       JSON.stringify({
         horarioBrasilia: brasiliaNow,
         accessKey: accessKey,
         nfeNumber: parsed.nfeNumber,
         totalAmount: parsed.totalAmount,
-        senderKnown: senderKnown,
-        senderEmail: senderEmail,
-        messageId: gmailMsgId,
-        nfeId: nfeRec.id,
-        status: 'erro_fila_revisao',
+        payablesCreated: payablesCreated,
+        matchedItems: matchedCount,
+        pendingItems: pendingCount,
+        status: nfeRec.getString('status'),
       }),
     )
 
@@ -468,7 +779,8 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
       nfe_number: parsed.nfeNumber,
       nfe_id: nfeRec.id,
       sender_known: senderKnown,
-      status: 'fila_revisao',
+      status: nfeRec.getString('status'),
+      payables_count: payablesCreated,
     }
   }
 
@@ -938,6 +1250,34 @@ routerAdd(
       const vNF = Number(extractXmlTag(icmsTotBlock, 'vNF') || 0)
       const vProd = Number(extractXmlTag(icmsTotBlock, 'vProd') || 0)
 
+      const cobrBlock = extractXmlTag(infNFeBlock, 'cobr')
+      const dupBlocks = extractAllXmlTags(cobrBlock, 'dup')
+      const installments = []
+
+      for (let i = 0; i < dupBlocks.length; i++) {
+        const dup = dupBlocks[i]
+        const nDup = extractXmlTag(dup, 'nDup') || String(i + 1)
+        const dVenc = extractXmlTag(dup, 'dVenc')
+        const vDup = Number(extractXmlTag(dup, 'vDup') || 0)
+        installments.push({
+          number: nDup,
+          installment_number: i + 1,
+          total_installments: dupBlocks.length,
+          due_date: dVenc,
+          amount: vDup,
+        })
+      }
+
+      if (installments.length === 0 && vNF > 0) {
+        installments.push({
+          number: '1',
+          installment_number: 1,
+          total_installments: 1,
+          due_date: dhEmi ? dhEmi.slice(0, 10) : getBrasiliaIsoDate().slice(0, 10),
+          amount: vNF,
+        })
+      }
+
       const detBlocks = extractAllXmlTags(infNFeBlock, 'det')
       const rawItems = []
 
@@ -992,6 +1332,7 @@ routerAdd(
         xMotivo: xMotivo,
         totalAmount: vNF,
         itemsTotal: vProd,
+        installments: installments,
         items: rawItems,
       }
     }
@@ -1059,6 +1400,7 @@ routerAdd(
         }
       }
 
+      // Camada Anti-duplicação 1: Dedupe prévia por chave de acesso 44 dígitos
       let existingNfe = null
       try {
         existingNfe = $app.findFirstRecordByFilter('nfe_processed', 'access_key = {:k}', {
@@ -1076,6 +1418,7 @@ routerAdd(
         }
       }
 
+      // Identificação do fornecedor / remetente
       let senderKnown = false
       let supplierRec = null
 
@@ -1132,15 +1475,29 @@ routerAdd(
         }
       }
 
+      // Leitura de configurações
       let companyCnpj = ''
+      let nfeEmailAutoLaunchActive = true
+      let familyMargins = {}
       try {
         const s = $app.findFirstRecordByFilter('settings', "id != ''")
         if (s) {
           companyCnpj = cleanDigits(s.getString('company_cnpj') || '')
+          const valFlag = s.get('nfe_email_auto_launch')
+          if (typeof valFlag === 'boolean') {
+            nfeEmailAutoLaunchActive = valFlag
+          }
+          try {
+            const rawM = s.get('family_margins')
+            if (typeof rawM === 'object' && rawM !== null) familyMargins = rawM
+            else if (typeof rawM === 'string' && rawM.trim()) familyMargins = JSON.parse(rawM)
+          } catch (_) {}
         }
       } catch (_) {}
 
       const guardReasons = []
+
+      // 1. Destinatário = CNPJ da empresa
       if (!companyCnpj || companyCnpj.length !== 14) {
         guardReasons.push(
           'GUARDA DE CEGUEIRA: CNPJ da empresa não configurado no painel de Configurações.',
@@ -1151,28 +1508,48 @@ routerAdd(
             (parsed.destCnpj || 'vazio') +
             ') não coincide com o CNPJ da empresa (' +
             companyCnpj +
-            ').',
+            '). Nota de terceiro encaminhada para revisão.',
         )
       }
 
-      if (!parsed.cStat || (parsed.cStat !== '100' && parsed.cStat !== '150')) {
+      // 2. Remetente conhecido do CRM
+      if (!senderKnown) {
         guardReasons.push(
-          'NF-e não autorizada ou sem protocolo válido (cStat=' +
-            (parsed.cStat || 'ausente') +
+          'Remetente desconhecido: CNPJ (' +
+            (parsed.emitCnpj || 'vazio') +
+            ') ou email (' +
+            (senderEmail || 'vazio') +
+            ') não consta previamente como fornecedor/contato conhecido do CRM.',
+        )
+      }
+
+      // 3. Status autorizada
+      if (!parsed.cStat || !parsed.nProt) {
+        guardReasons.push('NF-e sem protocolo de autorização (<protNFe> / <nProt> ausente).')
+      } else if (parsed.cStat !== '100' && parsed.cStat !== '150') {
+        guardReasons.push(
+          'NF-e não autorizada (cStat=' +
+            parsed.cStat +
             ' - ' +
-            (parsed.xMotivo || 'N/A') +
+            (parsed.xMotivo || 'Cancelada/Inutilizada/Denegada') +
             ').',
         )
       }
 
+      // 4. CFOP compra direta
       for (let c = 0; c < parsed.items.length; c++) {
         const itCfop = String(parsed.items[c].cfop || '').trim()
         if (itCfop !== '1102' && itCfop !== '2102') {
-          guardReasons.push('CFOP não padrão para compra direta (' + itCfop + ').')
+          guardReasons.push(
+            'CFOP não padrão para compra direta (' +
+              itCfop +
+              '). Devolução, ajuste ou transferência requer revisão manual.',
+          )
           break
         }
       }
 
+      // 5. Totais batendo
       let sumItems = 0
       for (let s = 0; s < parsed.items.length; s++) {
         sumItems += parsed.items[s].vProd
@@ -1180,18 +1557,24 @@ routerAdd(
       const diff = Math.abs(sumItems - parsed.itemsTotal)
       if (diff > 0.05 && parsed.itemsTotal > 0) {
         guardReasons.push(
-          'Inconsistência de totais: soma ' +
+          'Inconsistência de totais: soma dos itens (' +
             sumItems.toFixed(2) +
-            ' != total ' +
+            ') difere do total de produtos da nota (' +
             parsed.itemsTotal.toFixed(2) +
-            '.',
+            ').',
         )
       }
 
-      let exceptionReason =
-        'Entrada por email (Gmail): fase de validação — lançamento manual após revisão.'
+      let isException = false
+      let exceptionReason = ''
+
       if (guardReasons.length > 0) {
-        exceptionReason = guardReasons.join(' | ') + ' | ' + exceptionReason
+        isException = true
+        exceptionReason = guardReasons.join(' | ')
+      } else if (!nfeEmailAutoLaunchActive) {
+        isException = true
+        exceptionReason =
+          'Lançamento automático de NF-e por email desativado (nfe_email_auto_launch = false).'
       }
 
       let emailTrail =
@@ -1202,10 +1585,8 @@ routerAdd(
         ' | Data do email: ' +
         (emailDate || brasiliaNow)
       if (!senderKnown) {
-        const alertMsg =
-          'ALERTA: Remetente não consta como fornecedor/contato conhecido do CRM — verifique a origem do XML.'
-        emailTrail += ' | ' + alertMsg
-        exceptionReason = alertMsg + ' | ' + exceptionReason
+        emailTrail +=
+          ' | ALERTA: Remetente não consta como fornecedor/contato conhecido do CRM — verifique a origem do XML.'
       }
 
       const aggregatedItems = aggregateRepetitiveItems(parsed.items)
@@ -1232,36 +1613,269 @@ routerAdd(
       nfeRec.set('raw_items', aggregatedItems)
       nfeRec.set('xml_payload', xmlContent)
       nfeRec.set('notes', emailTrail)
-      nfeRec.set('status', 'erro')
-      nfeRec.set('exception_reason', exceptionReason)
-      nfeRec.set('matched_items_count', 0)
-      nfeRec.set('pending_items_count', aggregatedItems.length)
-      nfeRec.set('souis_stock_status', 'nao_aplicavel')
+
+      if (isException) {
+        nfeRec.set('status', 'erro')
+        nfeRec.set('exception_reason', exceptionReason)
+        nfeRec.set('matched_items_count', 0)
+        nfeRec.set('pending_items_count', aggregatedItems.length)
+        nfeRec.set('souis_stock_status', 'nao_aplicavel')
+        $app.save(nfeRec)
+
+        const queueCol = $app.findCollectionByNameOrId('nfe_price_queue')
+        const qRec = new Record(queueCol)
+        qRec.set('nfe', nfeRec.id)
+        qRec.set('access_key', accessKey)
+        qRec.set('supplier_code', '')
+        qRec.set('description', 'Nota recebida por email retida em revisão: ' + exceptionReason)
+        qRec.set('status', 'pendente')
+        qRec.set('item_type', 'excecao')
+        qRec.set('resolution_notes', emailTrail)
+        $app.save(qRec)
+
+        console.log(
+          '[NFE-EMAIL-REVIEW-QUEUED]',
+          JSON.stringify({
+            horarioBrasilia: brasiliaNow,
+            accessKey: accessKey,
+            nfeNumber: parsed.nfeNumber,
+            totalAmount: parsed.totalAmount,
+            senderKnown: senderKnown,
+            senderEmail: senderEmail,
+            messageId: gmailMsgId,
+            nfeId: nfeRec.id,
+            reason: exceptionReason,
+          }),
+        )
+
+        return {
+          success: true,
+          access_key: accessKey,
+          nfe_number: parsed.nfeNumber,
+          nfe_id: nfeRec.id,
+          sender_known: senderKnown,
+          status: 'fila_revisao',
+          reason: exceptionReason,
+        }
+      }
+
+      // Lançamento Automático em Contas a Pagar
+      let payablesCreated = 0
+      try {
+        const apCol = $app.findCollectionByNameOrId('accounts_payable')
+        let catNfeId = ''
+        try {
+          const catNfe = $app.findFirstRecordByFilter(
+            'financial_categories',
+            "name ~ 'Fornecedores' && type = 'despesa'",
+          )
+          if (catNfe) catNfeId = catNfe.id
+        } catch (_) {}
+
+        for (let p = 0; p < parsed.installments.length; p++) {
+          const inst = parsed.installments[p]
+          const apRec = new Record(apCol)
+          apRec.set(
+            'description',
+            'NF-e ' +
+              (parsed.nfeNumber ? '#' + parsed.nfeNumber : '') +
+              ' - ' +
+              (parsed.emitName || 'Fornecedor') +
+              ' (' +
+              inst.installment_number +
+              '/' +
+              inst.total_installments +
+              ')',
+          )
+          if (catNfeId) apRec.set('category', catNfeId)
+          if (supplierRec) apRec.set('supplier', supplierRec.id)
+          apRec.set('supplier_name', parsed.emitName || '')
+          apRec.set('amount', inst.amount)
+          apRec.set(
+            'due_date',
+            inst.due_date ? inst.due_date.slice(0, 10) : brasiliaNow.slice(0, 10),
+          )
+          apRec.set('status', 'pendente')
+          apRec.set('origin', 'email')
+          apRec.set('nfe_access_key', accessKey)
+          apRec.set('nfe_record', nfeRec.id)
+          apRec.set('installment_number', inst.installment_number)
+          apRec.set('total_installments', inst.total_installments)
+          apRec.set('payment_method', 'boleto')
+          apRec.set(
+            'notes',
+            'Gerado automaticamente via NF-e recebida por email. Chave: ' +
+              accessKey +
+              ' | Remetente: ' +
+              (senderEmail || senderName || 'Desconhecido') +
+              ' | Assunto: ' +
+              (subject || 'Sem assunto') +
+              ' | Data do email: ' +
+              (emailDate || brasiliaNow) +
+              ' | Emissão NF: ' +
+              (parsed.dhEmi || 'N/A') +
+              ' | Registro: ' +
+              brasiliaNow,
+          )
+          $app.save(apRec)
+          payablesCreated++
+
+          console.log(
+            '[NFE-EMAIL-AUTO-LAUNCH]',
+            JSON.stringify({
+              accessKey: accessKey,
+              horarioBrasilia: brasiliaNow,
+              origem: 'email',
+              payableId: apRec.id,
+              parcela: inst.installment_number + '/' + inst.total_installments,
+              valor: inst.amount,
+              fornecedor: parsed.emitName,
+              fornecedorCnpj: parsed.emitCnpj,
+              vencimento: inst.due_date ? inst.due_date.slice(0, 10) : brasiliaNow.slice(0, 10),
+            }),
+          )
+        }
+      } catch (apErr) {
+        console.log('[NFE-EMAIL-PAYABLES-ERR]', String(apErr))
+      }
+
+      // Matching em Camadas e Pauta de Preços
+      let matchedCount = 0
+      let pendingCount = 0
+      const queueCol = $app.findCollectionByNameOrId('nfe_price_queue')
+
+      for (let i = 0; i < aggregatedItems.length; i++) {
+        const item = aggregatedItems[i]
+        const supplierCode = String(item.cProd || '').trim()
+        const desc = String(item.xProd || '').trim()
+        let matchedProduct = null
+
+        if (parsed.emitCnpj && supplierCode) {
+          try {
+            const learned = $app.findRecordsByFilter(
+              'nfe_product_mappings',
+              'supplier_cnpj = {:cnpj} && supplier_code = {:code}',
+              '-created',
+              1,
+              0,
+              { cnpj: parsed.emitCnpj, code: supplierCode },
+            )
+            if (learned && learned.length > 0) {
+              const prodId = learned[0].getString('product')
+              if (prodId) {
+                matchedProduct = $app.findRecordById('products', prodId)
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (!matchedProduct && supplierCode) {
+          try {
+            const foundByReduced = $app.findRecordsByFilter(
+              'products',
+              'reduced_code = {:rcode} && is_active = true',
+              'created',
+              5,
+              0,
+              { rcode: supplierCode },
+            )
+            if (foundByReduced && foundByReduced.length === 1) {
+              matchedProduct = foundByReduced[0]
+            }
+          } catch (_) {}
+        }
+
+        if (matchedProduct) {
+          matchedCount++
+          const sku = matchedProduct.getString('sku')
+          const curProductPrice = Number(matchedProduct.get('price')) || 0
+          const curProductCost = Number(matchedProduct.get('cost')) || 0
+          const unitCost = Number(item.unit_cost) || 0
+          const familyName = matchedProduct.getString('sou_family') || ''
+
+          if (unitCost > 0) {
+            matchedProduct.set('cost', unitCost)
+            $app.save(matchedProduct)
+            console.log(
+              '[STOCK-IN]',
+              JSON.stringify({
+                sku: sku,
+                origem: 'email',
+                custoAnterior: curProductCost,
+                custoRealGravado: unitCost,
+                nfAccessKey: accessKey,
+                horarioBrasilia: brasiliaNow,
+              }),
+            )
+          }
+
+          const marginFactor = Number(familyMargins[familyName] || familyMargins['default'] || 0)
+          let suggestedPrice = 0
+          if (marginFactor > 0 && unitCost > 0) {
+            suggestedPrice = Number((unitCost * marginFactor).toFixed(2))
+            if (suggestedPrice < unitCost) suggestedPrice = unitCost
+          }
+
+          const isSouisPriceZero = curProductPrice <= 0
+
+          const qRec = new Record(queueCol)
+          qRec.set('nfe', nfeRec.id)
+          qRec.set('access_key', accessKey)
+          qRec.set('product', matchedProduct.id)
+          qRec.set('sku', sku)
+          qRec.set('supplier_code', supplierCode)
+          qRec.set('description', desc)
+          qRec.set('ncm', item.ncm || '')
+          qRec.set('quantity', item.qCom || 0)
+          qRec.set('unit_cost', unitCost)
+          qRec.set('suggested_sell_price', suggestedPrice)
+          qRec.set('family', familyName)
+          qRec.set('margin_factor', marginFactor)
+          qRec.set(
+            'price_source_payload',
+            isSouisPriceZero
+              ? 'SOU.IS view preco=0/vazio (elegível para lançamento de preço CRM)'
+              : 'SOU.IS tem preco existente: ' + curProductPrice,
+          )
+          qRec.set('status', 'pendente')
+          qRec.set('item_type', isSouisPriceZero ? 'preco_sugerido' : 'ajuste_preco_existente')
+          qRec.set('raw_item_data', item)
+          $app.save(qRec)
+        } else {
+          pendingCount++
+          const qRec = new Record(queueCol)
+          qRec.set('nfe', nfeRec.id)
+          qRec.set('access_key', accessKey)
+          qRec.set('supplier_code', supplierCode)
+          qRec.set('description', desc)
+          qRec.set('ncm', item.ncm || '')
+          qRec.set('quantity', item.qCom || 0)
+          qRec.set('unit_cost', item.unit_cost || 0)
+          qRec.set('suggested_sell_price', 0)
+          qRec.set('status', 'pendente')
+          qRec.set('item_type', 'reconciliacao_item')
+          qRec.set('raw_item_data', item)
+          $app.save(qRec)
+        }
+      }
+
+      nfeRec.set('matched_items_count', matchedCount)
+      nfeRec.set('pending_items_count', pendingCount)
+      nfeRec.set('status', pendingCount > 0 ? 'pendente_reconciliacao' : 'processada')
+      nfeRec.set('souis_stock_status', 'pendente')
       $app.save(nfeRec)
 
-      const queueCol = $app.findCollectionByNameOrId('nfe_price_queue')
-      const qRec = new Record(queueCol)
-      qRec.set('nfe', nfeRec.id)
-      qRec.set('access_key', accessKey)
-      qRec.set('supplier_code', '')
-      qRec.set('description', 'Nota recebida por email: ' + exceptionReason)
-      qRec.set('status', 'pendente')
-      qRec.set('item_type', 'excecao')
-      qRec.set('resolution_notes', emailTrail)
-      $app.save(qRec)
-
       console.log(
-        '[NFE-EMAIL-INGESTED]',
+        '[NFE-EMAIL-AUTO-LAUNCHED-SUCCESS]',
         JSON.stringify({
           horarioBrasilia: brasiliaNow,
           accessKey: accessKey,
           nfeNumber: parsed.nfeNumber,
           totalAmount: parsed.totalAmount,
-          senderKnown: senderKnown,
-          senderEmail: senderEmail,
-          messageId: gmailMsgId,
-          nfeId: nfeRec.id,
-          status: 'erro_fila_revisao',
+          payablesCreated: payablesCreated,
+          matchedItems: matchedCount,
+          pendingItems: pendingCount,
+          status: nfeRec.getString('status'),
         }),
       )
 
@@ -1271,7 +1885,8 @@ routerAdd(
         nfe_number: parsed.nfeNumber,
         nfe_id: nfeRec.id,
         sender_known: senderKnown,
-        status: 'fila_revisao',
+        status: nfeRec.getString('status'),
+        payables_count: payablesCreated,
       }
     }
 
