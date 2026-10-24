@@ -426,7 +426,7 @@ export interface NfeProcessed extends RecordModel {
   dest_cnpj?: string
   c_stat?: string
   prot_nfe?: string
-  source_channel?: 'manual_upload' | 'whatsapp'
+  source_channel?: 'manual_upload' | 'whatsapp' | 'dfe' | 'email'
   souis_stock_status?: NfeSouisStockStatus
   souis_stock_launched_at?: string
   souis_stock_launched_by?: string
