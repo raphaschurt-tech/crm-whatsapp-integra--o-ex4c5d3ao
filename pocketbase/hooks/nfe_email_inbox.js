@@ -812,6 +812,105 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
     return xmls
   }
 
+  function decodeBase64ToUtf8(input) {
+    if (!input || typeof input !== 'string') return ''
+    let str = input.trim()
+    if (str.startsWith('data:')) {
+      const commaIdx = str.indexOf(',')
+      if (commaIdx !== -1) str = str.substring(commaIdx + 1).trim()
+    }
+    let cleanB64 = str
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+      .replace(/[\r\n\s]/g, '')
+    while (cleanB64.length % 4 !== 0) cleanB64 += '='
+
+    // Tentativa 1: Buffer se disponível no runtime
+    if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
+      try {
+        const buf = Buffer.from(cleanB64, 'base64')
+        const txt = buf.toString('utf-8')
+        if (txt) return txt
+      } catch (_) {}
+    }
+
+    // Tentativa 2: atob nativo se disponível
+    if (typeof atob === 'function') {
+      try {
+        const binary = atob(cleanB64)
+        if (typeof decodeURIComponent === 'function') {
+          try {
+            const bytesArr = []
+            for (let i = 0; i < binary.length; i++) {
+              const hex = binary.charCodeAt(i).toString(16)
+              bytesArr.push('%' + (hex.length === 1 ? '0' + hex : hex))
+            }
+            return decodeURIComponent(bytesArr.join(''))
+          } catch (_) {
+            return binary
+          }
+        }
+        return binary
+      } catch (_) {}
+    }
+
+    // Tentativa 3: Decodificador Base64 puro em JS compatível com Goja / ES5
+    try {
+      const b64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+      const stripped = cleanB64.replace(/=/g, '')
+      const len = stripped.length
+      const bytes = []
+      let i = 0
+      while (i < len) {
+        const c0 = b64Chars.indexOf(stripped.charAt(i++))
+        const c1 = i < len ? b64Chars.indexOf(stripped.charAt(i++)) : 0
+        const c2 = i < len ? b64Chars.indexOf(stripped.charAt(i++)) : -1
+        const c3 = i < len ? b64Chars.indexOf(stripped.charAt(i++)) : -1
+        if (c0 === -1 || c1 === -1) break
+        const b0 = (c0 << 2) | (c1 >> 4)
+        bytes.push(b0)
+        if (c2 !== -1) {
+          const b1 = ((c1 & 15) << 4) | (c2 >> 2)
+          bytes.push(b1)
+          if (c3 !== -1) {
+            const b2 = ((c2 & 3) << 6) | c3
+            bytes.push(b2)
+          }
+        }
+      }
+
+      // Decodificar bytes UTF-8 para string JS
+      let outStr = ''
+      let bIdx = 0
+      const totalBytes = bytes.length
+      while (bIdx < totalBytes) {
+        const b = bytes[bIdx++]
+        if (b < 128) {
+          outStr += String.fromCharCode(b)
+        } else if (b > 191 && b < 224 && bIdx < totalBytes) {
+          const b2 = bytes[bIdx++]
+          outStr += String.fromCharCode(((b & 31) << 6) | (b2 & 63))
+        } else if (b > 223 && b < 240 && bIdx + 1 < totalBytes) {
+          const b2 = bytes[bIdx++]
+          const b3 = bytes[bIdx++]
+          outStr += String.fromCharCode(((b & 15) << 12) | ((b2 & 63) << 6) | (b3 & 63))
+        } else if (b > 239 && b < 248 && bIdx + 2 < totalBytes) {
+          const b2 = bytes[bIdx++]
+          const b3 = bytes[bIdx++]
+          const b4 = bytes[bIdx++]
+          let codePoint = ((b & 7) << 18) | ((b2 & 63) << 12) | ((b3 & 63) << 6) | (b4 & 63)
+          codePoint -= 0x10000
+          outStr += String.fromCharCode(0xd800 + (codePoint >> 10), 0xdc00 + (codePoint & 0x3ff))
+        } else {
+          outStr += String.fromCharCode(b)
+        }
+      }
+      return outStr
+    } catch (_) {
+      return ''
+    }
+  }
+
   const horarioBrasilia = getBrasiliaIsoDate()
 
   try {
@@ -966,17 +1065,7 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
           if (fn.endsWith('.xml') || mime.includes('xml')) {
             if (bodyObj.data && typeof bodyObj.data === 'string') {
               try {
-                let cleanB64 = bodyObj.data.replace(/-/g, '+').replace(/_/g, '/')
-                while (cleanB64.length % 4 !== 0) cleanB64 += '='
-                const decodedBytes = $security.parseBase64(cleanB64)
-                let textContent = ''
-                if (decodedBytes && typeof decodedBytes.length === 'number') {
-                  try {
-                    textContent = String.fromCharCode.apply(null, decodedBytes)
-                  } catch (_) {
-                    textContent = ''
-                  }
-                }
+                const textContent = decodeBase64ToUtf8(bodyObj.data)
                 if (
                   textContent &&
                   (textContent.includes('<nfeProc') ||
@@ -995,7 +1084,6 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
               })
             }
           }
-
           if (part.parts) {
             searchParts(part.parts)
           }
@@ -1011,12 +1099,15 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
           if (fn.endsWith('.xml')) {
             if (att.content || att.data) {
               try {
-                let b64 = att.content || att.data
-                let cleanB64 = b64.replace(/-/g, '+').replace(/_/g, '/')
-                while (cleanB64.length % 4 !== 0) cleanB64 += '='
-                const decodedBytes = $security.parseBase64(cleanB64)
-                const textContent = String.fromCharCode.apply(null, decodedBytes)
-                if (textContent) xmlList.push(textContent)
+                const textContent = decodeBase64ToUtf8(att.content || att.data)
+                if (
+                  textContent &&
+                  (textContent.includes('<nfeProc') ||
+                    textContent.includes('<NFe') ||
+                    textContent.includes('<infNFe'))
+                ) {
+                  xmlList.push(textContent)
+                }
               } catch (_) {}
             } else if (att.attachment_id || att.id) {
               attachmentsToFetch.push({
@@ -1037,12 +1128,31 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
             file_name: attInfo.file_name,
           })
           if (attRes && attRes.successful && attRes.data) {
-            const rawAttData = attRes.data.data || attRes.data.content || attRes.data.file || ''
+            let rawAttData = ''
+            if (typeof attRes.data === 'string') {
+              rawAttData = attRes.data
+            } else if (attRes.data && typeof attRes.data === 'object') {
+              rawAttData =
+                attRes.data.data ||
+                attRes.data.content ||
+                attRes.data.file ||
+                attRes.data.body ||
+                (attRes.data.response &&
+                  (attRes.data.response.data || attRes.data.response.content)) ||
+                ''
+            }
             if (rawAttData) {
-              let cleanB64 = String(rawAttData).replace(/-/g, '+').replace(/_/g, '/')
-              while (cleanB64.length % 4 !== 0) cleanB64 += '='
-              const decodedBytes = $security.parseBase64(cleanB64)
-              const textContent = String.fromCharCode.apply(null, decodedBytes)
+              let textContent = ''
+              const rawStr = String(rawAttData).trim()
+              if (
+                rawStr.includes('<nfeProc') ||
+                rawStr.includes('<NFe') ||
+                rawStr.includes('<infNFe')
+              ) {
+                textContent = rawStr
+              } else {
+                textContent = decodeBase64ToUtf8(rawStr)
+              }
               if (
                 textContent &&
                 (textContent.includes('<nfeProc') ||
@@ -1057,7 +1167,6 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
           console.log('[NFE-EMAIL-ATTACH-FETCH-ERR]', String(attErr))
         }
       }
-
       const bodySnippet = msg.snippet || msg.body || msg.text || ''
       if (xmlList.length === 0 && bodySnippet) {
         const foundInBody = extractXmlsFromBody(bodySnippet)
@@ -1918,6 +2027,105 @@ routerAdd(
       return xmls
     }
 
+    function decodeBase64ToUtf8(input) {
+      if (!input || typeof input !== 'string') return ''
+      let str = input.trim()
+      if (str.startsWith('data:')) {
+        const commaIdx = str.indexOf(',')
+        if (commaIdx !== -1) str = str.substring(commaIdx + 1).trim()
+      }
+      let cleanB64 = str
+        .replace(/-/g, '+')
+        .replace(/_/g, '/')
+        .replace(/[\r\n\s]/g, '')
+      while (cleanB64.length % 4 !== 0) cleanB64 += '='
+
+      // Tentativa 1: Buffer se disponível no runtime
+      if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
+        try {
+          const buf = Buffer.from(cleanB64, 'base64')
+          const txt = buf.toString('utf-8')
+          if (txt) return txt
+        } catch (_) {}
+      }
+
+      // Tentativa 2: atob nativo se disponível
+      if (typeof atob === 'function') {
+        try {
+          const binary = atob(cleanB64)
+          if (typeof decodeURIComponent === 'function') {
+            try {
+              const bytesArr = []
+              for (let i = 0; i < binary.length; i++) {
+                const hex = binary.charCodeAt(i).toString(16)
+                bytesArr.push('%' + (hex.length === 1 ? '0' + hex : hex))
+              }
+              return decodeURIComponent(bytesArr.join(''))
+            } catch (_) {
+              return binary
+            }
+          }
+          return binary
+        } catch (_) {}
+      }
+
+      // Tentativa 3: Decodificador Base64 puro em JS compatível com Goja / ES5
+      try {
+        const b64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+        const stripped = cleanB64.replace(/=/g, '')
+        const len = stripped.length
+        const bytes = []
+        let i = 0
+        while (i < len) {
+          const c0 = b64Chars.indexOf(stripped.charAt(i++))
+          const c1 = i < len ? b64Chars.indexOf(stripped.charAt(i++)) : 0
+          const c2 = i < len ? b64Chars.indexOf(stripped.charAt(i++)) : -1
+          const c3 = i < len ? b64Chars.indexOf(stripped.charAt(i++)) : -1
+          if (c0 === -1 || c1 === -1) break
+          const b0 = (c0 << 2) | (c1 >> 4)
+          bytes.push(b0)
+          if (c2 !== -1) {
+            const b1 = ((c1 & 15) << 4) | (c2 >> 2)
+            bytes.push(b1)
+            if (c3 !== -1) {
+              const b2 = ((c2 & 3) << 6) | c3
+              bytes.push(b2)
+            }
+          }
+        }
+
+        // Decodificar bytes UTF-8 para string JS
+        let outStr = ''
+        let bIdx = 0
+        const totalBytes = bytes.length
+        while (bIdx < totalBytes) {
+          const b = bytes[bIdx++]
+          if (b < 128) {
+            outStr += String.fromCharCode(b)
+          } else if (b > 191 && b < 224 && bIdx < totalBytes) {
+            const b2 = bytes[bIdx++]
+            outStr += String.fromCharCode(((b & 31) << 6) | (b2 & 63))
+          } else if (b > 223 && b < 240 && bIdx + 1 < totalBytes) {
+            const b2 = bytes[bIdx++]
+            const b3 = bytes[bIdx++]
+            outStr += String.fromCharCode(((b & 15) << 12) | ((b2 & 63) << 6) | (b3 & 63))
+          } else if (b > 239 && b < 248 && bIdx + 2 < totalBytes) {
+            const b2 = bytes[bIdx++]
+            const b3 = bytes[bIdx++]
+            const b4 = bytes[bIdx++]
+            let codePoint = ((b & 7) << 18) | ((b2 & 63) << 12) | ((b3 & 63) << 6) | (b4 & 63)
+            codePoint -= 0x10000
+            outStr += String.fromCharCode(0xd800 + (codePoint >> 10), 0xdc00 + (codePoint & 0x3ff))
+          } else {
+            outStr += String.fromCharCode(b)
+          }
+        }
+        return outStr
+      } catch (_) {
+        return ''
+      }
+    }
+
     const horarioBrasilia = getBrasiliaIsoDate()
 
     if (typeof $connectors === 'undefined' || typeof $connectors.executeAsOwner !== 'function') {
@@ -2053,17 +2261,7 @@ routerAdd(
           if (fn.endsWith('.xml') || mime.includes('xml')) {
             if (bodyObj.data && typeof bodyObj.data === 'string') {
               try {
-                let cleanB64 = bodyObj.data.replace(/-/g, '+').replace(/_/g, '/')
-                while (cleanB64.length % 4 !== 0) cleanB64 += '='
-                const decodedBytes = $security.parseBase64(cleanB64)
-                let textContent = ''
-                if (decodedBytes && typeof decodedBytes.length === 'number') {
-                  try {
-                    textContent = String.fromCharCode.apply(null, decodedBytes)
-                  } catch (_) {
-                    textContent = ''
-                  }
-                }
+                const textContent = decodeBase64ToUtf8(bodyObj.data)
                 if (
                   textContent &&
                   (textContent.includes('<nfeProc') ||
@@ -2098,12 +2296,15 @@ routerAdd(
           if (fn.endsWith('.xml')) {
             if (att.content || att.data) {
               try {
-                let b64 = att.content || att.data
-                let cleanB64 = b64.replace(/-/g, '+').replace(/_/g, '/')
-                while (cleanB64.length % 4 !== 0) cleanB64 += '='
-                const decodedBytes = $security.parseBase64(cleanB64)
-                const textContent = String.fromCharCode.apply(null, decodedBytes)
-                if (textContent) xmlList.push(textContent)
+                const textContent = decodeBase64ToUtf8(att.content || att.data)
+                if (
+                  textContent &&
+                  (textContent.includes('<nfeProc') ||
+                    textContent.includes('<NFe') ||
+                    textContent.includes('<infNFe'))
+                ) {
+                  xmlList.push(textContent)
+                }
               } catch (_) {}
             } else if (att.attachment_id || att.id) {
               attachmentsToFetch.push({
@@ -2124,12 +2325,31 @@ routerAdd(
             file_name: attInfo.file_name,
           })
           if (attRes && attRes.successful && attRes.data) {
-            const rawAttData = attRes.data.data || attRes.data.content || attRes.data.file || ''
+            let rawAttData = ''
+            if (typeof attRes.data === 'string') {
+              rawAttData = attRes.data
+            } else if (attRes.data && typeof attRes.data === 'object') {
+              rawAttData =
+                attRes.data.data ||
+                attRes.data.content ||
+                attRes.data.file ||
+                attRes.data.body ||
+                (attRes.data.response &&
+                  (attRes.data.response.data || attRes.data.response.content)) ||
+                ''
+            }
             if (rawAttData) {
-              let cleanB64 = String(rawAttData).replace(/-/g, '+').replace(/_/g, '/')
-              while (cleanB64.length % 4 !== 0) cleanB64 += '='
-              const decodedBytes = $security.parseBase64(cleanB64)
-              const textContent = String.fromCharCode.apply(null, decodedBytes)
+              let textContent = ''
+              const rawStr = String(rawAttData).trim()
+              if (
+                rawStr.includes('<nfeProc') ||
+                rawStr.includes('<NFe') ||
+                rawStr.includes('<infNFe')
+              ) {
+                textContent = rawStr
+              } else {
+                textContent = decodeBase64ToUtf8(rawStr)
+              }
               if (
                 textContent &&
                 (textContent.includes('<nfeProc') ||
