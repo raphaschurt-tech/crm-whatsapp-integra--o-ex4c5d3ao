@@ -21,8 +21,8 @@ import {
   Copy,
   Check,
   Mail,
+  RefreshCw,
 } from 'lucide-react'
-import { ConnectorButton } from '@/components/skip/ConnectorButton'
 import { getSettings, saveSettings } from '@/services/settings'
 import { getProducts } from '@/services/products'
 import { Product } from '@/types/crm'
@@ -77,6 +77,16 @@ export default function SettingsPage() {
   const [copiedToken, setCopiedToken] = useState(false)
   const [dfeCapturedCount, setDfeCapturedCount] = useState<number>(0)
   const [dfePayablesCount, setDfePayablesCount] = useState<number>(0)
+
+  // Telemetria do Inbox de Email (Gmail Modo Owner)
+  const [emailInboxStats, setEmailInboxStats] = useState<{
+    totalEmails: number
+    lastPollAt?: string
+    lastSender?: string
+    lastSubject?: string
+    lastStatus?: string
+  } | null>(null)
+  const [syncingEmailInbox, setSyncingEmailInbox] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -181,18 +191,36 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         setDfeTokenActive(!!(s as any).dfe_token_active)
       }
 
-      // Carregar estado do ponteiro DFe para status do certificado (D7) e métricas
+      // Carregar estado do ponteiro DFe para status do certificado (D7) e métricas, e estatísticas do inbox de emails
       try {
-        const [ptrRec, histCountRes, payCountRes] = await Promise.all([
-          pb.collection('dfe_pointer_state').getList(1, 1, { sort: '-created' }),
-          pb.collection('dfe_history').getList(1, 1),
-          pb.collection('accounts_payable').getList(1, 1, { filter: "origin = 'dfe'" }),
-        ])
+        const [ptrRec, histCountRes, payCountRes, emailInboxRes, emailInboxTotal] =
+          await Promise.all([
+            pb.collection('dfe_pointer_state').getList(1, 1, { sort: '-created' }),
+            pb.collection('dfe_history').getList(1, 1),
+            pb.collection('accounts_payable').getList(1, 1, { filter: "origin = 'dfe'" }),
+            pb.collection('nfe_email_inbox').getList(1, 1, { sort: '-created' }),
+            pb.collection('nfe_email_inbox').getList(1, 1),
+          ])
         if (ptrRec.items.length > 0) {
           setDfePointer(ptrRec.items[0])
         }
         setDfeCapturedCount(histCountRes.totalItems || 0)
         setDfePayablesCount(payCountRes.totalItems || 0)
+
+        if (emailInboxRes.items.length > 0) {
+          const top = emailInboxRes.items[0]
+          setEmailInboxStats({
+            totalEmails: emailInboxTotal.totalItems || 0,
+            lastPollAt: (top as any).processed_at || top.created,
+            lastSender: (top as any).sender_name || (top as any).sender_email || '',
+            lastSubject: (top as any).subject || '',
+            lastStatus: (top as any).status || '',
+          })
+        } else {
+          setEmailInboxStats({
+            totalEmails: 0,
+          })
+        }
       } catch {
         /* intentionally ignored */
       }
@@ -389,6 +417,67 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         description: 'Selecione o texto e copie manualmente.',
         variant: 'destructive',
       })
+    }
+  }
+
+  const formatBrasiliaDateTime = (dateStr?: string) => {
+    if (!dateStr) return ''
+    try {
+      const d = new Date(dateStr)
+      if (isNaN(d.getTime())) return dateStr
+      return new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(d)
+    } catch {
+      return dateStr
+    }
+  }
+
+  const handleSyncEmailInbox = async () => {
+    setSyncingEmailInbox(true)
+    try {
+      const res = await pb.send<{
+        success: boolean
+        horarioBrasilia: string
+        messagesFound: number
+        messagesProcessed: number
+      }>('/backend/v1/nfe/email-inbox/sync', { method: 'POST' })
+
+      toast({
+        title: 'Verificação do Gmail concluída!',
+        description: `${res.messagesFound || 0} mensagem(ns) verificada(s), ${res.messagesProcessed || 0} processada(s).`,
+        className: 'bg-emerald-600 text-white',
+      })
+
+      // Atualiza os dados de telemetria
+      const [inboxRes, inboxTotal] = await Promise.all([
+        pb.collection('nfe_email_inbox').getList(1, 1, { sort: '-created' }),
+        pb.collection('nfe_email_inbox').getList(1, 1),
+      ])
+      if (inboxRes.items.length > 0) {
+        const top = inboxRes.items[0]
+        setEmailInboxStats({
+          totalEmails: inboxTotal.totalItems || 0,
+          lastPollAt: (top as any).processed_at || top.created,
+          lastSender: (top as any).sender_name || (top as any).sender_email || '',
+          lastSubject: (top as any).subject || '',
+          lastStatus: (top as any).status || '',
+        })
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      toast({
+        title: 'Erro ao verificar caixa postal',
+        description: msg,
+        variant: 'destructive',
+      })
+    } finally {
+      setSyncingEmailInbox(false)
     }
   }
 
@@ -1632,22 +1721,80 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                 </div>
               </div>
 
-              {/* Conexão com o Gmail */}
-              <div className="pt-2 border-t border-blue-200/60 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Mail className="h-4 w-4 text-slate-600" />
-                  <div>
-                    <span className="text-xs font-semibold text-slate-800">
-                      Conexão com a Caixa Postal (Gmail)
-                    </span>
-                    <p className="text-[11px] text-slate-500">
-                      Vincule a conta de email da empresa para o job buscar automaticamente os XMLs
-                      recebidos.
-                    </p>
+              {/* Conexão com o Gmail (Modo Owner Server-Side) */}
+              <div className="pt-2 border-t border-blue-200/60 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Mail className="h-4 w-4 text-blue-600" />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-800">
+                          Conexão com a Caixa Postal (Gmail)
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className="bg-emerald-50 text-emerald-700 border-emerald-300 text-[10px] font-medium gap-1 py-0 px-2"
+                        >
+                          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                          Gmail da empresa conectado ✓
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Conector autorizado em nível de servidor (Modo Owner). O job periódico
+                        consulta a caixa postal a cada 15 minutos.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSyncEmailInbox}
+                      disabled={syncingEmailInbox}
+                      className="h-8 text-xs font-medium border-blue-300 text-blue-700 hover:bg-blue-50 flex items-center gap-1.5"
+                    >
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 ${syncingEmailInbox ? 'animate-spin' : ''}`}
+                      />
+                      {syncingEmailInbox ? 'Verificando...' : 'Verificar agora'}
+                    </Button>
                   </div>
                 </div>
-                <div>
-                  <ConnectorButton toolkit="gmail" name="Gmail" />
+
+                {/* Telemetria do Job de Leitura de Emails */}
+                <div className="bg-white/80 rounded-lg border border-blue-100 p-2.5 flex flex-wrap items-center justify-between text-[11px] text-slate-600 gap-2">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5 text-blue-600" />
+                      <span>
+                        <strong>Frequência:</strong> A cada 15 min (job automático ativo)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>
+                        <strong>Emails auditados:</strong>{' '}
+                        {emailInboxStats
+                          ? `${emailInboxStats.totalEmails} analisados`
+                          : 'Carregando...'}
+                      </span>
+                    </div>
+
+                    {emailInboxStats?.lastPollAt && (
+                      <div className="flex items-center gap-1.5">
+                        <Activity className="h-3.5 w-3.5 text-slate-500" />
+                        <span>
+                          <strong>Última leitura:</strong>{' '}
+                          {formatBrasiliaDateTime(emailInboxStats.lastPollAt)} (horário de Brasília)
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="text-[10px] text-slate-400">Canal Email ativo e operacional</div>
                 </div>
               </div>
             </div>
