@@ -1,0 +1,5 @@
+{
+  "timestamp": "2026-10-24T18:35:00-03:00",
+  "reason": "Backup pré-correção de xml_payload e cadastro de fornecedor sem phone",
+  "scope": "nfe_email_inbox, nfe_processed, settings"
+}
