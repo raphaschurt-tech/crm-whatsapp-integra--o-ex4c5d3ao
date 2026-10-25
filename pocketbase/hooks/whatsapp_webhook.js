@@ -463,7 +463,24 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   let attachmentUrl = ''
   let attachmentType = '' // 'image' | 'video' | 'document'
   let attachmentName = ''
+  let attachmentMimeType = ''
   let mediaCaption = ''
+
+  // Função auxiliar para extrair mimeType de múltiplos formatos da Z-API
+  const extractMimeType = (obj) => {
+    if (!obj || typeof obj !== 'object') return ''
+    return String(
+      obj.mimeType || obj.mimetype || obj.mime_type || obj.contentType || obj['content-type'] || '',
+    ).trim()
+  }
+
+  // Função auxiliar para extrair fileName/title de múltiplos formatos da Z-API
+  const extractFileName = (obj) => {
+    if (!obj || typeof obj !== 'object') return ''
+    return String(
+      obj.fileName || obj.filename || obj.name || obj.title || obj.documentName || '',
+    ).trim()
+  }
 
   // 1. Imagem
   if (body.image) {
@@ -473,7 +490,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         body.image.imageUrl || body.image.url || body.image.fileUrl || body.image.link || '',
       )
       if (body.image.caption) mediaCaption = String(body.image.caption)
-      if (body.image.fileName) attachmentName = String(body.image.fileName)
+      attachmentName = extractFileName(body.image)
+      attachmentMimeType = extractMimeType(body.image)
     } else if (typeof body.image === 'string') {
       attachmentUrl = body.image
     }
@@ -484,7 +502,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
         body.imageMessage.imageUrl || body.imageMessage.url || body.imageMessage.fileUrl || '',
       )
       if (body.imageMessage.caption) mediaCaption = String(body.imageMessage.caption)
-      if (body.imageMessage.fileName) attachmentName = String(body.imageMessage.fileName)
+      attachmentName = extractFileName(body.imageMessage)
+      attachmentMimeType = extractMimeType(body.imageMessage)
     } else if (typeof body.imageMessage === 'string') {
       attachmentUrl = body.imageMessage
     }
@@ -503,7 +522,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
           body.video.videoUrl || body.video.url || body.video.fileUrl || body.video.link || '',
         )
         if (body.video.caption) mediaCaption = String(body.video.caption)
-        if (body.video.fileName) attachmentName = String(body.video.fileName)
+        attachmentName = extractFileName(body.video)
+        attachmentMimeType = extractMimeType(body.video)
       } else if (typeof body.video === 'string') {
         attachmentUrl = body.video
       }
@@ -514,7 +534,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
           body.videoMessage.videoUrl || body.videoMessage.url || body.videoMessage.fileUrl || '',
         )
         if (body.videoMessage.caption) mediaCaption = String(body.videoMessage.caption)
-        if (body.videoMessage.fileName) attachmentName = String(body.videoMessage.fileName)
+        attachmentName = extractFileName(body.videoMessage)
+        attachmentMimeType = extractMimeType(body.videoMessage)
       } else if (typeof body.videoMessage === 'string') {
         attachmentUrl = body.videoMessage
       }
@@ -538,7 +559,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             '',
         )
         if (body.document.caption) mediaCaption = String(body.document.caption)
-        if (body.document.fileName) attachmentName = String(body.document.fileName)
+        attachmentName = extractFileName(body.document)
+        attachmentMimeType = extractMimeType(body.document)
       } else if (typeof body.document === 'string') {
         attachmentUrl = body.document
       }
@@ -552,14 +574,16 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             '',
         )
         if (body.documentMessage.caption) mediaCaption = String(body.documentMessage.caption)
-        if (body.documentMessage.fileName) attachmentName = String(body.documentMessage.fileName)
+        attachmentName = extractFileName(body.documentMessage)
+        attachmentMimeType = extractMimeType(body.documentMessage)
       } else if (typeof body.documentMessage === 'string') {
         attachmentUrl = body.documentMessage
       }
     } else if (body.documentUrl) {
       attachmentType = 'document'
       attachmentUrl = String(body.documentUrl)
-      if (body.fileName) attachmentName = String(body.fileName)
+      attachmentName = extractFileName(body)
+      attachmentMimeType = extractMimeType(body)
       if (body.caption) mediaCaption = String(body.caption)
     }
   }
@@ -571,17 +595,20 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       attachmentType = 'image'
       attachmentUrl = String(body.fileUrl || body.mediaUrl || body.url || '')
       if (body.caption) mediaCaption = String(body.caption)
-      if (body.fileName) attachmentName = String(body.fileName)
+      attachmentName = extractFileName(body)
+      attachmentMimeType = extractMimeType(body)
     } else if (rawMediaType === 'video') {
       attachmentType = 'video'
       attachmentUrl = String(body.fileUrl || body.mediaUrl || body.url || '')
       if (body.caption) mediaCaption = String(body.caption)
-      if (body.fileName) attachmentName = String(body.fileName)
+      attachmentName = extractFileName(body)
+      attachmentMimeType = extractMimeType(body)
     } else if (rawMediaType === 'document') {
       attachmentType = 'document'
       attachmentUrl = String(body.fileUrl || body.mediaUrl || body.url || '')
       if (body.caption) mediaCaption = String(body.caption)
-      if (body.fileName) attachmentName = String(body.fileName)
+      attachmentName = extractFileName(body)
+      attachmentMimeType = extractMimeType(body)
     }
   }
 
@@ -598,7 +625,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             '',
         )
         if (dataMsg.imageMessage.caption) mediaCaption = String(dataMsg.imageMessage.caption)
-        if (dataMsg.imageMessage.fileName) attachmentName = String(dataMsg.imageMessage.fileName)
+        attachmentName = extractFileName(dataMsg.imageMessage)
+        attachmentMimeType = extractMimeType(dataMsg.imageMessage)
       } else if (typeof dataMsg.imageMessage === 'string') {
         attachmentUrl = dataMsg.imageMessage
       }
@@ -612,7 +640,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             '',
         )
         if (dataMsg.videoMessage.caption) mediaCaption = String(dataMsg.videoMessage.caption)
-        if (dataMsg.videoMessage.fileName) attachmentName = String(dataMsg.videoMessage.fileName)
+        attachmentName = extractFileName(dataMsg.videoMessage)
+        attachmentMimeType = extractMimeType(dataMsg.videoMessage)
       } else if (typeof dataMsg.videoMessage === 'string') {
         attachmentUrl = dataMsg.videoMessage
       }
@@ -626,19 +655,45 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             '',
         )
         if (dataMsg.documentMessage.caption) mediaCaption = String(dataMsg.documentMessage.caption)
-        if (dataMsg.documentMessage.fileName)
-          attachmentName = String(dataMsg.documentMessage.fileName)
+        attachmentName = extractFileName(dataMsg.documentMessage)
+        attachmentMimeType = extractMimeType(dataMsg.documentMessage)
       } else if (typeof dataMsg.documentMessage === 'string') {
         attachmentUrl = dataMsg.documentMessage
       }
     }
   }
 
+  // Fallbacks de mimeType e fileName na raiz do body ou data se ainda vazios
+  if (!attachmentMimeType) {
+    attachmentMimeType =
+      extractMimeType(body) ||
+      (body.data && typeof body.data === 'object' ? extractMimeType(body.data) : '')
+  }
+  if (!attachmentName) {
+    attachmentName =
+      extractFileName(body) ||
+      (body.data && typeof body.data === 'object' ? extractFileName(body.data) : '')
+  }
+
+  // Se mimeType indicar documento ou pdf, garantir attachmentType = 'document'
+  if (
+    attachmentMimeType &&
+    (attachmentMimeType.toLowerCase().includes('pdf') ||
+      attachmentMimeType.toLowerCase().includes('document') ||
+      attachmentMimeType.toLowerCase().includes('xml'))
+  ) {
+    if (!attachmentType) attachmentType = 'document'
+  }
+
   // Definir nome padrão amigável caso não tenha vindo fileName
   if (attachmentUrl && !attachmentName) {
     if (attachmentType === 'image') attachmentName = 'Imagem'
     else if (attachmentType === 'video') attachmentName = 'Vídeo'
-    else if (attachmentType === 'document') attachmentName = 'Documento'
+    else if (attachmentType === 'document') {
+      attachmentName = attachmentMimeType.toLowerCase().includes('pdf')
+        ? 'documento.pdf'
+        : 'Documento'
+    }
   }
 
   // Extrair texto da mensagem (caso venha preenchido ou seja mensagem de texto)
@@ -686,11 +741,13 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   )
 
   const isPdfFile = Boolean(
+    (attachmentMimeType && attachmentMimeType.toLowerCase().includes('application/pdf')) ||
     (attachmentName && /\.pdf$/i.test(attachmentName.trim())) ||
     (attachmentUrl && /\.pdf(\?|$)/i.test(attachmentUrl.trim())) ||
     (attachmentType === 'document' &&
       (attachmentName.toLowerCase().includes('.pdf') ||
-        (attachmentUrl && attachmentUrl.toLowerCase().includes('.pdf')))),
+        (attachmentUrl && attachmentUrl.toLowerCase().includes('.pdf')) ||
+        (attachmentMimeType && attachmentMimeType.toLowerCase().includes('pdf')))),
   )
 
   if (isXmlFile && !isFromMe) {
@@ -766,13 +823,25 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
 
   // DESVIO DE PDF NO WHATSAPP (S3 - DANFE EM PDF NÃO VIRA CONVERSA/LEAD)
   if (isPdfFile && !isFromMe && attachmentUrl) {
+    const brasiliaIsoPdf = (() => {
+      try {
+        const d = new Date()
+        const spTime = new Date(d.getTime() - 3 * 3600 * 1000)
+        return spTime.toISOString().replace('Z', '-03:00')
+      } catch (_) {
+        return new Date().toISOString()
+      }
+    })()
+
     console.log(
       '[NFE-WHATSAPP-PDF-DETECTED]',
       JSON.stringify({
-        timestamp: new Date().toISOString(),
+        timestampBrasilia: brasiliaIsoPdf,
         messageId: messageId,
         senderPhone: maskedSenderPhone,
         attachmentName: attachmentName,
+        fileName: attachmentName,
+        mimeType: attachmentMimeType,
         attachmentUrl: attachmentUrl,
         action:
           'Desviado para pipeline DANFE PDF (S3). Sem conversa de atendimento, sem badge, sem IA.',

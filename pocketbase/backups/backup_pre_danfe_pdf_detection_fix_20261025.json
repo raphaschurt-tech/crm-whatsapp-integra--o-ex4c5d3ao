@@ -1,0 +1,7 @@
+{
+  "timestamp": "2026-10-25T15:35:00-03:00",
+  "reason": "Âncora 🟡 BACKUP PRIMEIRO antes do ajuste na detecção de DANFE em PDF no desvio S3 do webhook WhatsApp (pocketbase/hooks/whatsapp_webhook.js)",
+  "file_backed_up": "pocketbase/hooks/whatsapp_webhook.js",
+  "backup_file": "pocketbase/backups/whatsapp_webhook_original.js",
+  "task": "Ajustar detecção de DANFE em PDF no desvio S3 para usar mimeType (application/pdf) e campos de nome de arquivo corretos da Z-API, com log diagnóstico"
+}

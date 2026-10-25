@@ -400,24 +400,52 @@ const isXmlPredicate = (name: string, url: string, type: string, text: string) =
     (text && (text.includes('<nfeProc') || text.includes('<NFe') || text.includes('<infNFe'))),
   )
 }
-const isPdfPredicate = (name: string, url: string, type: string) => {
+const isPdfPredicate = (name: string, url: string, type: string, mimeType: string = '') => {
   return Boolean(
+    (mimeType && mimeType.toLowerCase().includes('application/pdf')) ||
     (name && /\.pdf$/i.test(name.trim())) ||
     (url && /\.pdf(\?|$)/i.test(url.trim())) ||
     (type === 'document' &&
-      (name.toLowerCase().includes('.pdf') || (url && url.toLowerCase().includes('.pdf')))),
+      (name.toLowerCase().includes('.pdf') ||
+        (url && url.toLowerCase().includes('.pdf')) ||
+        (mimeType && mimeType.toLowerCase().includes('pdf')))),
   )
 }
 
 check('XML é interceptado pelo desvio S3', isXmlPredicate('nfe_123.xml', '', 'document', ''), true)
 check(
-  'DANFE em PDF é interceptado pelo desvio S3 sem criar lead/atendimento',
+  'DANFE em PDF com extensão .pdf é interceptado pelo desvio S3 sem criar lead/atendimento',
   isPdfPredicate('1792786743708.pdf', 'https://f004.backblazeb2.com/file/temp.pdf', 'document'),
   true,
 )
 check(
+  'DANFE em PDF SEM .pdf no nome/URL mas com mimeType application/pdf é interceptado pelo desvio S3',
+  isPdfPredicate(
+    'DANFE_SEM_EXTENSAO',
+    'https://storage.z-api.io/files/download/abc123xyz',
+    'document',
+    'application/pdf',
+  ),
+  true,
+)
+check(
+  'DANFE em PDF recebido como documento da Z-API com title e contentType application/pdf é interceptado',
+  isPdfPredicate('DANFE', 'https://storage.z-api.io/d/123', 'document', 'application/pdf'),
+  true,
+)
+check(
   'Mensagem normal de texto NÃO é interceptada por S3',
-  isPdfPredicate('', '', 'text') || isXmlPredicate('', '', 'text', 'Olá bom dia'),
+  isPdfPredicate('', '', 'text', '') || isXmlPredicate('', '', 'text', 'Olá bom dia'),
+  false,
+)
+check(
+  'Documento não-PDF (ex: planilha XLSX) NÃO é interceptado como PDF',
+  isPdfPredicate(
+    'relatorio.xlsx',
+    'https://exemplo.com/relatorio.xlsx',
+    'document',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ),
   false,
 )
 
