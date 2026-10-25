@@ -1,0 +1,190 @@
+{
+  "backup_timestamp": "2026-10-24T23:55:00-03:00",
+  "reason": "Âncora BACKUP PRIMEIRO antes do fix de varredura msg.attachmentList no hook nfe_email_inbox.js",
+  "collections": {
+    "settings": [
+      {
+        "id": "ks86suaa4vn5xd4",
+        "company_cnpj": "00496593000129",
+        "dfe_enabled": true,
+        "dfe_auto_launch": true,
+        "nfe_email_auto_launch": true,
+        "stock_phase": "souis_master",
+        "whatsapp_number": "5511947861439"
+      }
+    ],
+    "dfe_pointer_state": [
+      {
+        "id": "1cz9gy9g3s8f2tx",
+        "ult_nsu": "000000000000002",
+        "max_nsu": "000000000000002",
+        "worker_status": "online",
+        "cert_cnpj": "00496593000129"
+      }
+    ],
+    "accounts_payable_sample": [
+      {
+        "id": "gnq7r00j3ctm48q",
+        "description": "Renovação do Certificado A1 (Anual) - 2026-10 [A CONFERIR]",
+        "amount": 200,
+        "origin": "recorrente"
+      }
+    ],
+    "nfe_email_inbox": [
+      {
+        "id": "ut98ezsuwsr8bps",
+        "gmail_message_id": "1a1704b26d141d89",
+        "gmail_thread_id": "1a1704b26d141d89",
+        "sender_email": "rpaimportadora@gmail.com",
+        "sender_known": false,
+        "sender_name": "Rpa Importadora",
+        "subject": "Fwd: AVISO DE FATURAMENTO OXILAPA LTDA 59417469000173",
+        "email_date": "Sat, 24 Oct 2026 20:42:03 -0300",
+        "status": "sem_xml",
+        "xml_count": 0,
+        "xml_keys": [],
+        "processed_at": "2026-10-24T20:45:00.317-03:00"
+      },
+      {
+        "id": "qj2pxsv39st60hu",
+        "gmail_message_id": "1a0587804267b214",
+        "sender_email": "nfe-auto@prefeitura.sp.gov.br",
+        "subject": "Nota Fiscal de Serviços Eletrônica - NFS-e No. 8539",
+        "status": "sem_xml"
+      },
+      {
+        "id": "kima8jd8tny1v18",
+        "gmail_message_id": "1a05eb4b0541b128",
+        "sender_email": "noreply@omie.com.br",
+        "subject": "DIXI VEXT COMERCIO DE EQUIPAMENTOS ELETRONICOS E SISTEMAS LTDA - NFS-e + Boleto Nº 8681",
+        "status": "sem_xml"
+      },
+      {
+        "id": "78l8kiu0exghjum",
+        "gmail_message_id": "1a066db5b3077aa1",
+        "sender_email": "agatha@genesecontabil.com.br",
+        "subject": "RPA - GUIA ISS AGOSTO",
+        "status": "sem_xml"
+      },
+      {
+        "id": "78o4ifuuveudtcj",
+        "gmail_message_id": "1a0682d69e0d2e82",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 001187872 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "pldqtfatzqpgw71",
+        "gmail_message_id": "1a082b544661767c",
+        "sender_email": "mayarafinanceiro.dpa@bol.com.br",
+        "subject": "FECHAMENTO",
+        "status": "sem_xml"
+      },
+      {
+        "id": "2oyt5z98r80t9x0",
+        "gmail_message_id": "1a086a4da379bb41",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 001188173 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "7pjj23abswr24xs",
+        "gmail_message_id": "1a0913ac58b4cce6",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 000500432 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "bi5abwbpevc7kcz",
+        "gmail_message_id": "1a091814e55788b4",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 000500503 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "zhobbnr20065hbx",
+        "gmail_message_id": "1a0a5c85bc7b34cd",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 000501369 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "8upif1mc74lb3ll",
+        "gmail_message_id": "1a0b488d9994c0e0",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 000502498 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "ei4mayarlbeftm1",
+        "gmail_message_id": "1a0cf02811e93b12",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 000503935 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "ym9kguhvdg3lha3",
+        "gmail_message_id": "1a0d9d1375fbe027",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 000504820 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "4cs5f6s3oak3pm4",
+        "gmail_message_id": "1a0f34600901b2c9",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 000506038 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "2vi3evv9428lyln",
+        "gmail_message_id": "1a0f8068ab25a560",
+        "sender_email": "noreply@omie.com.br",
+        "subject": "DIXI VEXT COMERCIO DE EQUIPAMENTOS ELETRONICOS E SISTEMAS LTDA - NFS-e + Boleto Nº 17386",
+        "status": "sem_xml"
+      },
+      {
+        "id": "0f7e15bs43c1f9u",
+        "gmail_message_id": "1a10c0cbfa761dd2",
+        "sender_email": "contato_jahu@jahu.com.br",
+        "subject": "Envio da NF-e - N.Doc 000506904 - Série 1",
+        "status": "sem_xml"
+      },
+      {
+        "id": "49skwcbmszer0pd",
+        "gmail_message_id": "1a120d0907d4f081",
+        "sender_email": "agatha@genesecontabil.com.br",
+        "subject": "RPA - GUIA ISS SETEMBRO",
+        "status": "sem_xml"
+      },
+      {
+        "id": "2z6bhrmkfhb09gg",
+        "gmail_message_id": "1a121ad3a30a98e8",
+        "sender_email": "mayarafinanceiro.dpa@bol.com.br",
+        "subject": "FECHAMENTO 09/26",
+        "status": "sem_xml"
+      },
+      {
+        "id": "7spn9w6p35d7ek3",
+        "gmail_message_id": "1a15ab9b8db0e410",
+        "sender_email": "nfe@meclan.com.br",
+        "subject": "Nota Fiscal Eletrônica (NF-e) n. 056184",
+        "status": "sem_xml"
+      },
+      {
+        "id": "qi9nzr911fe9pq6",
+        "gmail_message_id": "1a15ab9de87f32c3",
+        "sender_email": "nfe@meclan.com.br",
+        "subject": "Boletos referentes à Nota Fiscal 56184.",
+        "status": "sem_xml"
+      },
+      {
+        "id": "vimud5ma7poum1r",
+        "gmail_message_id": "1a15e7abcc4e2fe6",
+        "sender_email": "financeirorpa159@gmail.com",
+        "subject": "Fwd: Boletos referentes à Nota Fiscal 56184.",
+        "status": "sem_xml"
+      }
+    ]
+  }
+}
