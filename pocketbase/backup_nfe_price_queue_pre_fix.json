@@ -1,0 +1,92 @@
+[
+  {
+    "id": "gt7sj8gbe1q4pkf",
+    "access_key": "35260961136701000732550010005005031273283880",
+    "status": "pendente",
+    "item_type": "excecao",
+    "description": "Nota recebida por email retida em revisão: Remetente desconhecido: CNPJ (61136701000732) ou email (contato_jahu@jahu.com.br) não consta previamente como fornecedor/contato conhecido do CRM. | CFOP não...",
+    "resolution_notes": "Origem: email | De: contato_jahu@jahu.com.br | Assunto: Envio da NF-e - N.Doc 000500503 - Série 1 | Data do email: Fri, 11 Sep 2026 17:26:04 +0000 (UTC) | ALERTA: Remetente não consta como fornecedor/...",
+    "created": "2026-10-25 00:14:15.819Z",
+    "nfe": "rtapx3ebecxhy2q"
+  },
+  {
+    "id": "py0i0uhvc6nv7e5",
+    "access_key": "35260961136701000732550010005013691913994109",
+    "status": "pendente",
+    "item_type": "excecao",
+    "description": "Nota recebida por email retida em revisão: Remetente desconhecido: CNPJ (61136701000732) ou email (contato_jahu@jahu.com.br) não consta previamente como fornecedor/contato conhecido do CRM. | CFOP não...",
+    "resolution_notes": "Origem: email | De: contato_jahu@jahu.com.br | Assunto: Envio da NF-e - N.Doc 000501369 - Série 1 | Data do email: Tue, 15 Sep 2026 15:56:05 +0000 (UTC) | ALERTA: Remetente não consta como fornecedor/...",
+    "created": "2026-10-25 00:14:14.572Z",
+    "nfe": "tlt49yectg75vz8"
+  },
+  {
+    "id": "uktzm6k3itrhcqj",
+    "access_key": "35260961136701000732550010005024981994937196",
+    "status": "pendente",
+    "item_type": "excecao",
+    "description": "Nota recebida por email retida em revisão: Remetente desconhecido: CNPJ (61136701000732) ou email (contato_jahu@jahu.com.br) não consta previamente como fornecedor/contato conhecido do CRM. | CFOP não...",
+    "resolution_notes": "Origem: email | De: contato_jahu@jahu.com.br | Assunto: Envio da NF-e - N.Doc 000502498 - Série 1 | Data do email: Fri, 18 Sep 2026 12:41:01 +0000 (UTC) | ALERTA: Remetente não consta como fornecedor/...",
+    "created": "2026-10-25 00:14:13.147Z",
+    "nfe": "ov287alofj9ur8w"
+  },
+  {
+    "id": "bwkil7bwkxeqe67",
+    "access_key": "35260961136701000732550010005039351330899154",
+    "status": "pendente",
+    "item_type": "excecao",
+    "description": "Nota recebida por email retida em revisão: Remetente desconhecido: CNPJ (61136701000732) ou email (contato_jahu@jahu.com.br) não consta previamente como fornecedor/contato conhecido do CRM. | CFOP não...",
+    "resolution_notes": "Origem: email | De: contato_jahu@jahu.com.br | Assunto: Envio da NF-e - N.Doc 000503935 - Série 1 | Data do email: Wed, 23 Sep 2026 16:04:01 +0000 (UTC) | ALERTA: Remetente não consta como fornecedor/...",
+    "created": "2026-10-25 00:14:11.457Z",
+    "nfe": "rz48lfeb8bxu6df"
+  },
+  {
+    "id": "loa2gernzqdpn68",
+    "access_key": "35260961136701000732550010005048201698057487",
+    "status": "pendente",
+    "item_type": "excecao",
+    "description": "Nota recebida por email retida em revisão: Remetente desconhecido: CNPJ (61136701000732) ou email (contato_jahu@jahu.com.br) não consta previamente como fornecedor/contato conhecido do CRM. | CFOP não...",
+    "resolution_notes": "Origem: email | De: contato_jahu@jahu.com.br | Assunto: Envio da NF-e - N.Doc 000504820 - Série 1 | Data do email: Fri, 25 Sep 2026 18:26:01 +0000 (UTC) | ALERTA: Remetente não consta como fornecedor/...",
+    "created": "2026-10-25 00:14:10.329Z",
+    "nfe": "ln006j8iz9ckfsi"
+  },
+  {
+    "id": "ml59ww3v83ed5q0",
+    "access_key": "35260961136701000732550010005060381548219210",
+    "status": "pendente",
+    "item_type": "excecao",
+    "description": "Nota recebida por email retida em revisão: Remetente desconhecido: CNPJ (61136701000732) ou email (contato_jahu@jahu.com.br) não consta previamente como fornecedor/contato conhecido do CRM. | CFOP não...",
+    "resolution_notes": "Origem: email | De: contato_jahu@jahu.com.br | Assunto: Envio da NF-e - N.Doc 000506038 - Série 1 | Data do email: Wed, 30 Sep 2026 17:04:03 +0000 (UTC) | ALERTA: Remetente não consta como fornecedor/...",
+    "created": "2026-10-25 00:14:09.193Z",
+    "nfe": "x0b7ra2qcjnvkao"
+  },
+  {
+    "id": "5zn110pq1nyetah",
+    "access_key": "35261061136701000732550010005069041294114447",
+    "status": "pendente",
+    "item_type": "excecao",
+    "description": "Nota recebida por email retida em revisão: Remetente desconhecido: CNPJ (61136701000732) ou email (contato_jahu@jahu.com.br) não consta previamente como fornecedor/contato conhecido do CRM. | CFOP não...",
+    "resolution_notes": "Origem: email | De: contato_jahu@jahu.com.br | Assunto: Envio da NF-e - N.Doc 000506904 - Série 1 | Data do email: Mon, 05 Oct 2026 12:32:03 +0000 (UTC) | ALERTA: Remetente não consta como fornecedor/...",
+    "created": "2026-10-25 00:14:06.645Z",
+    "nfe": "8msde32i4ikvc7s"
+  },
+  {
+    "id": "2sv6kgyyzhbdhpe",
+    "access_key": "35261062538228000197550010000561841438996935",
+    "status": "pendente",
+    "item_type": "excecao",
+    "description": "Nota recebida por email retida em revisão: Remetente desconhecido: CNPJ (62538228000197) ou email (nfe@meclan.com.br) não consta previamente como fornecedor/contato conhecido do CRM. | CFOP não padrão...",
+    "resolution_notes": "Origem: email | De: nfe@meclan.com.br | Assunto: Nota Fiscal Eletrônica (NF-e) n. 056184 | Data do email: Tue, 20 Oct 2026 16:11:26 -0300 | ALERTA: Remetente não consta como fornecedor/contato conheci…",
+    "created": "2026-10-25 00:14:05.506Z",
+    "nfe": "ew5zra4irx76j2s"
+  },
+  {
+    "id": "0j2zejjtd78qfvw",
+    "access_key": "35261059417469000173550010000329431406428669",
+    "status": "pendente",
+    "item_type": "excecao",
+    "description": "Nota recebida por email retida em revisão: Remetente desconhecido: CNPJ (59417469000173) ou email (rpaimportadora@gmail.com) não consta previamente como fornecedor/contato conhecido do CRM. | CFOP não...",
+    "resolution_notes": "Origem: email | De: rpaimportadora@gmail.com | Assunto: Fwd: AVISO DE FATURAMENTO OXILAPA LTDA 59417469000173 | Data do email: Sat, 24 Oct 2026 20:42:03 -0300 | ALERTA: Remetente não consta como forne…",
+    "created": "2026-10-25 00:14:04.319Z",
+    "nfe": "qadkg9bsflizk9t"
+  }
+]

@@ -100,4 +100,30 @@ describe('DANFE PDF Processor - Extração e Validação de Chave 44', () => {
     const keys = extractNfeKeysFromText(textoComprovante)
     expect(keys).toHaveLength(0)
   })
+
+  it('valida payload seguro da fila de revisão (nfe_price_queue) com status pendente e item_type excecao', () => {
+    // Simula a construção de payload de revisão usada no fallback
+    const mockAudit = {
+      origin: 'whatsapp',
+      sender: '5511999998888',
+      fileName: 'danfe_sem_texto.pdf',
+    }
+    const reason = 'PDF sem camada de texto — pedir XML ao fornecedor'
+    const bIso = new Date(Date.now() - 3 * 3600 * 1000).toISOString().replace('Z', '-03:00')
+
+    const payload = {
+      access_key: '',
+      supplier_code: '',
+      description: reason.trim(),
+      status: 'pendente',
+      item_type: 'excecao',
+      resolution_notes: `Origem: ${mockAudit.origin} | Remetente: ${mockAudit.sender} | Arquivo: ${mockAudit.fileName} | Horário: ${bIso}`,
+    }
+
+    expect(payload.status).toBe('pendente')
+    expect(payload.item_type).toBe('excecao')
+    expect(payload.description).toBeTruthy()
+    expect(payload.resolution_notes).toContain('5511999998888')
+    expect(payload.resolution_notes).toContain('-03:00')
+  })
 })

@@ -95,42 +95,69 @@ function extractNfeKeysFromText(text) {
 
 /**
  * Envia um caso com problema/sem chave/sem camada para a Fila de Revisão (nfe_price_queue)
+ * Aceita objeto { reason, auditTrail, accessKey, itemType } OU assinatura posicional (accessKey, reason, auditTrail, itemType)
  */
-function sendToDanfeReviewQueue(params) {
-  const { reason, auditTrail, accessKey, itemType } = params
+function sendToDanfeReviewQueue(arg1, arg2, arg3, arg4) {
+  let reason = ''
+  let auditTrail = {}
+  let accessKey = ''
+  let itemType = 'excecao'
+
+  if (
+    arg1 &&
+    typeof arg1 === 'object' &&
+    !Array.isArray(arg1) &&
+    (arg1.reason || arg1.auditTrail || arg1.accessKey !== undefined)
+  ) {
+    reason = arg1.reason || ''
+    auditTrail = arg1.auditTrail || {}
+    accessKey = arg1.accessKey || ''
+    itemType = arg1.itemType || 'excecao'
+  } else {
+    accessKey = typeof arg1 === 'string' ? arg1 : ''
+    reason = typeof arg2 === 'string' ? arg2 : ''
+    auditTrail = arg3 && typeof arg3 === 'object' ? arg3 : {}
+    itemType = typeof arg4 === 'string' ? arg4 : 'excecao'
+  }
+
   const bIso = getBrasiliaIsoDanfe()
+  const cleanReason = (reason || 'DANFE em PDF pendente de revisão').trim()
+  const cleanAccessKey = (accessKey || '').trim()
+
+  const rastro =
+    'Origem: ' +
+    (auditTrail.origin || 'pdf') +
+    ' | Remetente: ' +
+    (auditTrail.sender || auditTrail.sender_phone || auditTrail.remetente || 'desconhecido') +
+    ' | Arquivo: ' +
+    (auditTrail.fileName || auditTrail.url || 'sem_nome') +
+    ' | Horário: ' +
+    bIso +
+    (cleanAccessKey ? ' | Chave: ' + cleanAccessKey : '')
 
   try {
     const queueCol = $app.findCollectionByNameOrId('nfe_price_queue')
     const qRec = new Record(queueCol)
-    qRec.set('access_key', accessKey || '')
+    qRec.set('access_key', cleanAccessKey)
     qRec.set('supplier_code', '')
-    qRec.set('description', reason || 'DANFE em PDF pendente de revisão')
+    qRec.set('description', cleanReason)
     qRec.set('status', 'pendente')
     qRec.set('item_type', itemType || 'excecao')
-    qRec.set(
-      'resolution_notes',
-      'Origem: ' +
-        (auditTrail.origin || 'pdf') +
-        ' | Remetente: ' +
-        (auditTrail.sender || auditTrail.remetente || 'desconhecido') +
-        ' | Arquivo: ' +
-        (auditTrail.fileName || auditTrail.url || 'sem_nome') +
-        ' | Horário: ' +
-        bIso,
-    )
+    qRec.set('resolution_notes', rastro)
     $app.save(qRec)
 
     console.log(
       '[DANFE-PDF-QUEUE-SENT]',
       JSON.stringify({
         queueId: qRec.id,
-        reason: reason,
-        accessKey: accessKey || null,
+        reason: cleanReason,
+        accessKey: cleanAccessKey || null,
+        status: 'pendente',
+        item_type: itemType || 'excecao',
         auditTrail: auditTrail,
       }),
     )
-    return { queued: true, queueId: qRec.id }
+    return { queued: true, queueId: qRec.id, recordId: qRec.id }
   } catch (err) {
     console.log('[DANFE-PDF-QUEUE-ERR]', String(err))
     return { queued: false, error: String(err) }

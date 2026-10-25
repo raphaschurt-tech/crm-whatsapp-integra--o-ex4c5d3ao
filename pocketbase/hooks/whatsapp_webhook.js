@@ -857,96 +857,340 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       url: attachmentUrl,
     }
 
-    try {
-      let proc = null
-      // 1. Tentar require explícito relativo/absoluto (PocketBase Goja)
+    // Processador de DANFE embutido diretamente no webhook (Goja VM pool-safe)
+    // Extrai chave 44 do texto do PDF ($documents.toMarkdown), valida DV Módulo 11 SEFAZ,
+    // deduplica contra nfe_processed e enfileira comando busca_por_chave no worker DF-e.
+    // Se sem camada de texto ou sem chave, envia com segurança para nfe_price_queue com status='pendente' e item_type='excecao'.
+    function getBrasiliaIsoDanfeWhatsapp() {
       try {
-        if (typeof require === 'function') {
-          const reqRes =
-            require('./danfe_pdf_processor.js') ||
-            require('./danfe_pdf_processor') ||
-            require(__hooks + '/danfe_pdf_processor.js')
-          if (
-            reqRes &&
-            (reqRes.processDanfePdf ||
-              (reqRes.danfePdfProcessor && reqRes.danfePdfProcessor.processDanfePdf))
-          ) {
-            proc = reqRes.processDanfePdf ? reqRes : reqRes.danfePdfProcessor
+        return new Date(Date.now() - 3 * 3600 * 1000).toISOString().replace('Z', '-03:00')
+      } catch (_) {
+        return new Date().toISOString()
+      }
+    }
+
+    function validateNfeKeyDVWhatsapp(key44) {
+      if (!key44 || typeof key44 !== 'string') return false
+      const clean = key44.replace(/\D/g, '')
+      if (clean.length !== 44) return false
+
+      const base = clean.slice(0, 43)
+      const expectedDv = parseInt(clean.slice(43), 10)
+
+      let sum = 0
+      let weight = 2
+      for (let i = base.length - 1; i >= 0; i--) {
+        sum += parseInt(base[i], 10) * weight
+        weight++
+        if (weight > 9) weight = 2
+      }
+
+      const remainder = sum % 11
+      const calculatedDv = remainder === 0 || remainder === 1 ? 0 : 11 - remainder
+      return calculatedDv === expectedDv
+    }
+
+    function extractNfeKeysFromTextWhatsapp(text) {
+      if (!text || typeof text !== 'string') return []
+
+      const foundKeys = {}
+
+      const spacedRegex = /\b(?:\d{4}[\s-]?){10}\d{4}\b/g
+      const spacedMatches = text.match(spacedRegex) || []
+      for (let i = 0; i < spacedMatches.length; i++) {
+        const raw = spacedMatches[i].replace(/\D/g, '')
+        if (raw.length === 44) {
+          foundKeys[raw] = true
+        }
+      }
+
+      const directRegex = /\b\d{44}\b/g
+      const directMatches = text.match(directRegex) || []
+      for (let j = 0; j < directMatches.length; j++) {
+        foundKeys[directMatches[j]] = true
+      }
+
+      const labelRegex = /CHAVE\s+(?:DE\s+)?ACESSO[^\d]{0,40}((?:\d[\s-]?){44})/gi
+      let match
+      while ((match = labelRegex.exec(text)) !== null) {
+        if (match[1]) {
+          const raw = match[1].replace(/\D/g, '')
+          if (raw.length === 44) {
+            foundKeys[raw] = true
           }
         }
-      } catch (reqErr) {
-        // Fallback para escopo global se require falhar
       }
 
-      // 2. Fallback para escopo global/globalThis/identificador livre
-      if (!proc) {
-        proc =
-          (typeof global !== 'undefined' && global.danfePdfProcessor) ||
-          (typeof globalThis !== 'undefined' && globalThis.danfePdfProcessor) ||
-          (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor) ||
-          null
-      }
+      return Object.keys(foundKeys)
+    }
 
-      let procResult = null
-      if (proc && typeof proc.processDanfePdf === 'function') {
-        procResult = proc.processDanfePdf({
-          pdfSource: attachmentUrl,
-          sourceType: 'url',
-          auditTrail: auditTrail,
+    function sendToDanfeReviewQueueWhatsapp(accessKey, reason, audit) {
+      const bIso = getBrasiliaIsoDanfeWhatsapp()
+      const cleanReason = (reason || 'DANFE em PDF pendente de revisão').trim()
+      const cleanAccessKey = (accessKey || '').trim()
+      const auditObj = audit || {}
+
+      const rastro =
+        'Origem: ' +
+        (auditObj.origin || 'whatsapp') +
+        ' | Remetente: ' +
+        (auditObj.sender || auditObj.sender_phone || normalizedPhone || 'desconhecido') +
+        ' | Arquivo: ' +
+        (auditObj.fileName || attachmentName || 'documento.pdf') +
+        ' | Horário: ' +
+        bIso +
+        (cleanAccessKey ? ' | Chave: ' + cleanAccessKey : '')
+
+      try {
+        const queueCol = $app.findCollectionByNameOrId('nfe_price_queue')
+        const qRec = new Record(queueCol)
+        qRec.set('access_key', cleanAccessKey)
+        qRec.set('supplier_code', '')
+        qRec.set('description', cleanReason)
+        qRec.set('status', 'pendente')
+        qRec.set('item_type', 'excecao')
+        qRec.set('resolution_notes', rastro)
+        $app.save(qRec)
+
+        console.log(
+          '[DANFE-PDF-QUEUE-SENT]',
+          JSON.stringify({
+            queueId: qRec.id,
+            reason: cleanReason,
+            accessKey: cleanAccessKey || null,
+            status: 'pendente',
+            item_type: 'excecao',
+            auditTrail: auditObj,
+          }),
+        )
+        return { queued: true, queueId: qRec.id, recordId: qRec.id }
+      } catch (err) {
+        console.log('[DANFE-PDF-QUEUE-ERR]', String(err))
+        return { queued: false, error: String(err) }
+      }
+    }
+
+    function enqueueDfeKeyDownloadWhatsapp(accessKey, audit) {
+      const bIso = getBrasiliaIsoDanfeWhatsapp()
+      try {
+        const cmdCol = $app.findCollectionByNameOrId('dfe_command_queue')
+        const cmdRec = new Record(cmdCol)
+        cmdRec.set('command', 'busca_por_chave')
+        cmdRec.set('params', {
+          access_key: accessKey,
+          audit_trail: audit,
+          requested_at: bIso,
         })
-      } else {
-        console.log('[NFE-WHATSAPP-PDF-ERR] global.danfePdfProcessor não encontrado')
+        cmdRec.set('status', 'pendente')
+        cmdRec.set('created_by', '')
+        $app.save(cmdRec)
+
+        console.log(
+          '[DANFE-PDF-COMMAND-ENQUEUED]',
+          JSON.stringify({
+            commandId: cmdRec.id,
+            accessKey: accessKey,
+            auditTrail: audit,
+          }),
+        )
+        return { success: true, commandId: cmdRec.id }
+      } catch (err) {
+        console.log('[DANFE-PDF-COMMAND-ERR]', String(err))
+        return { success: false, error: String(err) }
+      }
+    }
+
+    function processDanfePdfInlineWhatsapp(url, audit) {
+      const bIso = getBrasiliaIsoDanfeWhatsapp()
+      let markdownText = ''
+
+      try {
+        const res = $http.send({
+          url: url,
+          method: 'GET',
+          timeout: 40,
+        })
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          throw new Error('Falha HTTP ao baixar PDF: ' + res.statusCode)
+        }
+        markdownText = $documents.toMarkdown(res.body, audit.fileName || 'danfe.pdf')
+      } catch (docErr) {
+        console.log('[DANFE-PDF-DOC-CONVERT-ERR]', String(docErr), JSON.stringify(audit))
+        const reason = 'PDF sem camada de texto — pedir XML ao fornecedor'
+        const qRes = sendToDanfeReviewQueueWhatsapp('', reason, audit)
+        return {
+          status: 'fila_revisao',
+          reason: reason,
+          recordId: qRes.recordId || null,
+          error: String(docErr),
+          auditTrail: audit,
+        }
       }
 
-      // Blindagem: se o processador estiver indisponível ou retornar nulo, o PDF NÃO pode ser descartado em silêncio.
-      // Encaminha para Fila de Revisão com motivo claro.
+      const cleanText = (markdownText || '').trim()
+      if (!cleanText || cleanText.length < 30) {
+        const reason = 'PDF sem camada de texto — pedir XML ao fornecedor'
+        console.log(
+          '[DANFE-PDF-NO-TEXT]',
+          JSON.stringify({ length: cleanText.length, audit: audit }),
+        )
+        const qRes = sendToDanfeReviewQueueWhatsapp('', reason, audit)
+        return {
+          status: 'fila_revisao',
+          reason: reason,
+          recordId: qRes.recordId || null,
+          textLength: cleanText.length,
+          auditTrail: audit,
+        }
+      }
+
+      const candidateKeys = extractNfeKeysFromTextWhatsapp(cleanText)
+      if (candidateKeys.length === 0) {
+        const reason =
+          'PDF possui texto, mas nenhuma chave de 44 dígitos da NF-e foi localizada — verificar documento'
+        console.log(
+          '[DANFE-PDF-NO-KEY-FOUND]',
+          JSON.stringify({ textSample: cleanText.slice(0, 200), audit: audit }),
+        )
+        const qRes = sendToDanfeReviewQueueWhatsapp('', reason, audit)
+        return {
+          status: 'fila_revisao',
+          reason: reason,
+          recordId: qRes.recordId || null,
+          auditTrail: audit,
+        }
+      }
+
+      let validKey = null
+      for (let k = 0; k < candidateKeys.length; k++) {
+        if (validateNfeKeyDVWhatsapp(candidateKeys[k])) {
+          validKey = candidateKeys[k]
+          break
+        }
+      }
+
+      if (!validKey) {
+        const candidateSample = candidateKeys[0]
+        const reason =
+          'Chave extraída do PDF com formato/dígito verificador inválido pela SEFAZ: ' +
+          candidateSample
+        console.log(
+          '[DANFE-PDF-INVALID-KEY]',
+          JSON.stringify({ candidates: candidateKeys, audit: audit }),
+        )
+        const qRes = sendToDanfeReviewQueueWhatsapp(candidateSample, reason, audit)
+        return {
+          status: 'fila_revisao',
+          reason: reason,
+          recordId: qRes.recordId || null,
+          candidates: candidateKeys,
+          auditTrail: audit,
+        }
+      }
+
+      console.log(
+        '[DANFE-PDF-KEY-EXTRACTED]',
+        JSON.stringify({ accessKey: validKey, audit: audit, horarioBrasilia: bIso }),
+      )
+
+      // Deduplicação 1: nfe_processed
+      let existingProcessed = null
+      try {
+        existingProcessed = $app.findFirstRecordByFilter(
+          'nfe_processed',
+          "access_key = '" + validKey + "'",
+        )
+      } catch (_) {
+        existingProcessed = null
+      }
+
+      if (existingProcessed) {
+        const reason =
+          'NF-e já processada anteriormente (ID: ' +
+          existingProcessed.id +
+          ', Chave: ' +
+          validKey +
+          ') — dedupe ativado'
+        console.log(
+          '[DANFE-PDF-DEDUPE-BLOCKED]',
+          JSON.stringify({
+            accessKey: validKey,
+            existingId: existingProcessed.id,
+            auditTrail: audit,
+            horarioBrasilia: bIso,
+          }),
+        )
+        return {
+          status: 'barrado_dedupe',
+          accessKey: validKey,
+          existingId: existingProcessed.id,
+          reason: reason,
+          auditTrail: audit,
+        }
+      }
+
+      // Deduplicação 2: dfe_command_queue
+      let pendingCmd = null
+      try {
+        pendingCmd = $app.findFirstRecordByFilter(
+          'dfe_command_queue',
+          "command = 'busca_por_chave' && status = 'pendente' && params ~ '" + validKey + "'",
+        )
+      } catch (_) {
+        pendingCmd = null
+      }
+
+      if (pendingCmd) {
+        const reason =
+          'Comando de busca por chave já está pendente na fila do worker DF-e (ID: ' +
+          pendingCmd.id +
+          ')'
+        console.log(
+          '[DANFE-PDF-DEDUPE-COMMAND-EXISTS]',
+          JSON.stringify({ accessKey: validKey, cmdId: pendingCmd.id }),
+        )
+        return {
+          status: 'barrado_dedupe',
+          accessKey: validKey,
+          commandId: pendingCmd.id,
+          reason: reason,
+          auditTrail: audit,
+        }
+      }
+
+      const cmdResult = enqueueDfeKeyDownloadWhatsapp(validKey, audit)
+      return {
+        status: 'enfileirado_dfe',
+        accessKey: validKey,
+        commandId: cmdResult.commandId || null,
+        auditTrail: audit,
+        horarioBrasilia: bIso,
+      }
+    }
+
+    try {
+      let procResult = null
+
+      // Executa processador direto embutido (100% resiliente a pool de VMs isoladas do Goja)
+      try {
+        procResult = processDanfePdfInlineWhatsapp(attachmentUrl, auditTrail)
+      } catch (procEx) {
+        console.log('[NFE-WHATSAPP-PDF-INLINE-EX]', String(procEx))
+        procResult = null
+      }
+
+      // Fallback de blindagem: se procResult for nulo, encaminha para Fila de Revisão com schema estritamente preenchido
       if (!procResult) {
         console.log(
           '[NFE-WHATSAPP-PDF-FALLBACK-REVIEW] Processador indisponível ou falhou sem resultado. Enviando para Fila de Revisão.',
         )
-        const fallbackReason = !proc
-          ? 'Processador de DANFE indisponível no runtime. Documento retido para análise manual.'
-          : 'Falha na extração de dados do PDF da DANFE (resultado nulo). Retido para revisão.'
+        const fallbackReason =
+          'Falha na extração de dados do PDF da DANFE (resultado nulo). Retido para revisão.'
 
         let reviewRecordId = null
         try {
-          if (proc && typeof proc.sendToDanfeReviewQueue === 'function') {
-            const qRes = proc.sendToDanfeReviewQueue('', fallbackReason, auditTrail)
-            reviewRecordId = qRes ? qRes.recordId : null
-          } else {
-            // Inserção direta resiliente na coleção nfe_price_queue
-            const collection = $app.findCollectionByNameOrId('nfe_price_queue')
-            const record = new Record(collection)
-            const bDateIso = new Date(Date.now() - 3 * 3600 * 1000)
-              .toISOString()
-              .replace('Z', '-03:00')
-
-            record.set('access_key', '')
-            record.set('item_name', attachmentName || 'DANFE WhatsApp')
-            record.set('difference_type', 'danfe_sem_chave')
-            record.set('resolved', false)
-            record.set('resolution_notes', 'Pendente de análise manual: ' + fallbackReason)
-            record.set(
-              'description',
-              'DANFE recebida via WhatsApp retida para revisão:\n' +
-                'Arquivo: ' +
-                (attachmentName || 'documento.pdf') +
-                '\n' +
-                'Remetente: ' +
-                normalizedPhone +
-                '\n' +
-                'URL: ' +
-                (attachmentUrl || 'n/a') +
-                '\n' +
-                'Horário: ' +
-                bDateIso +
-                '\n' +
-                'Motivo: ' +
-                fallbackReason,
-            )
-            $app.save(record)
-            reviewRecordId = record.id
-          }
+          const qRes = sendToDanfeReviewQueueWhatsapp('', fallbackReason, auditTrail)
+          reviewRecordId = qRes ? qRes.recordId : null
 
           procResult = {
             status: 'enviado_revisao',
@@ -970,43 +1214,16 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       console.log('[NFE-WHATSAPP-PDF-ERR]', String(pdfHookErr))
       // Blindagem em caso de exceção fatal no bloco do PDF
       try {
-        const collection = $app.findCollectionByNameOrId('nfe_price_queue')
-        const record = new Record(collection)
-        const bDateIso = new Date(Date.now() - 3 * 3600 * 1000).toISOString().replace('Z', '-03:00')
         const errReason =
           'Exceção fatal no processamento do PDF: ' + (pdfHookErr.message || String(pdfHookErr))
-
-        record.set('access_key', '')
-        record.set('item_name', attachmentName || 'DANFE WhatsApp')
-        record.set('difference_type', 'danfe_sem_chave')
-        record.set('resolved', false)
-        record.set('resolution_notes', 'Pendente de análise manual: ' + errReason)
-        record.set(
-          'description',
-          'DANFE recebida via WhatsApp retida para revisão por erro:\n' +
-            'Arquivo: ' +
-            (attachmentName || 'documento.pdf') +
-            '\n' +
-            'Remetente: ' +
-            normalizedPhone +
-            '\n' +
-            'URL: ' +
-            (attachmentUrl || 'n/a') +
-            '\n' +
-            'Horário: ' +
-            bDateIso +
-            '\n' +
-            'Erro: ' +
-            errReason,
-        )
-        $app.save(record)
+        const qRes = sendToDanfeReviewQueueWhatsapp('', errReason, auditTrail)
         console.log(
           '[NFE-WHATSAPP-PDF-PROCESSED]',
           JSON.stringify({
             messageId: messageId,
             result: {
               status: 'enviado_revisao',
-              recordId: record.id,
+              recordId: qRes ? qRes.recordId : null,
               reason: errReason,
               auditTrail: auditTrail,
             },
