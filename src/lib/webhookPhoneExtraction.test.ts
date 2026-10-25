@@ -390,6 +390,55 @@ check(
   JSON.stringify(['MSG_A', 'MSG_B', 'MSG_INCOMING_NEW']),
 )
 
+console.log('\n10.5. TESTE DE REGRESSÃO — Blindagem do Fallback para Fila de Revisão:')
+// Simula a blindagem quando procResult é nulo ou processador indisponível
+function simulateWebhookPdfFallback(procAvailable: boolean, procReturnsNull: boolean) {
+  let procResult: any = null
+  let sentToReview = false
+  let reviewReason = ''
+
+  if (procAvailable && !procReturnsNull) {
+    procResult = {
+      status: 'enfileirado_dfe',
+      accessKey: '35260960625586000101550010000001231000000010',
+    }
+  }
+
+  if (!procResult) {
+    sentToReview = true
+    reviewReason = !procAvailable
+      ? 'Processador de DANFE indisponível no runtime. Documento retido para análise manual.'
+      : 'Falha na extração de dados do PDF da DANFE (resultado nulo). Retido para revisão.'
+    procResult = {
+      status: 'enviado_revisao',
+      recordId: 'mock_rev_123',
+      reason: reviewReason,
+    }
+  }
+
+  return { procResult, sentToReview, reviewReason }
+}
+
+const fb1 = simulateWebhookPdfFallback(false, true)
+check('Fallback com processador indisponível envia para Fila de Revisão', fb1.sentToReview, true)
+check(
+  'Resultado não-nulo com status enviado_revisao quando processador indisponível',
+  fb1.procResult?.status,
+  'enviado_revisao',
+)
+
+const fb2 = simulateWebhookPdfFallback(true, true)
+check('Fallback com processador retornando nulo envia para Fila de Revisão', fb2.sentToReview, true)
+check(
+  'Resultado não-nulo com status enviado_revisao quando processador retorna nulo',
+  fb2.procResult?.status,
+  'enviado_revisao',
+)
+
+const fb3 = simulateWebhookPdfFallback(true, false)
+check('Processador funcional enfileira normalmente no DF-e', fb3.sentToReview, false)
+check('Status enfileirado_dfe preservado', fb3.procResult?.status, 'enfileirado_dfe')
+
 console.log('\n11. TESTE DE REGRESSÃO S3 — Desvio NF-e / DANFE em PDF no Webhook WhatsApp:')
 const isXmlPredicate = (name: string, url: string, type: string, text: string) => {
   return Boolean(

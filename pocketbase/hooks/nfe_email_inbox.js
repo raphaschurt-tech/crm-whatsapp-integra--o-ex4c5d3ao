@@ -1474,50 +1474,166 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
 
       // PROCESSAMENTO DE DANFES EM PDF ANEXADAS NO EMAIL
       let pdfProcessedCount = 0
-      const proc =
-        (typeof global !== 'undefined' && global.danfePdfProcessor) ||
-        (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor)
+      let proc = null
+      try {
+        if (typeof require === 'function') {
+          const r =
+            require('./danfe_pdf_processor.js') ||
+            require('./danfe_pdf_processor') ||
+            require(__hooks + '/danfe_pdf_processor.js')
+          if (
+            r &&
+            (r.processDanfePdf || (r.danfePdfProcessor && r.danfePdfProcessor.processDanfePdf))
+          ) {
+            proc = r.processDanfePdf ? r : r.danfePdfProcessor
+          }
+        }
+      } catch (_) {}
+      if (!proc) {
+        proc =
+          (typeof global !== 'undefined' && global.danfePdfProcessor) ||
+          (typeof globalThis !== 'undefined' && globalThis.danfePdfProcessor) ||
+          (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor) ||
+          null
+      }
 
       for (let p = 0; p < pdfAttachmentsToProcess.length; p++) {
         const pdfItem = pdfAttachmentsToProcess[p]
-        try {
-          const auditTrail = {
-            origin: 'email',
-            sender: senderEmail,
-            remetente: senderName || senderEmail,
-            fileName: pdfItem.file_name || 'danfe.pdf',
-            gmail_message_id: msgId,
-            subject: subject,
-            email_date: emailDate,
-          }
+        const auditTrail = {
+          origin: 'email',
+          sender: senderEmail,
+          remetente: senderName || senderEmail,
+          fileName: pdfItem.file_name || 'danfe.pdf',
+          gmail_message_id: msgId,
+          subject: subject,
+          email_date: emailDate,
+        }
 
+        try {
+          let pdfRes = null
           if (proc && typeof proc.processDanfePdf === 'function') {
-            const pdfRes = proc.processDanfePdf({
+            pdfRes = proc.processDanfePdf({
               pdfSource: pdfItem.bytes,
               sourceType: 'bytes',
               auditTrail: auditTrail,
             })
-
-            console.log(
-              '[NFE-EMAIL-PDF-PROCESSED]',
-              JSON.stringify({
-                messageId: msgId,
-                fileName: pdfItem.file_name,
-                result: pdfRes,
-              }),
-            )
-
-            if (pdfRes.accessKey) {
-              extractedKeys.push(pdfRes.accessKey)
-            }
-
-            pdfProcessedCount++
           } else {
             console.log('[NFE-EMAIL-PDF-PROC-ERR] global.danfePdfProcessor não encontrado')
           }
+
+          // Blindagem: se o processador estiver indisponível ou retornar nulo, o PDF NÃO pode ser descartado em silêncio.
+          if (!pdfRes) {
+            console.log(
+              '[NFE-EMAIL-PDF-FALLBACK-REVIEW] Processador indisponível ou resultado nulo para ' +
+                pdfItem.file_name,
+            )
+            const fallbackReason = !proc
+              ? 'Processador de DANFE indisponível no runtime. Documento de email retido para análise.'
+              : 'Falha na extração de dados do PDF recebido por email (resultado nulo).'
+
+            try {
+              if (proc && typeof proc.sendToDanfeReviewQueue === 'function') {
+                proc.sendToDanfeReviewQueue('', fallbackReason, auditTrail)
+              } else {
+                const collection = $app.findCollectionByNameOrId('nfe_price_queue')
+                const record = new Record(collection)
+                const bDateIso = new Date(Date.now() - 3 * 3600 * 1000)
+                  .toISOString()
+                  .replace('Z', '-03:00')
+
+                record.set('access_key', '')
+                record.set('item_name', pdfItem.file_name || 'DANFE Email')
+                record.set('difference_type', 'danfe_sem_chave')
+                record.set('resolved', false)
+                record.set('resolution_notes', 'Pendente de análise manual: ' + fallbackReason)
+                record.set(
+                  'description',
+                  'DANFE recebida por email retida para revisão:\n' +
+                    'Arquivo: ' +
+                    (pdfItem.file_name || 'danfe.pdf') +
+                    '\n' +
+                    'Remetente: ' +
+                    senderEmail +
+                    '\n' +
+                    'Assunto: ' +
+                    subject +
+                    '\n' +
+                    'Horário: ' +
+                    bDateIso +
+                    '\n' +
+                    'Motivo: ' +
+                    fallbackReason,
+                )
+                $app.save(record)
+              }
+            } catch (fbqErr) {
+              console.log('[NFE-EMAIL-PDF-FALLBACK-REVIEW-ERR]', String(fbqErr))
+            }
+
+            pdfRes = {
+              status: 'enviado_revisao',
+              reason: fallbackReason,
+              auditTrail: auditTrail,
+            }
+          }
+
+          console.log(
+            '[NFE-EMAIL-PDF-PROCESSED]',
+            JSON.stringify({
+              messageId: msgId,
+              fileName: pdfItem.file_name,
+              result: pdfRes,
+            }),
+          )
+
+          if (pdfRes && pdfRes.accessKey) {
+            extractedKeys.push(pdfRes.accessKey)
+          }
+
+          pdfProcessedCount++
         } catch (pdfErr) {
           console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
           ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
+
+          // Blindagem em caso de erro fatal no PDF do email
+          try {
+            const collection = $app.findCollectionByNameOrId('nfe_price_queue')
+            const record = new Record(collection)
+            const bDateIso = new Date(Date.now() - 3 * 3600 * 1000)
+              .toISOString()
+              .replace('Z', '-03:00')
+            const errReason =
+              'Exceção fatal no processamento do PDF de email: ' +
+              (pdfErr.message || String(pdfErr))
+
+            record.set('access_key', '')
+            record.set('item_name', pdfItem.file_name || 'DANFE Email')
+            record.set('difference_type', 'danfe_sem_chave')
+            record.set('resolved', false)
+            record.set('resolution_notes', 'Pendente de análise manual: ' + errReason)
+            record.set(
+              'description',
+              'DANFE recebida por email retida para revisão por erro:\n' +
+                'Arquivo: ' +
+                (pdfItem.file_name || 'danfe.pdf') +
+                '\n' +
+                'Remetente: ' +
+                senderEmail +
+                '\n' +
+                'Assunto: ' +
+                subject +
+                '\n' +
+                'Horário: ' +
+                bDateIso +
+                '\n' +
+                'Erro: ' +
+                errReason,
+            )
+            $app.save(record)
+            pdfProcessedCount++
+          } catch (fatalQueueErr) {
+            console.log('[NFE-EMAIL-PDF-FATAL-QUEUE-ERR]', String(fatalQueueErr))
+          }
         }
       }
 
@@ -2995,50 +3111,165 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
 
     // PROCESSAMENTO DE DANFES EM PDF ANEXADAS NO EMAIL
     let pdfProcessedCount = 0
-    const procManual =
-      (typeof global !== 'undefined' && global.danfePdfProcessor) ||
-      (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor)
+    let procManual = null
+    try {
+      if (typeof require === 'function') {
+        const r =
+          require('./danfe_pdf_processor.js') ||
+          require('./danfe_pdf_processor') ||
+          require(__hooks + '/danfe_pdf_processor.js')
+        if (
+          r &&
+          (r.processDanfePdf || (r.danfePdfProcessor && r.danfePdfProcessor.processDanfePdf))
+        ) {
+          procManual = r.processDanfePdf ? r : r.danfePdfProcessor
+        }
+      }
+    } catch (_) {}
+    if (!procManual) {
+      procManual =
+        (typeof global !== 'undefined' && global.danfePdfProcessor) ||
+        (typeof globalThis !== 'undefined' && globalThis.danfePdfProcessor) ||
+        (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor) ||
+        null
+    }
 
     for (let p = 0; p < pdfAttachmentsToProcess.length; p++) {
       const pdfItem = pdfAttachmentsToProcess[p]
-      try {
-        const auditTrail = {
-          origin: 'email',
-          sender: senderEmail,
-          remetente: senderName || senderEmail,
-          fileName: pdfItem.file_name || 'danfe.pdf',
-          gmail_message_id: msgId,
-          subject: subject,
-          email_date: emailDate,
-        }
+      const auditTrail = {
+        origin: 'email',
+        sender: senderEmail,
+        remetente: senderName || senderEmail,
+        fileName: pdfItem.file_name || 'danfe.pdf',
+        gmail_message_id: msgId,
+        subject: subject,
+        email_date: emailDate,
+      }
 
+      try {
+        let pdfRes = null
         if (procManual && typeof procManual.processDanfePdf === 'function') {
-          const pdfRes = procManual.processDanfePdf({
+          pdfRes = procManual.processDanfePdf({
             pdfSource: pdfItem.bytes,
             sourceType: 'bytes',
             auditTrail: auditTrail,
           })
-
-          console.log(
-            '[NFE-EMAIL-PDF-PROCESSED]',
-            JSON.stringify({
-              messageId: msgId,
-              fileName: pdfItem.file_name,
-              result: pdfRes,
-            }),
-          )
-
-          if (pdfRes.accessKey) {
-            extractedKeys.push(pdfRes.accessKey)
-          }
-
-          pdfProcessedCount++
         } else {
           console.log('[NFE-EMAIL-PDF-PROC-ERR] global.danfePdfProcessor não encontrado')
         }
+
+        // Blindagem: se o processador estiver indisponível ou retornar nulo, o PDF NÃO pode ser descartado em silêncio.
+        if (!pdfRes) {
+          console.log(
+            '[NFE-EMAIL-PDF-FALLBACK-REVIEW] Processador indisponível ou resultado nulo para ' +
+              pdfItem.file_name,
+          )
+          const fallbackReason = !procManual
+            ? 'Processador de DANFE indisponível no runtime. Documento de email retido para análise.'
+            : 'Falha na extração de dados do PDF recebido por email (resultado nulo).'
+
+          try {
+            if (procManual && typeof procManual.sendToDanfeReviewQueue === 'function') {
+              procManual.sendToDanfeReviewQueue('', fallbackReason, auditTrail)
+            } else {
+              const collection = $app.findCollectionByNameOrId('nfe_price_queue')
+              const record = new Record(collection)
+              const bDateIso = new Date(Date.now() - 3 * 3600 * 1000)
+                .toISOString()
+                .replace('Z', '-03:00')
+
+              record.set('access_key', '')
+              record.set('item_name', pdfItem.file_name || 'DANFE Email')
+              record.set('difference_type', 'danfe_sem_chave')
+              record.set('resolved', false)
+              record.set('resolution_notes', 'Pendente de análise manual: ' + fallbackReason)
+              record.set(
+                'description',
+                'DANFE recebida por email retida para revisão:\n' +
+                  'Arquivo: ' +
+                  (pdfItem.file_name || 'danfe.pdf') +
+                  '\n' +
+                  'Remetente: ' +
+                  senderEmail +
+                  '\n' +
+                  'Assunto: ' +
+                  subject +
+                  '\n' +
+                  'Horário: ' +
+                  bDateIso +
+                  '\n' +
+                  'Motivo: ' +
+                  fallbackReason,
+              )
+              $app.save(record)
+            }
+          } catch (fbqErr) {
+            console.log('[NFE-EMAIL-PDF-FALLBACK-REVIEW-ERR]', String(fbqErr))
+          }
+
+          pdfRes = {
+            status: 'enviado_revisao',
+            reason: fallbackReason,
+            auditTrail: auditTrail,
+          }
+        }
+
+        console.log(
+          '[NFE-EMAIL-PDF-PROCESSED]',
+          JSON.stringify({
+            messageId: msgId,
+            fileName: pdfItem.file_name,
+            result: pdfRes,
+          }),
+        )
+
+        if (pdfRes && pdfRes.accessKey) {
+          extractedKeys.push(pdfRes.accessKey)
+        }
+
+        pdfProcessedCount++
       } catch (pdfErr) {
         console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
         ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
+
+        // Blindagem em caso de erro fatal no PDF do email
+        try {
+          const collection = $app.findCollectionByNameOrId('nfe_price_queue')
+          const record = new Record(collection)
+          const bDateIso = new Date(Date.now() - 3 * 3600 * 1000)
+            .toISOString()
+            .replace('Z', '-03:00')
+          const errReason =
+            'Exceção fatal no processamento do PDF de email: ' + (pdfErr.message || String(pdfErr))
+
+          record.set('access_key', '')
+          record.set('item_name', pdfItem.file_name || 'DANFE Email')
+          record.set('difference_type', 'danfe_sem_chave')
+          record.set('resolved', false)
+          record.set('resolution_notes', 'Pendente de análise manual: ' + errReason)
+          record.set(
+            'description',
+            'DANFE recebida por email retida para revisão por erro:\n' +
+              'Arquivo: ' +
+              (pdfItem.file_name || 'danfe.pdf') +
+              '\n' +
+              'Remetente: ' +
+              senderEmail +
+              '\n' +
+              'Assunto: ' +
+              subject +
+              '\n' +
+              'Horário: ' +
+              bDateIso +
+              '\n' +
+              'Erro: ' +
+              errReason,
+          )
+          $app.save(record)
+          pdfProcessedCount++
+        } catch (fatalQueueErr) {
+          console.log('[NFE-EMAIL-PDF-FATAL-QUEUE-ERR]', String(fatalQueueErr))
+        }
       }
     }
 

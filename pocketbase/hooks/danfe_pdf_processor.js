@@ -376,8 +376,7 @@ function processDanfePdf(options) {
   }
 }
 
-// Disponibiliza no escopo global para todos os outros hooks
-global.danfePdfProcessor = {
+const processorApi = {
   validateNfeKeyDV: validateNfeKeyDV,
   extractNfeKeysFromText: extractNfeKeysFromText,
   processDanfePdf: processDanfePdf,
@@ -385,6 +384,31 @@ global.danfePdfProcessor = {
   enqueueDfeKeyDownload: enqueueDfeKeyDownload,
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = global.danfePdfProcessor
+// Disponibiliza no escopo global em múltiplos ambientes
+try {
+  if (typeof global !== 'undefined') {
+    global.danfePdfProcessor = processorApi
+  }
+} catch (_) {}
+
+try {
+  if (typeof globalThis !== 'undefined') {
+    globalThis.danfePdfProcessor = processorApi
+  }
+} catch (_) {}
+
+try {
+  danfePdfProcessor = processorApi
+} catch (_) {}
+
+if (typeof module !== 'undefined' && module && module.exports) {
+  module.exports = processorApi
+}
+if (typeof exports !== 'undefined' && exports) {
+  exports.danfePdfProcessor = processorApi
+  exports.validateNfeKeyDV = validateNfeKeyDV
+  exports.extractNfeKeysFromText = extractNfeKeysFromText
+  exports.processDanfePdf = processDanfePdf
+  exports.sendToDanfeReviewQueue = sendToDanfeReviewQueue
+  exports.enqueueDfeKeyDownload = enqueueDfeKeyDownload
 }

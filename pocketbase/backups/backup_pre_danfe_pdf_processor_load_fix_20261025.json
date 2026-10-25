@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-10-25T15:52:00-03:00",
+  "reason": "Âncora 🟡 BACKUP PRIMEIRO antes da correção da carga do processador de DANFE em PDF no runtime PocketBase",
+  "files_backed_up": [
+    "pocketbase/hooks/danfe_pdf_processor.js",
+    "pocketbase/hooks/whatsapp_webhook.js",
+    "pocketbase/hooks/nfe_email_inbox.js"
+  ],
+  "task": "Corrigir carga de danfe_pdf_processor.js no runtime do PocketBase para whatsapp_webhook.js e nfe_email_inbox.js, com blindagem para Fila de Revisão se o processador falhar ou estiver indisponível"
+}
