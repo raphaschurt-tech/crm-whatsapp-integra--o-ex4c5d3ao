@@ -8,8 +8,8 @@
 // - Quando desligada OU falhar em qualquer validação: encaminha para a Fila de Revisão com o motivo da exceção.
 // Todos os helpers e lógica são estritamente INLINE dentro de cada callback para compatibilidade com o VM pool do PocketBase.
 
-// 1. Cron Add: Executa a cada 15 minutos
-cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
+// 1. Cron Add: Executa a cada 15 minutos (temporariamente * * * * * para executar no próximo minuto)
+cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
   function getBrasiliaIsoDate() {
     try {
       const bDate = new Date(Date.now() - 3 * 3600 * 1000)
@@ -504,7 +504,11 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
     nfeRec.set('prot_nfe', parsed.nProt || '')
     nfeRec.set('source_channel', 'email')
     nfeRec.set('raw_items', aggregatedItems)
-    nfeRec.set('xml_payload', xmlContent)
+    if (xmlContent && xmlContent.length > 5000) {
+      nfeRec.set('xml_payload', xmlContent.slice(0, 5000))
+    } else {
+      nfeRec.set('xml_payload', xmlContent || '')
+    }
     nfeRec.set('notes', emailTrail)
 
     if (isException) {
@@ -928,9 +932,10 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
     let fetchRes = null
     try {
       fetchRes = $connectors.executeAsOwner('GMAIL_FETCH_EMAILS', {
-        query: 'filename:xml OR "xml" OR "nfe" OR "danfe"',
+        query: 'filename:xml OR "xml" OR "nfe" OR "danfe" OR "faturamento"',
         max_results: 20,
         include_payload: true,
+        verbose: true,
       })
     } catch (connErr) {
       console.log(
@@ -994,8 +999,8 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
         )
       } catch (_) {}
 
-      // Se já processado com sucesso ou em erro definitivo, pula; se estava 'sem_xml', permite reprocessar
-      if (existingRecord && existingRecord.getString('status') !== 'sem_xml') {
+      // Se já processado com sucesso, pula; se estava 'sem_xml' ou 'erro', permite reprocessar
+      if (existingRecord && existingRecord.getString('status') === 'processado') {
         continue
       }
 
@@ -1058,6 +1063,7 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
         if (!Array.isArray(parts)) return
         for (let p = 0; p < parts.length; p++) {
           const part = parts[p]
+          if (!part || typeof part !== 'object') continue
           const fn = (part.filename || part.file_name || '').toLowerCase()
           const mime = (part.mimeType || part.mime_type || '').toLowerCase()
           const bodyObj = part.body || {}
@@ -1078,20 +1084,43 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
                 console.log('[NFE-EMAIL-B64-DEC-ERR]', String(decErr))
               }
             } else if (bodyObj.attachmentId || part.attachment_id || part.attachmentId) {
-              attachmentsToFetch.push({
-                attachment_id: bodyObj.attachmentId || part.attachment_id || part.attachmentId,
-                file_name: part.filename || part.file_name || 'nfe.xml',
-              })
+              const attIdFound = bodyObj.attachmentId || part.attachment_id || part.attachmentId
+              let alreadyInList = false
+              for (let k = 0; k < attachmentsToFetch.length; k++) {
+                if (attachmentsToFetch[k].attachment_id === attIdFound) {
+                  alreadyInList = true
+                  break
+                }
+              }
+              if (!alreadyInList) {
+                attachmentsToFetch.push({
+                  attachment_id: attIdFound,
+                  file_name: part.filename || part.file_name || 'nfe.xml',
+                })
+              }
             }
           }
-          if (part.parts) {
+          if (part.parts && Array.isArray(part.parts)) {
             searchParts(part.parts)
           }
         }
       }
 
-      if (msg.payload && msg.payload.parts) {
-        searchParts(msg.payload.parts)
+      if (msg.payload) {
+        if (msg.payload.parts && Array.isArray(msg.payload.parts)) {
+          searchParts(msg.payload.parts)
+        }
+        const topFn = (msg.payload.filename || msg.payload.file_name || '').toLowerCase()
+        const topMime = (msg.payload.mimeType || msg.payload.mime_type || '').toLowerCase()
+        if (topFn.endsWith('.xml') || topMime.includes('xml')) {
+          const topBody = msg.payload.body || {}
+          if (topBody.attachmentId) {
+            attachmentsToFetch.push({
+              attachment_id: topBody.attachmentId,
+              file_name: msg.payload.filename || 'nfe.xml',
+            })
+          }
+        }
       }
 
       if (Array.isArray(msg.attachmentList)) {
@@ -1113,10 +1142,19 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
                 }
               } catch (_) {}
             } else if (attId) {
-              attachmentsToFetch.push({
-                attachment_id: attId,
-                file_name: att.filename || att.file_name || att.name || 'nfe.xml',
-              })
+              let alreadyInList = false
+              for (let k = 0; k < attachmentsToFetch.length; k++) {
+                if (attachmentsToFetch[k].attachment_id === attId) {
+                  alreadyInList = true
+                  break
+                }
+              }
+              if (!alreadyInList) {
+                attachmentsToFetch.push({
+                  attachment_id: attId,
+                  file_name: att.filename || att.file_name || att.name || 'nfe.xml',
+                })
+              }
             }
           }
         }
@@ -1141,10 +1179,19 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
                 }
               } catch (_) {}
             } else if (attId) {
-              attachmentsToFetch.push({
-                attachment_id: attId,
-                file_name: att.filename || att.file_name || att.name || 'nfe.xml',
-              })
+              let alreadyInList = false
+              for (let k = 0; k < attachmentsToFetch.length; k++) {
+                if (attachmentsToFetch[k].attachment_id === attId) {
+                  alreadyInList = true
+                  break
+                }
+              }
+              if (!alreadyInList) {
+                attachmentsToFetch.push({
+                  attachment_id: attId,
+                  file_name: att.filename || att.file_name || att.name || 'nfe.xml',
+                })
+              }
             }
           }
         }
@@ -1160,18 +1207,45 @@ cronAdd('nfe-email-inbox-poller', '*/15 * * * *', () => {
           })
           if (attRes && attRes.successful && attRes.data) {
             let rawAttData = ''
+            let downloadUrl = ''
+
             if (typeof attRes.data === 'string') {
               rawAttData = attRes.data
             } else if (attRes.data && typeof attRes.data === 'object') {
+              const fileObj = attRes.data.file || {}
+              downloadUrl =
+                fileObj.s3url ||
+                fileObj.url ||
+                fileObj.download_url ||
+                attRes.data.s3url ||
+                attRes.data.url ||
+                attRes.data.download_url ||
+                ''
+
               rawAttData =
                 attRes.data.data ||
                 attRes.data.content ||
-                attRes.data.file ||
                 attRes.data.body ||
                 (attRes.data.response &&
                   (attRes.data.response.data || attRes.data.response.content)) ||
                 ''
             }
+
+            if (!rawAttData && downloadUrl) {
+              try {
+                const dlHttp = $http.send({
+                  url: downloadUrl,
+                  method: 'GET',
+                  timeout: 30,
+                })
+                if (dlHttp && dlHttp.statusCode >= 200 && dlHttp.statusCode < 300) {
+                  rawAttData = dlHttp.raw || ''
+                }
+              } catch (dlErr) {
+                console.log('[NFE-EMAIL-ATTACH-DOWNLOAD-ERR]', String(dlErr))
+              }
+            }
+
             if (rawAttData) {
               let textContent = ''
               const rawStr = String(rawAttData).trim()
@@ -1802,7 +1876,11 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
     nfeRec.set('prot_nfe', parsed.nProt || '')
     nfeRec.set('source_channel', 'email')
     nfeRec.set('raw_items', aggregatedItems)
-    nfeRec.set('xml_payload', xmlContent)
+    if (xmlContent && xmlContent.length > 5000) {
+      nfeRec.set('xml_payload', xmlContent.slice(0, 5000))
+    } else {
+      nfeRec.set('xml_payload', xmlContent || '')
+    }
     nfeRec.set('notes', emailTrail)
 
     if (isException) {
@@ -2218,9 +2296,10 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
   let fetchRes = null
   try {
     fetchRes = $connectors.executeAsOwner('GMAIL_FETCH_EMAILS', {
-      query: 'filename:xml OR "xml" OR "nfe" OR "danfe"',
+      query: 'filename:xml OR "xml" OR "nfe" OR "danfe" OR "faturamento"',
       max_results: 20,
       include_payload: true,
+      verbose: true,
     })
   } catch (connErr) {
     return e.json(502, {
@@ -2269,8 +2348,8 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       )
     } catch (_) {}
 
-    // Se já processado com sucesso ou em erro definitivo, pula; se estava 'sem_xml', permite reprocessar
-    if (existingRecord && existingRecord.getString('status') !== 'sem_xml') {
+    // Se já processado com sucesso, pula; se estava 'sem_xml' ou 'erro', permite reprocessar
+    if (existingRecord && existingRecord.getString('status') === 'processado') {
       continue
     }
 
@@ -2333,6 +2412,7 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       if (!Array.isArray(parts)) return
       for (let p = 0; p < parts.length; p++) {
         const part = parts[p]
+        if (!part || typeof part !== 'object') continue
         const fn = (part.filename || part.file_name || '').toLowerCase()
         const mime = (part.mimeType || part.mime_type || '').toLowerCase()
         const bodyObj = part.body || {}
@@ -2353,21 +2433,44 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
               console.log('[NFE-EMAIL-B64-DEC-ERR]', String(decErr))
             }
           } else if (bodyObj.attachmentId || part.attachment_id || part.attachmentId) {
-            attachmentsToFetch.push({
-              attachment_id: bodyObj.attachmentId || part.attachment_id || part.attachmentId,
-              file_name: part.filename || part.file_name || 'nfe.xml',
-            })
+            const attIdFound = bodyObj.attachmentId || part.attachment_id || part.attachmentId
+            let alreadyInList = false
+            for (let k = 0; k < attachmentsToFetch.length; k++) {
+              if (attachmentsToFetch[k].attachment_id === attIdFound) {
+                alreadyInList = true
+                break
+              }
+            }
+            if (!alreadyInList) {
+              attachmentsToFetch.push({
+                attachment_id: attIdFound,
+                file_name: part.filename || part.file_name || 'nfe.xml',
+              })
+            }
           }
         }
 
-        if (part.parts) {
+        if (part.parts && Array.isArray(part.parts)) {
           searchParts(part.parts)
         }
       }
     }
 
-    if (msg.payload && msg.payload.parts) {
-      searchParts(msg.payload.parts)
+    if (msg.payload) {
+      if (msg.payload.parts && Array.isArray(msg.payload.parts)) {
+        searchParts(msg.payload.parts)
+      }
+      const topFn = (msg.payload.filename || msg.payload.file_name || '').toLowerCase()
+      const topMime = (msg.payload.mimeType || msg.payload.mime_type || '').toLowerCase()
+      if (topFn.endsWith('.xml') || topMime.includes('xml')) {
+        const topBody = msg.payload.body || {}
+        if (topBody.attachmentId) {
+          attachmentsToFetch.push({
+            attachment_id: topBody.attachmentId,
+            file_name: msg.payload.filename || 'nfe.xml',
+          })
+        }
+      }
     }
 
     if (Array.isArray(msg.attachmentList)) {
@@ -2389,10 +2492,19 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
               }
             } catch (_) {}
           } else if (attId) {
-            attachmentsToFetch.push({
-              attachment_id: attId,
-              file_name: att.filename || att.file_name || att.name || 'nfe.xml',
-            })
+            let alreadyInList = false
+            for (let k = 0; k < attachmentsToFetch.length; k++) {
+              if (attachmentsToFetch[k].attachment_id === attId) {
+                alreadyInList = true
+                break
+              }
+            }
+            if (!alreadyInList) {
+              attachmentsToFetch.push({
+                attachment_id: attId,
+                file_name: att.filename || att.file_name || att.name || 'nfe.xml',
+              })
+            }
           }
         }
       }
@@ -2417,10 +2529,19 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
               }
             } catch (_) {}
           } else if (attId) {
-            attachmentsToFetch.push({
-              attachment_id: attId,
-              file_name: att.filename || att.file_name || att.name || 'nfe.xml',
-            })
+            let alreadyInList = false
+            for (let k = 0; k < attachmentsToFetch.length; k++) {
+              if (attachmentsToFetch[k].attachment_id === attId) {
+                alreadyInList = true
+                break
+              }
+            }
+            if (!alreadyInList) {
+              attachmentsToFetch.push({
+                attachment_id: attId,
+                file_name: att.filename || att.file_name || att.name || 'nfe.xml',
+              })
+            }
           }
         }
       }
@@ -2436,18 +2557,45 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
         })
         if (attRes && attRes.successful && attRes.data) {
           let rawAttData = ''
+          let downloadUrl = ''
+
           if (typeof attRes.data === 'string') {
             rawAttData = attRes.data
           } else if (attRes.data && typeof attRes.data === 'object') {
+            const fileObj = attRes.data.file || {}
+            downloadUrl =
+              fileObj.s3url ||
+              fileObj.url ||
+              fileObj.download_url ||
+              attRes.data.s3url ||
+              attRes.data.url ||
+              attRes.data.download_url ||
+              ''
+
             rawAttData =
               attRes.data.data ||
               attRes.data.content ||
-              attRes.data.file ||
               attRes.data.body ||
               (attRes.data.response &&
                 (attRes.data.response.data || attRes.data.response.content)) ||
               ''
           }
+
+          if (!rawAttData && downloadUrl) {
+            try {
+              const dlHttp = $http.send({
+                url: downloadUrl,
+                method: 'GET',
+                timeout: 30,
+              })
+              if (dlHttp && dlHttp.statusCode >= 200 && dlHttp.statusCode < 300) {
+                rawAttData = dlHttp.raw || ''
+              }
+            } catch (dlErr) {
+              console.log('[NFE-EMAIL-ATTACH-DOWNLOAD-ERR]', String(dlErr))
+            }
+          }
+
           if (rawAttData) {
             let textContent = ''
             const rawStr = String(rawAttData).trim()
