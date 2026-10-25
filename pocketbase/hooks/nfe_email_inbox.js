@@ -1474,7 +1474,9 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
 
       // PROCESSAMENTO DE DANFES EM PDF ANEXADAS NO EMAIL
       let pdfProcessedCount = 0
-      const proc = (typeof global !== 'undefined' && global.danfePdfProcessor) || (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor)
+      const proc =
+        (typeof global !== 'undefined' && global.danfePdfProcessor) ||
+        (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor)
 
       for (let p = 0; p < pdfAttachmentsToProcess.length; p++) {
         const pdfItem = pdfAttachmentsToProcess[p]
@@ -1513,26 +1515,6 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
           } else {
             console.log('[NFE-EMAIL-PDF-PROC-ERR] global.danfePdfProcessor não encontrado')
           }
-        } catch (pdfErr) {
-          console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
-          ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
-        }
-      }
-
-          console.log(
-            '[NFE-EMAIL-PDF-PROCESSED]',
-            JSON.stringify({
-              messageId: msgId,
-              fileName: pdfItem.file_name,
-              result: pdfRes,
-            }),
-          )
-
-          if (pdfRes.accessKey) {
-            extractedKeys.push(pdfRes.accessKey)
-          }
-
-          pdfProcessedCount++
         } catch (pdfErr) {
           console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
           ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
@@ -3013,7 +2995,9 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
 
     // PROCESSAMENTO DE DANFES EM PDF ANEXADAS NO EMAIL
     let pdfProcessedCount = 0
-    const procManual = (typeof global !== 'undefined' && global.danfePdfProcessor) || (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor)
+    const procManual =
+      (typeof global !== 'undefined' && global.danfePdfProcessor) ||
+      (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor)
 
     for (let p = 0; p < pdfAttachmentsToProcess.length; p++) {
       const pdfItem = pdfAttachmentsToProcess[p]
@@ -3052,26 +3036,6 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
         } else {
           console.log('[NFE-EMAIL-PDF-PROC-ERR] global.danfePdfProcessor não encontrado')
         }
-      } catch (pdfErr) {
-        console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
-        ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
-      }
-    }
-
-        console.log(
-          '[NFE-EMAIL-PDF-PROCESSED]',
-          JSON.stringify({
-            messageId: msgId,
-            fileName: pdfItem.file_name,
-            result: pdfRes,
-          }),
-        )
-
-        if (pdfRes.accessKey) {
-          extractedKeys.push(pdfRes.accessKey)
-        }
-
-        pdfProcessedCount++
       } catch (pdfErr) {
         console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
         ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
