@@ -102,6 +102,8 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
     const emitCnpj = cleanDigits(extractXmlTag(emitBlock, 'CNPJ'))
     const emitName = extractXmlTag(emitBlock, 'xNome')
     const emitFant = extractXmlTag(emitBlock, 'xFant')
+    const enderEmitBlock = extractXmlTag(emitBlock, 'enderEmit')
+    const emitPhone = cleanDigits(extractXmlTag(enderEmitBlock, 'fone'))
 
     const destBlock = extractXmlTag(infNFeBlock, 'dest')
     const destCnpj = cleanDigits(extractXmlTag(destBlock, 'CNPJ'))
@@ -192,6 +194,7 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       dhEmi: dhEmi,
       emitCnpj: emitCnpj,
       emitName: emitName || emitFant,
+      emitPhone: emitPhone,
       destCnpj: destCnpj,
       destName: destName,
       cStat: cStat,
@@ -343,22 +346,29 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       } catch (_) {}
     }
 
+    let supplierPendingRegistration = false
     if (!supplierRec && parsed.emitCnpj) {
-      try {
-        const custCol = $app.findCollectionByNameOrId('customers')
-        const newSupp = new Record(custCol)
-        newSupp.set('name', parsed.emitName || 'Fornecedor CNPJ ' + parsed.emitCnpj)
-        newSupp.set('company', parsed.emitName || '')
-        newSupp.set('cnpj', parsed.emitCnpj)
-        newSupp.set('email', senderEmail || '')
-        newSupp.set('type', 'PJ')
-        newSupp.set('customer_type', 'Fornecedor')
-        newSupp.set('source', 'nfe_email_inbox')
-        newSupp.set('notes', 'Cadastrado automaticamente via entrada de NF-e por Email.')
-        $app.save(newSupp)
-        supplierRec = newSupp
-      } catch (suppErr) {
-        console.log('[NFE-EMAIL-SUPPLIER-CREATE-ERR]', String(suppErr))
+      if (parsed.emitPhone) {
+        try {
+          const custCol = $app.findCollectionByNameOrId('customers')
+          const newSupp = new Record(custCol)
+          newSupp.set('name', parsed.emitName || 'Fornecedor CNPJ ' + parsed.emitCnpj)
+          newSupp.set('company', parsed.emitName || '')
+          newSupp.set('cnpj', parsed.emitCnpj)
+          newSupp.set('phone', parsed.emitPhone)
+          newSupp.set('email', senderEmail || '')
+          newSupp.set('type', 'PJ')
+          newSupp.set('customer_type', 'Fornecedor')
+          newSupp.set('source', 'nfe_email_inbox')
+          newSupp.set('notes', 'Cadastrado automaticamente via entrada de NF-e por Email.')
+          $app.save(newSupp)
+          supplierRec = newSupp
+        } catch (suppErr) {
+          console.log('[NFE-EMAIL-SUPPLIER-CREATE-ERR]', String(suppErr))
+          supplierPendingRegistration = true
+        }
+      } else {
+        supplierPendingRegistration = true
       }
     }
 
@@ -409,6 +419,13 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
           ') ou email (' +
           (senderEmail || 'vazio') +
           ') não consta previamente como fornecedor/contato conhecido do CRM.',
+      )
+    }
+
+    // 2.1 Fornecedor pendente de cadastro (sem telefone no XML para cadastro automático)
+    if (supplierPendingRegistration) {
+      guardReasons.push(
+        'Fornecedor pendente de cadastro: XML sem telefone do emitente (<enderEmit><fone>) para cadastro automático no CRM.',
       )
     }
 
@@ -504,11 +521,7 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
     nfeRec.set('prot_nfe', parsed.nProt || '')
     nfeRec.set('source_channel', 'email')
     nfeRec.set('raw_items', aggregatedItems)
-    if (xmlContent && xmlContent.length > 5000) {
-      nfeRec.set('xml_payload', xmlContent.slice(0, 5000))
-    } else {
-      nfeRec.set('xml_payload', xmlContent || '')
-    }
+    nfeRec.set('xml_payload', xmlContent || '')
     nfeRec.set('notes', emailTrail)
 
     if (isException) {
@@ -1038,6 +1051,8 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
           senderName = senderRaw.trim()
         }
       }
+
+
 
       let senderKnown = false
       if (senderEmail) {
@@ -1590,6 +1605,7 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       dhEmi: dhEmi,
       emitCnpj: emitCnpj,
       emitName: emitName || emitFant,
+      emitPhone: emitPhone,
       destCnpj: destCnpj,
       destName: destName,
       cStat: cStat,
@@ -1721,22 +1737,29 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       } catch (_) {}
     }
 
+    let supplierPendingRegistration = false
     if (!supplierRec && parsed.emitCnpj) {
-      try {
-        const custCol = $app.findCollectionByNameOrId('customers')
-        const newSupp = new Record(custCol)
-        newSupp.set('name', parsed.emitName || 'Fornecedor CNPJ ' + parsed.emitCnpj)
-        newSupp.set('company', parsed.emitName || '')
-        newSupp.set('cnpj', parsed.emitCnpj)
-        newSupp.set('email', senderEmail || '')
-        newSupp.set('type', 'PJ')
-        newSupp.set('customer_type', 'Fornecedor')
-        newSupp.set('source', 'nfe_email_inbox')
-        newSupp.set('notes', 'Cadastrado automaticamente via entrada de NF-e por Email.')
-        $app.save(newSupp)
-        supplierRec = newSupp
-      } catch (suppErr) {
-        console.log('[NFE-EMAIL-SUPPLIER-CREATE-ERR]', String(suppErr))
+      if (parsed.emitPhone) {
+        try {
+          const custCol = $app.findCollectionByNameOrId('customers')
+          const newSupp = new Record(custCol)
+          newSupp.set('name', parsed.emitName || 'Fornecedor CNPJ ' + parsed.emitCnpj)
+          newSupp.set('company', parsed.emitName || '')
+          newSupp.set('cnpj', parsed.emitCnpj)
+          newSupp.set('phone', parsed.emitPhone)
+          newSupp.set('email', senderEmail || '')
+          newSupp.set('type', 'PJ')
+          newSupp.set('customer_type', 'Fornecedor')
+          newSupp.set('source', 'nfe_email_inbox')
+          newSupp.set('notes', 'Cadastrado automaticamente via entrada de NF-e por Email.')
+          $app.save(newSupp)
+          supplierRec = newSupp
+        } catch (suppErr) {
+          console.log('[NFE-EMAIL-SUPPLIER-CREATE-ERR]', String(suppErr))
+          supplierPendingRegistration = true
+        }
+      } else {
+        supplierPendingRegistration = true
       }
     }
 
@@ -1785,6 +1808,13 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
           ') ou email (' +
           (senderEmail || 'vazio') +
           ') não consta previamente como fornecedor/contato conhecido do CRM.',
+      )
+    }
+
+    // 2.1 Fornecedor pendente de cadastro (sem telefone no XML para cadastro automático)
+    if (supplierPendingRegistration) {
+      guardReasons.push(
+        'Fornecedor pendente de cadastro: XML sem telefone do emitente (<enderEmit><fone>) para cadastro automático no CRM.',
       )
     }
 
@@ -1876,11 +1906,7 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
     nfeRec.set('prot_nfe', parsed.nProt || '')
     nfeRec.set('source_channel', 'email')
     nfeRec.set('raw_items', aggregatedItems)
-    if (xmlContent && xmlContent.length > 5000) {
-      nfeRec.set('xml_payload', xmlContent.slice(0, 5000))
-    } else {
-      nfeRec.set('xml_payload', xmlContent || '')
-    }
+    nfeRec.set('xml_payload', xmlContent || '')
     nfeRec.set('notes', emailTrail)
 
     if (isException) {
@@ -2385,6 +2411,9 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       } else {
         senderEmail = senderRaw.toLowerCase().trim()
         senderName = senderRaw.trim()
+      }
+    }
+
       }
     }
 
