@@ -1601,7 +1601,10 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         let markdownText = ''
 
         try {
-          markdownText = $documents.toMarkdown(pdfBytesOrB64, audit.fileName || 'danfe.pdf')
+          const fileName = (audit && audit.fileName) || 'danfe.pdf'
+          const docFile = $filesystem.fileFromBytes(pdfBytesOrB64, fileName)
+          const convResult = $documents.toMarkdown({ file: docFile })
+          markdownText = (convResult && convResult.markdown) || ''
         } catch (docErr) {
           console.log('[DANFE-PDF-DOC-CONVERT-ERR]', String(docErr), JSON.stringify(audit))
           const reason = 'PDF sem camada de texto — pedir XML ao fornecedor'
@@ -3431,7 +3434,10 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       let markdownText = ''
 
       try {
-        markdownText = $documents.toMarkdown(pdfBytesOrB64, audit.fileName || 'danfe.pdf')
+        const fileName = (audit && audit.fileName) || 'danfe.pdf'
+        const docFile = $filesystem.fileFromBytes(pdfBytesOrB64, fileName)
+        const convResult = $documents.toMarkdown({ file: docFile })
+        markdownText = (convResult && convResult.markdown) || ''
       } catch (docErr) {
         console.log('[DANFE-PDF-DOC-CONVERT-ERR]', String(docErr), JSON.stringify(audit))
         const reason = 'PDF sem camada de texto — pedir XML ao fornecedor'

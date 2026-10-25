@@ -214,22 +214,44 @@ function processDanfePdf(options) {
   let markdownText = ''
 
   try {
+    const fileName = audit.fileName || 'danfe.pdf'
+    let docFile = null
+
     if (sourceType === 'url') {
-      const res = $http.send({
-        url: pdfSource,
-        method: 'GET',
-        timeout: 40,
-      })
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        throw new Error('Falha HTTP ao baixar PDF: ' + res.statusCode)
+      try {
+        docFile = $filesystem.fileFromURL(pdfSource, 40)
+      } catch (uErr) {
+        console.log('[DANFE-PDF-STANDALONE-URL-ERR]', String(uErr))
+        docFile = null
       }
-      markdownText = $documents.toMarkdown(res.body, 'danfe.pdf')
+      if (!docFile) {
+        const res = $http.send({
+          url: pdfSource,
+          method: 'GET',
+          timeout: 40,
+        })
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          throw new Error('Falha HTTP ao baixar PDF: ' + res.statusCode)
+        }
+        docFile = $filesystem.fileFromBytes(res.body, fileName)
+      }
     } else if (sourceType === 'bytes') {
-      markdownText = $documents.toMarkdown(pdfSource, audit.fileName || 'danfe.pdf')
+      docFile = $filesystem.fileFromBytes(pdfSource, fileName)
     } else {
       // Local path
-      markdownText = $documents.toMarkdown(pdfSource)
+      try {
+        docFile = $filesystem.fileFromPath(pdfSource)
+      } catch (_) {
+        docFile = null
+      }
     }
+
+    if (!docFile) {
+      throw new Error('Não foi possível obter objeto filesystem.File para o PDF')
+    }
+
+    const convResult = $documents.toMarkdown({ file: docFile })
+    markdownText = (convResult && convResult.markdown) || ''
   } catch (docErr) {
     console.log('[DANFE-PDF-DOC-CONVERT-ERR]', String(docErr), JSON.stringify(audit))
     const reason = 'PDF sem camada de texto — pedir XML ao fornecedor'

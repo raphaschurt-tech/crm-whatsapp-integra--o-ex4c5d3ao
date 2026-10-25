@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-10-25T17:45:00-03:00",
+  "reason": "Âncora 🟡 BACKUP PRIMEIRO antes da correção de chamada $documents.toMarkdown no processador de DANFE em PDF",
+  "task": "Corrigir extração de texto do PDF no processador DANFE embutido nos consumidores (whatsapp_webhook.js e nfe_email_inbox.js e danfe_pdf_processor.js) - ajuste para formato { file } exigido pela API",
+  "affected_files": [
+    "pocketbase/hooks/whatsapp_webhook.js",
+    "pocketbase/hooks/nfe_email_inbox.js",
+    "pocketbase/hooks/danfe_pdf_processor.js"
+  ],
+  "sample_failed_review_queue_record": {
+    "id": "euxwf0tjtjesktw",
+    "created": "2026-10-25 20:34:37.334Z",
+    "description": "PDF sem camada de texto — pedir XML ao fornecedor",
+    "resolution_notes": "Origem: whatsapp | Remetente: 5511947518805 | Arquivo: danfe_35260960625586000101550010000021741659300497.pdf | Horário: 2026-10-25T17:34:37.333-03:00",
+    "error_cause": "SkipDocumentError: $documents.toMarkdown: pass { file } or { record, field }"
+  }
+}

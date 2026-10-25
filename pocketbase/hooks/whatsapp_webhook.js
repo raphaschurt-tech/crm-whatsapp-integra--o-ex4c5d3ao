@@ -1005,15 +1005,38 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       let markdownText = ''
 
       try {
-        const res = $http.send({
-          url: url,
-          method: 'GET',
-          timeout: 40,
-        })
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          throw new Error('Falha HTTP ao baixar PDF: ' + res.statusCode)
+        const fileName = (audit && audit.fileName) || 'danfe.pdf'
+        let docFile = null
+
+        // 1. Tenta baixar direto via $filesystem.fileFromURL (retorna objeto filesystem.File com reader nativo)
+        try {
+          docFile = $filesystem.fileFromURL(url, 40)
+        } catch (urlFileErr) {
+          console.log('[DANFE-PDF-FS-URL-ERR]', String(urlFileErr))
+          docFile = null
         }
-        markdownText = $documents.toMarkdown(res.body, audit.fileName || 'danfe.pdf')
+
+        // 2. Se fileFromURL falhar, baixa via $http e monta filesystem.File via fileFromBytes
+        if (!docFile) {
+          const res = $http.send({
+            url: url,
+            method: 'GET',
+            timeout: 40,
+          })
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            throw new Error('Falha HTTP ao baixar PDF: ' + res.statusCode)
+          }
+          const bytes = res.body
+          docFile = $filesystem.fileFromBytes(bytes, fileName)
+        }
+
+        if (!docFile) {
+          throw new Error('Não foi possível obter objeto filesystem.File para o PDF')
+        }
+
+        // Chamada conforme contrato da API Skip Cloud: $documents.toMarkdown({ file: docFile })
+        const convResult = $documents.toMarkdown({ file: docFile })
+        markdownText = (convResult && convResult.markdown) || ''
       } catch (docErr) {
         console.log('[DANFE-PDF-DOC-CONVERT-ERR]', String(docErr), JSON.stringify(audit))
         const reason = 'PDF sem camada de texto — pedir XML ao fornecedor'

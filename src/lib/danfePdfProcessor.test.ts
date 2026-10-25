@@ -58,9 +58,23 @@ function extractNfeKeysFromText(text: string): string[] {
 
 describe('DANFE PDF Processor - Extração e Validação de Chave 44', () => {
   const chaveOxilapaReal = '35261059417469000173550010000329431406428669'
+  const chaveDanfeWhatsAppReal = '35260960625586000101550010000021741659300497'
 
-  it('valida DV correto para chave real da Oxilapa', () => {
+  it('valida DV correto para chave real da Oxilapa e chave real da DANFE do WhatsApp (35260960625586000101550010000021741659300497)', () => {
     expect(validateNfeKeyDV(chaveOxilapaReal)).toBe(true)
+    expect(validateNfeKeyDV(chaveDanfeWhatsAppReal)).toBe(true)
+  })
+
+  it('extrai chave real 35260960625586000101550010000021741659300497 de texto típico de DANFE', () => {
+    const textoDanfe = `
+      DANFE - DOCUMENTO AUXILIAR DA NOTA FISCAL ELETRÔNICA
+      CHAVE DE ACESSO
+      3526 0960 6255 8600 0101 5500 1000 0021 7416 5930 0497
+      Consulta de autenticidade no portal nacional da NF-e
+    `
+    const keys = extractNfeKeysFromText(textoDanfe)
+    expect(keys).toContain(chaveDanfeWhatsAppReal)
+    expect(validateNfeKeyDV(keys[0])).toBe(true)
   })
 
   it('rejeita chaves com tamanho incorreto ou DV adulterado', () => {
