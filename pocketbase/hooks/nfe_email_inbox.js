@@ -1052,8 +1052,6 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         }
       }
 
-
-
       let senderKnown = false
       if (senderEmail) {
         try {
@@ -1515,6 +1513,8 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
     const emitCnpj = cleanDigits(extractXmlTag(emitBlock, 'CNPJ'))
     const emitName = extractXmlTag(emitBlock, 'xNome')
     const emitFant = extractXmlTag(emitBlock, 'xFant')
+    const enderEmitBlock = extractXmlTag(emitBlock, 'enderEmit')
+    const emitPhone = cleanDigits(extractXmlTag(enderEmitBlock, 'fone'))
 
     const destBlock = extractXmlTag(infNFeBlock, 'dest')
     const destCnpj = cleanDigits(extractXmlTag(destBlock, 'CNPJ'))
@@ -2411,9 +2411,6 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       } else {
         senderEmail = senderRaw.toLowerCase().trim()
         senderName = senderRaw.trim()
-      }
-    }
-
       }
     }
 
