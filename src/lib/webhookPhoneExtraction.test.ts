@@ -390,6 +390,37 @@ check(
   JSON.stringify(['MSG_A', 'MSG_B', 'MSG_INCOMING_NEW']),
 )
 
+console.log('\n11. TESTE DE REGRESSÃO S3 — Desvio NF-e / DANFE em PDF no Webhook WhatsApp:')
+const isXmlPredicate = (name: string, url: string, type: string, text: string) => {
+  return Boolean(
+    (name && /\.xml$/i.test(name.trim())) ||
+    (url && /\.xml(\?|$)/i.test(url.trim())) ||
+    (type === 'document' &&
+      (name.toLowerCase().includes('.xml') || (url && url.toLowerCase().includes('.xml')))) ||
+    (text && (text.includes('<nfeProc') || text.includes('<NFe') || text.includes('<infNFe'))),
+  )
+}
+const isPdfPredicate = (name: string, url: string, type: string) => {
+  return Boolean(
+    (name && /\.pdf$/i.test(name.trim())) ||
+    (url && /\.pdf(\?|$)/i.test(url.trim())) ||
+    (type === 'document' &&
+      (name.toLowerCase().includes('.pdf') || (url && url.toLowerCase().includes('.pdf')))),
+  )
+}
+
+check('XML é interceptado pelo desvio S3', isXmlPredicate('nfe_123.xml', '', 'document', ''), true)
+check(
+  'DANFE em PDF é interceptado pelo desvio S3 sem criar lead/atendimento',
+  isPdfPredicate('1792786743708.pdf', 'https://f004.backblazeb2.com/file/temp.pdf', 'document'),
+  true,
+)
+check(
+  'Mensagem normal de texto NÃO é interceptada por S3',
+  isPdfPredicate('', '', 'text') || isXmlPredicate('', '', 'text', 'Olá bom dia'),
+  false,
+)
+
 console.log(
   `\nResultado: ${pass} passaram, ${fail} falharam. ${fail === 0 ? 'G-E / G-G OK.' : 'FALHAS DETECTADAS — revisar hook e teste.'}\n`,
 )

@@ -829,6 +829,55 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
     return xmls
   }
 
+  function decodeBase64ToBytes(input) {
+    if (!input || typeof input !== 'string') return new Uint8Array(0)
+    let str = input.trim()
+    if (str.startsWith('data:')) {
+      const commaIdx = str.indexOf(',')
+      if (commaIdx !== -1) str = str.substring(commaIdx + 1).trim()
+    }
+    let cleanB64 = str
+      .replace(/-/g, '+')
+      .replace(/_/g, '/')
+      .replace(/[\r\n\s]/g, '')
+    while (cleanB64.length % 4 !== 0) cleanB64 += '='
+
+    if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
+      try {
+        const buf = Buffer.from(cleanB64, 'base64')
+        return new Uint8Array(buf)
+      } catch (_) {}
+    }
+
+    try {
+      const b64Chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+      const stripped = cleanB64.replace(/=/g, '')
+      const len = stripped.length
+      const bytes = []
+      let i = 0
+      while (i < len) {
+        const c0 = b64Chars.indexOf(stripped.charAt(i++))
+        const c1 = i < len ? b64Chars.indexOf(stripped.charAt(i++)) : 0
+        const c2 = i < len ? b64Chars.indexOf(stripped.charAt(i++)) : -1
+        const c3 = i < len ? b64Chars.indexOf(stripped.charAt(i++)) : -1
+        if (c0 === -1 || c1 === -1) break
+        const b0 = (c0 << 2) | (c1 >> 4)
+        bytes.push(b0)
+        if (c2 !== -1) {
+          const b1 = ((c1 & 15) << 4) | (c2 >> 2)
+          bytes.push(b1)
+          if (c3 !== -1) {
+            const b2 = ((c2 & 3) << 6) | c3
+            bytes.push(b2)
+          }
+        }
+      }
+      return new Uint8Array(bytes)
+    } catch (_) {
+      return new Uint8Array(0)
+    }
+  }
+
   function decodeBase64ToUtf8(input) {
     if (!input || typeof input !== 'string') return ''
     let str = input.trim()
@@ -1071,13 +1120,15 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
 
       const xmlList = []
       const attachmentsToFetch = []
+      const pdfAttachmentsToProcess = []
 
       function searchParts(parts) {
         if (!Array.isArray(parts)) return
         for (let p = 0; p < parts.length; p++) {
           const part = parts[p]
           if (!part || typeof part !== 'object') continue
-          const fn = (part.filename || part.file_name || '').toLowerCase()
+          const rawFn = part.filename || part.file_name || ''
+          const fn = rawFn.toLowerCase()
           const mime = (part.mimeType || part.mime_type || '').toLowerCase()
           const bodyObj = part.body || {}
 
@@ -1108,11 +1159,42 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
               if (!alreadyInList) {
                 attachmentsToFetch.push({
                   attachment_id: attIdFound,
-                  file_name: part.filename || part.file_name || 'nfe.xml',
+                  file_name: rawFn || 'nfe.xml',
+                })
+              }
+            }
+          } else if (fn.endsWith('.pdf') || mime.includes('pdf')) {
+            if (bodyObj.data && typeof bodyObj.data === 'string') {
+              try {
+                const pdfBytes = decodeBase64ToBytes(bodyObj.data)
+                if (pdfBytes && pdfBytes.length > 0) {
+                  pdfAttachmentsToProcess.push({
+                    bytes: pdfBytes,
+                    file_name: rawFn || 'danfe.pdf',
+                  })
+                }
+              } catch (bErr) {
+                console.log('[NFE-EMAIL-PDF-B64-ERR]', String(bErr))
+              }
+            } else if (bodyObj.attachmentId || part.attachment_id || part.attachmentId) {
+              const attIdFound = bodyObj.attachmentId || part.attachment_id || part.attachmentId
+              let alreadyInList = false
+              for (let k = 0; k < attachmentsToFetch.length; k++) {
+                if (attachmentsToFetch[k].attachment_id === attIdFound) {
+                  alreadyInList = true
+                  break
+                }
+              }
+              if (!alreadyInList) {
+                attachmentsToFetch.push({
+                  attachment_id: attIdFound,
+                  file_name: rawFn || 'danfe.pdf',
+                  is_pdf: true,
                 })
               }
             }
           }
+
           if (part.parts && Array.isArray(part.parts)) {
             searchParts(part.parts)
           }
@@ -1123,14 +1205,24 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         if (msg.payload.parts && Array.isArray(msg.payload.parts)) {
           searchParts(msg.payload.parts)
         }
-        const topFn = (msg.payload.filename || msg.payload.file_name || '').toLowerCase()
+        const topRawFn = msg.payload.filename || msg.payload.file_name || ''
+        const topFn = topRawFn.toLowerCase()
         const topMime = (msg.payload.mimeType || msg.payload.mime_type || '').toLowerCase()
         if (topFn.endsWith('.xml') || topMime.includes('xml')) {
           const topBody = msg.payload.body || {}
           if (topBody.attachmentId) {
             attachmentsToFetch.push({
               attachment_id: topBody.attachmentId,
-              file_name: msg.payload.filename || 'nfe.xml',
+              file_name: topRawFn || 'nfe.xml',
+            })
+          }
+        } else if (topFn.endsWith('.pdf') || topMime.includes('pdf')) {
+          const topBody = msg.payload.body || {}
+          if (topBody.attachmentId) {
+            attachmentsToFetch.push({
+              attachment_id: topBody.attachmentId,
+              file_name: topRawFn || 'danfe.pdf',
+              is_pdf: true,
             })
           }
         }
@@ -1139,7 +1231,8 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       if (Array.isArray(msg.attachmentList)) {
         for (let al = 0; al < msg.attachmentList.length; al++) {
           const att = msg.attachmentList[al] || {}
-          const fn = (att.filename || att.file_name || att.name || '').toLowerCase()
+          const rawFn = att.filename || att.file_name || att.name || ''
+          const fn = rawFn.toLowerCase()
           const attId = att.attachmentId || att.attachment_id || att.id
           if (fn.endsWith('.xml') || fn.includes('xml')) {
             if (att.content || att.data) {
@@ -1165,7 +1258,34 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
               if (!alreadyInList) {
                 attachmentsToFetch.push({
                   attachment_id: attId,
-                  file_name: att.filename || att.file_name || att.name || 'nfe.xml',
+                  file_name: rawFn || 'nfe.xml',
+                })
+              }
+            }
+          } else if (fn.endsWith('.pdf') || fn.includes('pdf')) {
+            if (att.content || att.data) {
+              try {
+                const pdfBytes = decodeBase64ToBytes(att.content || att.data)
+                if (pdfBytes && pdfBytes.length > 0) {
+                  pdfAttachmentsToProcess.push({
+                    bytes: pdfBytes,
+                    file_name: rawFn || 'danfe.pdf',
+                  })
+                }
+              } catch (_) {}
+            } else if (attId) {
+              let alreadyInList = false
+              for (let k = 0; k < attachmentsToFetch.length; k++) {
+                if (attachmentsToFetch[k].attachment_id === attId) {
+                  alreadyInList = true
+                  break
+                }
+              }
+              if (!alreadyInList) {
+                attachmentsToFetch.push({
+                  attachment_id: attId,
+                  file_name: rawFn || 'danfe.pdf',
+                  is_pdf: true,
                 })
               }
             }
@@ -1176,7 +1296,8 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       if (Array.isArray(msg.attachments)) {
         for (let a = 0; a < msg.attachments.length; a++) {
           const att = msg.attachments[a] || {}
-          const fn = (att.filename || att.file_name || att.name || '').toLowerCase()
+          const rawFn = att.filename || att.file_name || att.name || ''
+          const fn = rawFn.toLowerCase()
           const attId = att.attachmentId || att.attachment_id || att.id
           if (fn.endsWith('.xml') || fn.includes('xml')) {
             if (att.content || att.data) {
@@ -1202,7 +1323,34 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
               if (!alreadyInList) {
                 attachmentsToFetch.push({
                   attachment_id: attId,
-                  file_name: att.filename || att.file_name || att.name || 'nfe.xml',
+                  file_name: rawFn || 'nfe.xml',
+                })
+              }
+            }
+          } else if (fn.endsWith('.pdf') || fn.includes('pdf')) {
+            if (att.content || att.data) {
+              try {
+                const pdfBytes = decodeBase64ToBytes(att.content || att.data)
+                if (pdfBytes && pdfBytes.length > 0) {
+                  pdfAttachmentsToProcess.push({
+                    bytes: pdfBytes,
+                    file_name: rawFn || 'danfe.pdf',
+                  })
+                }
+              } catch (_) {}
+            } else if (attId) {
+              let alreadyInList = false
+              for (let k = 0; k < attachmentsToFetch.length; k++) {
+                if (attachmentsToFetch[k].attachment_id === attId) {
+                  alreadyInList = true
+                  break
+                }
+              }
+              if (!alreadyInList) {
+                attachmentsToFetch.push({
+                  attachment_id: attId,
+                  file_name: rawFn || 'danfe.pdf',
+                  is_pdf: true,
                 })
               }
             }
@@ -1260,24 +1408,34 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
             }
 
             if (rawAttData) {
-              let textContent = ''
               const rawStr = String(rawAttData).trim()
-              if (
-                rawStr.includes('<nfeProc') ||
-                rawStr.includes('<NFe') ||
-                rawStr.includes('<infNFe')
-              ) {
-                textContent = rawStr
+              if (attInfo.is_pdf) {
+                const pdfBytes = decodeBase64ToBytes(rawStr)
+                if (pdfBytes && pdfBytes.length > 0) {
+                  pdfAttachmentsToProcess.push({
+                    bytes: pdfBytes,
+                    file_name: attInfo.file_name || 'danfe.pdf',
+                  })
+                }
               } else {
-                textContent = decodeBase64ToUtf8(rawStr)
-              }
-              if (
-                textContent &&
-                (textContent.includes('<nfeProc') ||
-                  textContent.includes('<NFe') ||
-                  textContent.includes('<infNFe'))
-              ) {
-                xmlList.push(textContent)
+                let textContent = ''
+                if (
+                  rawStr.includes('<nfeProc') ||
+                  rawStr.includes('<NFe') ||
+                  rawStr.includes('<infNFe')
+                ) {
+                  textContent = rawStr
+                } else {
+                  textContent = decodeBase64ToUtf8(rawStr)
+                }
+                if (
+                  textContent &&
+                  (textContent.includes('<nfeProc') ||
+                    textContent.includes('<NFe') ||
+                    textContent.includes('<infNFe'))
+                ) {
+                  xmlList.push(textContent)
+                }
               }
             }
           }
@@ -1314,6 +1472,73 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         }
       }
 
+      // PROCESSAMENTO DE DANFES EM PDF ANEXADAS NO EMAIL
+      let pdfProcessedCount = 0
+      const proc = (typeof global !== 'undefined' && global.danfePdfProcessor) || (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor)
+
+      for (let p = 0; p < pdfAttachmentsToProcess.length; p++) {
+        const pdfItem = pdfAttachmentsToProcess[p]
+        try {
+          const auditTrail = {
+            origin: 'email',
+            sender: senderEmail,
+            remetente: senderName || senderEmail,
+            fileName: pdfItem.file_name || 'danfe.pdf',
+            gmail_message_id: msgId,
+            subject: subject,
+            email_date: emailDate,
+          }
+
+          if (proc && typeof proc.processDanfePdf === 'function') {
+            const pdfRes = proc.processDanfePdf({
+              pdfSource: pdfItem.bytes,
+              sourceType: 'bytes',
+              auditTrail: auditTrail,
+            })
+
+            console.log(
+              '[NFE-EMAIL-PDF-PROCESSED]',
+              JSON.stringify({
+                messageId: msgId,
+                fileName: pdfItem.file_name,
+                result: pdfRes,
+              }),
+            )
+
+            if (pdfRes.accessKey) {
+              extractedKeys.push(pdfRes.accessKey)
+            }
+
+            pdfProcessedCount++
+          } else {
+            console.log('[NFE-EMAIL-PDF-PROC-ERR] global.danfePdfProcessor não encontrado')
+          }
+        } catch (pdfErr) {
+          console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
+          ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
+        }
+      }
+
+          console.log(
+            '[NFE-EMAIL-PDF-PROCESSED]',
+            JSON.stringify({
+              messageId: msgId,
+              fileName: pdfItem.file_name,
+              result: pdfRes,
+            }),
+          )
+
+          if (pdfRes.accessKey) {
+            extractedKeys.push(pdfRes.accessKey)
+          }
+
+          pdfProcessedCount++
+        } catch (pdfErr) {
+          console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
+          ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
+        }
+      }
+
       try {
         const inboxRec = existingRecord || new Record(inboxCol)
         inboxRec.set('gmail_message_id', msgId)
@@ -1323,11 +1548,11 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         inboxRec.set('sender_known', senderKnown)
         inboxRec.set('subject', subject)
         inboxRec.set('email_date', emailDate)
-        inboxRec.set('xml_count', xmlList.length)
+        inboxRec.set('xml_count', xmlList.length + pdfProcessedCount)
         inboxRec.set('xml_keys', extractedKeys)
         inboxRec.set('processed_at', horarioBrasilia)
 
-        if (xmlList.length > 0) {
+        if (xmlList.length > 0 || pdfProcessedCount > 0) {
           inboxRec.set('status', ingestErrors.length > 0 ? 'erro' : 'processado')
           if (ingestErrors.length > 0) {
             inboxRec.set('error_detail', ingestErrors.join(' | '))
@@ -2433,13 +2658,15 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
 
     const xmlList = []
     const attachmentsToFetch = []
+    const pdfAttachmentsToProcess = []
 
     function searchParts(parts) {
       if (!Array.isArray(parts)) return
       for (let p = 0; p < parts.length; p++) {
         const part = parts[p]
         if (!part || typeof part !== 'object') continue
-        const fn = (part.filename || part.file_name || '').toLowerCase()
+        const rawFn = part.filename || part.file_name || ''
+        const fn = rawFn.toLowerCase()
         const mime = (part.mimeType || part.mime_type || '').toLowerCase()
         const bodyObj = part.body || {}
 
@@ -2470,7 +2697,37 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
             if (!alreadyInList) {
               attachmentsToFetch.push({
                 attachment_id: attIdFound,
-                file_name: part.filename || part.file_name || 'nfe.xml',
+                file_name: rawFn || 'nfe.xml',
+              })
+            }
+          }
+        } else if (fn.endsWith('.pdf') || mime.includes('pdf')) {
+          if (bodyObj.data && typeof bodyObj.data === 'string') {
+            try {
+              const pdfBytes = decodeBase64ToBytes(bodyObj.data)
+              if (pdfBytes && pdfBytes.length > 0) {
+                pdfAttachmentsToProcess.push({
+                  bytes: pdfBytes,
+                  file_name: rawFn || 'danfe.pdf',
+                })
+              }
+            } catch (bErr) {
+              console.log('[NFE-EMAIL-PDF-B64-ERR]', String(bErr))
+            }
+          } else if (bodyObj.attachmentId || part.attachment_id || part.attachmentId) {
+            const attIdFound = bodyObj.attachmentId || part.attachment_id || part.attachmentId
+            let alreadyInList = false
+            for (let k = 0; k < attachmentsToFetch.length; k++) {
+              if (attachmentsToFetch[k].attachment_id === attIdFound) {
+                alreadyInList = true
+                break
+              }
+            }
+            if (!alreadyInList) {
+              attachmentsToFetch.push({
+                attachment_id: attIdFound,
+                file_name: rawFn || 'danfe.pdf',
+                is_pdf: true,
               })
             }
           }
@@ -2486,14 +2743,24 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       if (msg.payload.parts && Array.isArray(msg.payload.parts)) {
         searchParts(msg.payload.parts)
       }
-      const topFn = (msg.payload.filename || msg.payload.file_name || '').toLowerCase()
+      const topRawFn = msg.payload.filename || msg.payload.file_name || ''
+      const topFn = topRawFn.toLowerCase()
       const topMime = (msg.payload.mimeType || msg.payload.mime_type || '').toLowerCase()
       if (topFn.endsWith('.xml') || topMime.includes('xml')) {
         const topBody = msg.payload.body || {}
         if (topBody.attachmentId) {
           attachmentsToFetch.push({
             attachment_id: topBody.attachmentId,
-            file_name: msg.payload.filename || 'nfe.xml',
+            file_name: topRawFn || 'nfe.xml',
+          })
+        }
+      } else if (topFn.endsWith('.pdf') || topMime.includes('pdf')) {
+        const topBody = msg.payload.body || {}
+        if (topBody.attachmentId) {
+          attachmentsToFetch.push({
+            attachment_id: topBody.attachmentId,
+            file_name: topRawFn || 'danfe.pdf',
+            is_pdf: true,
           })
         }
       }
@@ -2502,7 +2769,8 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
     if (Array.isArray(msg.attachmentList)) {
       for (let al = 0; al < msg.attachmentList.length; al++) {
         const att = msg.attachmentList[al] || {}
-        const fn = (att.filename || att.file_name || att.name || '').toLowerCase()
+        const rawFn = att.filename || att.file_name || att.name || ''
+        const fn = rawFn.toLowerCase()
         const attId = att.attachmentId || att.attachment_id || att.id
         if (fn.endsWith('.xml') || fn.includes('xml')) {
           if (att.content || att.data) {
@@ -2528,7 +2796,34 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
             if (!alreadyInList) {
               attachmentsToFetch.push({
                 attachment_id: attId,
-                file_name: att.filename || att.file_name || att.name || 'nfe.xml',
+                file_name: rawFn || 'nfe.xml',
+              })
+            }
+          }
+        } else if (fn.endsWith('.pdf') || fn.includes('pdf')) {
+          if (att.content || att.data) {
+            try {
+              const pdfBytes = decodeBase64ToBytes(att.content || att.data)
+              if (pdfBytes && pdfBytes.length > 0) {
+                pdfAttachmentsToProcess.push({
+                  bytes: pdfBytes,
+                  file_name: rawFn || 'danfe.pdf',
+                })
+              }
+            } catch (_) {}
+          } else if (attId) {
+            let alreadyInList = false
+            for (let k = 0; k < attachmentsToFetch.length; k++) {
+              if (attachmentsToFetch[k].attachment_id === attId) {
+                alreadyInList = true
+                break
+              }
+            }
+            if (!alreadyInList) {
+              attachmentsToFetch.push({
+                attachment_id: attId,
+                file_name: rawFn || 'danfe.pdf',
+                is_pdf: true,
               })
             }
           }
@@ -2539,7 +2834,8 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
     if (Array.isArray(msg.attachments)) {
       for (let a = 0; a < msg.attachments.length; a++) {
         const att = msg.attachments[a] || {}
-        const fn = (att.filename || att.file_name || att.name || '').toLowerCase()
+        const rawFn = att.filename || att.file_name || att.name || ''
+        const fn = rawFn.toLowerCase()
         const attId = att.attachmentId || att.attachment_id || att.id
         if (fn.endsWith('.xml') || fn.includes('xml')) {
           if (att.content || att.data) {
@@ -2565,7 +2861,34 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
             if (!alreadyInList) {
               attachmentsToFetch.push({
                 attachment_id: attId,
-                file_name: att.filename || att.file_name || att.name || 'nfe.xml',
+                file_name: rawFn || 'nfe.xml',
+              })
+            }
+          }
+        } else if (fn.endsWith('.pdf') || fn.includes('pdf')) {
+          if (att.content || att.data) {
+            try {
+              const pdfBytes = decodeBase64ToBytes(att.content || att.data)
+              if (pdfBytes && pdfBytes.length > 0) {
+                pdfAttachmentsToProcess.push({
+                  bytes: pdfBytes,
+                  file_name: rawFn || 'danfe.pdf',
+                })
+              }
+            } catch (_) {}
+          } else if (attId) {
+            let alreadyInList = false
+            for (let k = 0; k < attachmentsToFetch.length; k++) {
+              if (attachmentsToFetch[k].attachment_id === attId) {
+                alreadyInList = true
+                break
+              }
+            }
+            if (!alreadyInList) {
+              attachmentsToFetch.push({
+                attachment_id: attId,
+                file_name: rawFn || 'danfe.pdf',
+                is_pdf: true,
               })
             }
           }
@@ -2623,24 +2946,34 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
           }
 
           if (rawAttData) {
-            let textContent = ''
             const rawStr = String(rawAttData).trim()
-            if (
-              rawStr.includes('<nfeProc') ||
-              rawStr.includes('<NFe') ||
-              rawStr.includes('<infNFe')
-            ) {
-              textContent = rawStr
+            if (attInfo.is_pdf) {
+              const pdfBytes = decodeBase64ToBytes(rawStr)
+              if (pdfBytes && pdfBytes.length > 0) {
+                pdfAttachmentsToProcess.push({
+                  bytes: pdfBytes,
+                  file_name: attInfo.file_name || 'danfe.pdf',
+                })
+              }
             } else {
-              textContent = decodeBase64ToUtf8(rawStr)
-            }
-            if (
-              textContent &&
-              (textContent.includes('<nfeProc') ||
-                textContent.includes('<NFe') ||
-                textContent.includes('<infNFe'))
-            ) {
-              xmlList.push(textContent)
+              let textContent = ''
+              if (
+                rawStr.includes('<nfeProc') ||
+                rawStr.includes('<NFe') ||
+                rawStr.includes('<infNFe')
+              ) {
+                textContent = rawStr
+              } else {
+                textContent = decodeBase64ToUtf8(rawStr)
+              }
+              if (
+                textContent &&
+                (textContent.includes('<nfeProc') ||
+                  textContent.includes('<NFe') ||
+                  textContent.includes('<infNFe'))
+              ) {
+                xmlList.push(textContent)
+              }
             }
           }
         }
@@ -2678,6 +3011,73 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       }
     }
 
+    // PROCESSAMENTO DE DANFES EM PDF ANEXADAS NO EMAIL
+    let pdfProcessedCount = 0
+    const procManual = (typeof global !== 'undefined' && global.danfePdfProcessor) || (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor)
+
+    for (let p = 0; p < pdfAttachmentsToProcess.length; p++) {
+      const pdfItem = pdfAttachmentsToProcess[p]
+      try {
+        const auditTrail = {
+          origin: 'email',
+          sender: senderEmail,
+          remetente: senderName || senderEmail,
+          fileName: pdfItem.file_name || 'danfe.pdf',
+          gmail_message_id: msgId,
+          subject: subject,
+          email_date: emailDate,
+        }
+
+        if (procManual && typeof procManual.processDanfePdf === 'function') {
+          const pdfRes = procManual.processDanfePdf({
+            pdfSource: pdfItem.bytes,
+            sourceType: 'bytes',
+            auditTrail: auditTrail,
+          })
+
+          console.log(
+            '[NFE-EMAIL-PDF-PROCESSED]',
+            JSON.stringify({
+              messageId: msgId,
+              fileName: pdfItem.file_name,
+              result: pdfRes,
+            }),
+          )
+
+          if (pdfRes.accessKey) {
+            extractedKeys.push(pdfRes.accessKey)
+          }
+
+          pdfProcessedCount++
+        } else {
+          console.log('[NFE-EMAIL-PDF-PROC-ERR] global.danfePdfProcessor não encontrado')
+        }
+      } catch (pdfErr) {
+        console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
+        ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
+      }
+    }
+
+        console.log(
+          '[NFE-EMAIL-PDF-PROCESSED]',
+          JSON.stringify({
+            messageId: msgId,
+            fileName: pdfItem.file_name,
+            result: pdfRes,
+          }),
+        )
+
+        if (pdfRes.accessKey) {
+          extractedKeys.push(pdfRes.accessKey)
+        }
+
+        pdfProcessedCount++
+      } catch (pdfErr) {
+        console.log('[NFE-EMAIL-PDF-PROC-ERR]', String(pdfErr))
+        ingestErrors.push('Erro ao processar PDF ' + pdfItem.file_name + ': ' + String(pdfErr))
+      }
+    }
+
     try {
       const inboxRec = existingRecord || new Record(inboxCol)
       inboxRec.set('gmail_message_id', msgId)
@@ -2687,11 +3087,11 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       inboxRec.set('sender_known', senderKnown)
       inboxRec.set('subject', subject)
       inboxRec.set('email_date', emailDate)
-      inboxRec.set('xml_count', xmlList.length)
+      inboxRec.set('xml_count', xmlList.length + pdfProcessedCount)
       inboxRec.set('xml_keys', extractedKeys)
       inboxRec.set('processed_at', horarioBrasilia)
 
-      if (xmlList.length > 0) {
+      if (xmlList.length > 0 || pdfProcessedCount > 0) {
         inboxRec.set('status', ingestErrors.length > 0 ? 'erro' : 'processado')
         if (ingestErrors.length > 0) {
           inboxRec.set('error_detail', ingestErrors.join(' | '))

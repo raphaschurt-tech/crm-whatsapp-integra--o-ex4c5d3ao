@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-25T03:43:55.499Z",
+  "generatedAt": "2026-10-25T12:23:20.181Z",
   "collections": [
     {
       "name": "users",
@@ -2978,13 +2978,6 @@
       },
       "fields": [
         {
-          "name": "command",
-          "type": "select",
-          "required": true,
-          "system": false,
-          "selectValues": ["consultar_agora", "importacao_retroativa", "reset_ponteiro"]
-        },
-        {
           "name": "params",
           "type": "json",
           "required": false,
@@ -3029,6 +3022,18 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "command",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": [
+            "consultar_agora",
+            "importacao_retroativa",
+            "reset_ponteiro",
+            "busca_por_chave"
+          ]
         }
       ],
       "indexes": ["CREATE INDEX idx_dfe_cmd_status ON dfe_command_queue (status)"]

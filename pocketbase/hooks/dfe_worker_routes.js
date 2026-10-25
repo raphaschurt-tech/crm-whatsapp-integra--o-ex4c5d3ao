@@ -993,3 +993,193 @@ routerAdd('POST', '/backend/v1/dfe/commands/enqueue', (e) => {
     return e.json(500, { success: false, error: err.message || String(err) })
   }
 })
+
+// 9. Rota DFe: POST /backend/v1/dfe/key-download (Download / Entrega de XML da SEFAZ por chave)
+// Chamado pelo Worker DFe (autenticado por Token DFe) para entregar o XML baixado por chave OU
+// para reportar erro caso a SEFAZ não devolva o XML da chave de 44 dígitos.
+// O XML oficial recebido entra diretamente no pipeline normal via POST /backend/v1/nfe/upload,
+// preservando auditoria do rastro (auditTrail: arquivo PDF, remetente, origem).
+routerAdd('POST', '/backend/v1/dfe/key-download', (e) => {
+  let headersObj = {}
+  let queryObj = {}
+  try {
+    const reqInfo = e.requestInfo()
+    headersObj = (reqInfo && reqInfo.headers) || {}
+    queryObj = (reqInfo && reqInfo.query) || {}
+  } catch (_) {
+    headersObj = {}
+    queryObj = {}
+  }
+
+  const authHeader =
+    headersObj['x-dfe-token'] ||
+    headersObj['X-DFe-Token'] ||
+    headersObj['X-DFE-TOKEN'] ||
+    headersObj['authorization'] ||
+    headersObj['Authorization'] ||
+    headersObj['x-api-key'] ||
+    headersObj['X-Api-Key'] ||
+    ''
+
+  let token = String(authHeader).trim()
+  if (token.toLowerCase().startsWith('bearer ')) {
+    token = token.slice(7).trim()
+  }
+  if (!token) {
+    const queryToken = queryObj['dfe_token'] || queryObj['dfeToken'] || queryObj['token'] || ''
+    token = String(queryToken).trim()
+  }
+
+  if (!token) {
+    return e.json(401, { success: false, error: 'Token DFe não fornecido.' })
+  }
+
+  try {
+    const settingsRec = $app.findFirstRecordByFilter('settings', "id != ''")
+    if (!settingsRec) {
+      return e.json(500, { success: false, error: 'Configurações do sistema não encontradas.' })
+    }
+
+    const dfeToken = String(settingsRec.getString('dfe_worker_token') || '').trim()
+    const tokenActive = settingsRec.getBool('dfe_token_active')
+
+    if (!dfeToken || !tokenActive || token !== dfeToken) {
+      return e.json(403, { success: false, error: 'Token DFe inválido, inativo ou revogado.' })
+    }
+
+    let body = {}
+    try {
+      body = e.requestInfo().body || {}
+    } catch (_) {
+      body = {}
+    }
+
+    const accessKey = String(body.access_key || '').replace(/\D/g, '')
+    const xmlContent = body.xml || body.xml_content || ''
+    const commandId = body.command_id || ''
+    const downloadFailed = Boolean(body.failed || !xmlContent)
+    const failureReason =
+      body.error || body.reason || 'SEFAZ não retornou o XML oficial para a chave.'
+    const auditTrail = body.audit_trail || body.audit || {}
+
+    // Fuso Brasília
+    let bIso = ''
+    try {
+      bIso = new Date(Date.now() - 3 * 3600 * 1000).toISOString().replace('Z', '-03:00')
+    } catch (_) {
+      bIso = new Date().toISOString()
+    }
+
+    // Se o worker informou falha no download da SEFAZ
+    if (downloadFailed || !xmlContent) {
+      console.log(
+        '[DFE-KEY-DOWNLOAD-FAILED]',
+        JSON.stringify({
+          accessKey: accessKey,
+          horarioBrasilia: bIso,
+          error: failureReason,
+          auditTrail: auditTrail,
+        }),
+      )
+
+      // Encaminhar para a Fila de Revisão com alerta claro
+      try {
+        const queueCol = $app.findCollectionByNameOrId('nfe_price_queue')
+        const qRec = new Record(queueCol)
+        qRec.set('access_key', accessKey)
+        qRec.set('supplier_code', '')
+        qRec.set(
+          'description',
+          'DANFE em PDF: XML não retornado pela SEFAZ para a chave ' +
+            accessKey +
+            ' — motivo: ' +
+            failureReason,
+        )
+        qRec.set('status', 'pendente')
+        qRec.set('item_type', 'excecao')
+        qRec.set(
+          'resolution_notes',
+          'Origem DANFE PDF: ' + JSON.stringify(auditTrail) + ' | Erro SEFAZ: ' + failureReason,
+        )
+        $app.save(qRec)
+      } catch (qErr) {
+        console.log('[DFE-KEY-DOWNLOAD-QUEUE-ERR]', String(qErr))
+      }
+
+      // Se havia um comando na fila associado, marcar como erro
+      if (commandId) {
+        try {
+          const cmdRec = $app.findRecordById('dfe_command_queue', commandId)
+          cmdRec.set('status', 'erro')
+          cmdRec.set('result_summary', 'Falha no download SEFAZ: ' + failureReason)
+          cmdRec.set('executed_at', bIso)
+          $app.save(cmdRec)
+        } catch (_) {}
+      }
+
+      return e.json(200, {
+        success: false,
+        status: 'fila_revisao',
+        access_key: accessKey,
+        error: failureReason,
+        message: 'XML não veio da SEFAZ. Encaminhado para a Fila de Revisão com alerta claro.',
+      })
+    }
+
+    // Se veio o XML da SEFAZ: Ingestão normal no pipeline com rastro de auditoria
+    const appUrl = $os.getenv('APP_URL') || 'http://127.0.0.1:8090'
+    const uploadRes = $http.send({
+      url: appUrl + '/backend/v1/nfe/upload',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        xml: xmlContent,
+        source_channel: auditTrail.origin || 'danfe_pdf',
+        pdf_audit_trail: auditTrail,
+      }),
+      timeout: 30,
+    })
+
+    let respData = {}
+    try {
+      respData = JSON.parse(uploadRes.rawText)
+    } catch (_) {
+      respData = { status: uploadRes.statusCode, raw: uploadRes.rawText }
+    }
+
+    // Se havia um comando na fila, marcar como concluído
+    if (commandId) {
+      try {
+        const cmdRec = $app.findRecordById('dfe_command_queue', commandId)
+        cmdRec.set('status', 'concluido')
+        cmdRec.set(
+          'result_summary',
+          'XML baixado da SEFAZ com sucesso e processado no pipeline. Chave: ' + accessKey,
+        )
+        cmdRec.set('executed_at', bIso)
+        $app.save(cmdRec)
+      } catch (_) {}
+    }
+
+    console.log(
+      '[DFE-KEY-DOWNLOAD-SUCCESS]',
+      JSON.stringify({
+        accessKey: accessKey,
+        horarioBrasilia: bIso,
+        uploadStatusCode: uploadRes.statusCode,
+        auditTrail: auditTrail,
+      }),
+    )
+
+    return e.json(uploadRes.statusCode, {
+      success: true,
+      access_key: accessKey,
+      pipeline_result: respData,
+      audit_trail: auditTrail,
+    })
+  } catch (err) {
+    return e.json(500, { success: false, error: err.message || String(err) })
+  }
+})

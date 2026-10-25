@@ -665,12 +665,13 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
   }
 
   // ==========================================
-  // S3 (CRÍTICA — DESVIO NO WHATSAPP PARA NF-E)
+  // S3 (CRÍTICA — DESVIO NO WHATSAPP PARA NF-E: XML E DANFE EM PDF)
   // ==========================================
-  // Fornecedor mandando XML no chat:
-  // Detectar se a mensagem é um arquivo XML (ou documento com .xml no nome/url/caption ou payload texto começando com XML de NFe).
-  // Se for NF-e, desviar ANTES de criar lead, antes de chat_summaries, antes de message_processing e antes da IA!
-  // IA não responde o XML, conversa não é criada, badge não sobe.
+  // Fornecedor mandando XML ou DANFE em PDF no chat:
+  // Detectar se a mensagem é um arquivo XML OU um documento PDF candidato a DANFE.
+  // Se for NF-e (XML ou PDF DANFE), desviar ANTES de criar lead, antes de chat_summaries,
+  // antes de message_processing e antes da IA!
+  // IA não responde o arquivo, conversa não é criada, badge não sobe.
   // Desvio é POR MENSAGEM: se mandar texto junto ou depois, segue normal.
   const isXmlFile = Boolean(
     (attachmentName && /\.xml$/i.test(attachmentName.trim())) ||
@@ -682,6 +683,14 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
       (incomingText.includes('<nfeProc') ||
         incomingText.includes('<NFe') ||
         incomingText.includes('<infNFe'))),
+  )
+
+  const isPdfFile = Boolean(
+    (attachmentName && /\.pdf$/i.test(attachmentName.trim())) ||
+    (attachmentUrl && /\.pdf(\?|$)/i.test(attachmentUrl.trim())) ||
+    (attachmentType === 'document' &&
+      (attachmentName.toLowerCase().includes('.pdf') ||
+        (attachmentUrl && attachmentUrl.toLowerCase().includes('.pdf')))),
   )
 
   if (isXmlFile && !isFromMe) {
@@ -723,7 +732,8 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
 
       if (xmlContent) {
         try {
-          const appUrl = $os.getenv('PUBLIC_APP_URL') || 'http://127.0.0.1:8090'
+          const appUrl =
+            $os.getenv('PUBLIC_APP_URL') || $os.getenv('APP_URL') || 'http://127.0.0.1:8090'
           const resp = $http.send({
             url: appUrl + '/backend/v1/nfe/upload',
             method: 'POST',
@@ -752,6 +762,60 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
 
     // Retornar 200 de imediato, NÃO chamando save de webhook_received, nem auto-criação de cliente, nem IA
     return e.json(200, { status: 'nfe_bypassed_from_chat' })
+  }
+
+  // DESVIO DE PDF NO WHATSAPP (S3 - DANFE EM PDF NÃO VIRA CONVERSA/LEAD)
+  if (isPdfFile && !isFromMe && attachmentUrl) {
+    console.log(
+      '[NFE-WHATSAPP-PDF-DETECTED]',
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        messageId: messageId,
+        senderPhone: maskedSenderPhone,
+        attachmentName: attachmentName,
+        attachmentUrl: attachmentUrl,
+        action:
+          'Desviado para pipeline DANFE PDF (S3). Sem conversa de atendimento, sem badge, sem IA.',
+      }),
+    )
+
+    try {
+      const proc =
+        (typeof global !== 'undefined' && global.danfePdfProcessor) ||
+        (typeof danfePdfProcessor !== 'undefined' && danfePdfProcessor)
+      const auditTrail = {
+        origin: 'whatsapp',
+        sender: normalizedPhone,
+        sender_phone: normalizedPhone,
+        fileName: attachmentName || 'documento.pdf',
+        messageId: messageId,
+        url: attachmentUrl,
+      }
+
+      let procResult = null
+      if (proc && typeof proc.processDanfePdf === 'function') {
+        procResult = proc.processDanfePdf({
+          pdfSource: attachmentUrl,
+          sourceType: 'url',
+          auditTrail: auditTrail,
+        })
+      } else {
+        console.log('[NFE-WHATSAPP-PDF-ERR] global.danfePdfProcessor não encontrado')
+      }
+
+      console.log(
+        '[NFE-WHATSAPP-PDF-PROCESSED]',
+        JSON.stringify({
+          messageId: messageId,
+          result: procResult,
+        }),
+      )
+    } catch (pdfHookErr) {
+      console.log('[NFE-WHATSAPP-PDF-ERR]', String(pdfHookErr))
+    }
+
+    // Retornar 200 de imediato, garantindo que o PDF não vira conversa nem lead
+    return e.json(200, { status: 'nfe_pdf_bypassed_from_chat' })
   }
 
   // Log sanitizado de recepção do webhook (sem expor credenciais nem telefones completos)
