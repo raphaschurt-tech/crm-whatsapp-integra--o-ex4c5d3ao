@@ -243,10 +243,20 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   const userId = user?.id || 'anonymous'
   const storageKey = `${STORAGE_PREFIX}${userId}`
 
-  // Inicialização segura com migração defensiva e deduplicação automática
+  // Inicialização com persistência de sessão (sessionStorage)
+  // Requisito (5): Sessão nova do navegador abre o CRM sem nenhuma aba no topo, apenas no Dashboard.
+  // F5/recarga na MESMA aba do navegador mantém as abas abertas via sessionStorage.
+  // Fechou navegador -> sessão nova = zero abas (Dashboard limpo).
   const [tabsState, setTabsState] = useState<{ tabs: TabItem[]; activeTabId: string }>(() => {
     try {
-      const saved = localStorage.getItem(storageKey)
+      // Limpar resíduos antigos de localStorage para não reabrir sessões anteriores
+      try {
+        localStorage.removeItem(storageKey)
+      } catch {
+        /* ignore */
+      }
+
+      const saved = sessionStorage.getItem(storageKey)
       if (saved) {
         const parsed = JSON.parse(saved) as StoredTabsData
         if (
@@ -263,10 +273,9 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
               validTabs,
               parsed.activeTabId,
             )
-            // Se houve deduplicação imediata, regravar storage limpo
             if (cleanedTabs.length !== parsed.tabs.length) {
               try {
-                localStorage.setItem(
+                sessionStorage.setItem(
                   storageKey,
                   JSON.stringify({
                     version: 1,
@@ -283,7 +292,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
         }
       }
     } catch (e) {
-      console.warn('Erro ao restaurar abas do localStorage, restaurando padrão:', e)
+      console.warn('Erro ao restaurar abas do sessionStorage, restaurando padrão:', e)
     }
     const def = getDefaultTab()
     return { tabs: [def], activeTabId: def.id }
@@ -317,7 +326,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
   // Referência para evitar loop entre sincronização de abas e URL
   const isNavigatingFromTabsRef = useRef(false)
 
-  // Gravar persistência sempre que tabs ou activeTabId mudarem (já deduplicados)
+  // Gravar persistência em sessionStorage sempre que tabs ou activeTabId mudarem (já deduplicados)
   useEffect(() => {
     try {
       const data: StoredTabsData = {
@@ -325,9 +334,9 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
         activeTabId,
         tabs,
       }
-      localStorage.setItem(storageKey, JSON.stringify(data))
+      sessionStorage.setItem(storageKey, JSON.stringify(data))
     } catch (e) {
-      console.warn('Erro ao salvar abas no localStorage:', e)
+      console.warn('Erro ao salvar abas no sessionStorage:', e)
     }
   }, [tabs, activeTabId, storageKey])
 
@@ -353,11 +362,15 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     if (clean.startsWith('/produtos/') && clean.endsWith('/editar')) return 'Editar Produto'
     if (clean.startsWith('/produtos/')) return 'Produto'
     if (clean === '/familias') return 'Famílias'
-    if (clean === '/ordens-producao') return 'Ordens PCP'
+    if (clean === '/ordens-producao') return 'Ordens de Produção'
+    if (clean === '/financeiro/pagar') return 'A Pagar'
+    if (clean === '/financeiro/receber') return 'A Receber'
+    if (clean === '/nfe/fila-revisao') return 'Fila de Revisão'
+    if (clean === '/nfe/notas') return 'Notas Processadas'
     if (clean === '/financeiro') return 'Financeiro'
     if (clean.startsWith('/financeiro')) return 'Financeiro'
     if (clean === '/usuarios') return 'Usuários'
-    if (clean === '/configuracoes') return 'Configurações'
+    if (clean === '/configuracoes') return 'Integrações'
     return 'Página'
   }, [])
 

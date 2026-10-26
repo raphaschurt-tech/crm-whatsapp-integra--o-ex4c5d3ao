@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  DollarSign,
   HelpCircle,
 } from 'lucide-react'
 import { useTabs, MAX_TABS, TabItem } from '@/contexts/TabsContext'
@@ -53,6 +54,10 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Factory,
   configuracoes: Settings,
   Settings,
+  'financeiro/pagar': DollarSign,
+  'financeiro/receber': DollarSign,
+  'nfe/fila-revisao': FileText,
+  'nfe/notas': FileText,
 }
 
 function getTabIcon(tab: TabItem) {
@@ -60,7 +65,11 @@ function getTabIcon(tab: TabItem) {
     return ICON_MAP[tab.iconName]
   }
 
-  const clean = tab.pathname.replace(/^\//, '').split('/')[0] || 'dashboard'
+  const cleanFull = tab.pathname.replace(/^\//, '')
+  if (ICON_MAP[cleanFull]) {
+    return ICON_MAP[cleanFull]
+  }
+  const clean = cleanFull.split('/')[0] || 'dashboard'
   return ICON_MAP[clean] || FileText
 }
 

@@ -1,10 +1,9 @@
-import { useState } from 'react'
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { useState, useMemo } from 'react'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   Filter,
   ShoppingBag,
-  ShoppingCart,
   MessageCircle,
   FileText,
   Users,
@@ -17,6 +16,14 @@ import {
   X,
   Search,
   DollarSign,
+  Plus,
+  Minus,
+  ChevronRight,
+  TrendingUp,
+  Inbox,
+  ShieldAlert,
+  ArrowDownCircle,
+  ArrowUpCircle,
 } from 'lucide-react'
 import logoImg from '@/assets/logo-rpa-auto-parts-01-definitivo-correto-1d75c.png'
 import { useAuth } from '@/hooks/use-auth'
@@ -27,6 +34,22 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
+interface NavChildItem {
+  id: string
+  label: string
+  path: string
+  icon?: React.ComponentType<{ className?: string }>
+}
+
+interface NavGroupItem {
+  id: string
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  path?: string // Se o item for direto sem filhos (ex: Dashboard)
+  adminOnly?: boolean
+  children?: NavChildItem[]
+}
+
 export default function Layout() {
   const { user, isAdmin, signOut } = useAuth()
   const { tabs, openTab } = useTabs()
@@ -35,25 +58,154 @@ export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
 
+  // Estado dos grupos expandidos no menu lateral em árvore
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = sessionStorage.getItem('crm_sidebar_expanded_groups')
+      if (saved) return JSON.parse(saved)
+    } catch {
+      // ignore
+    }
+    return {
+      atendimento: true,
+      vendas: true,
+      estoque: true,
+      compras: true,
+      financeiro: true,
+      nfe: true,
+      configuracoes: true,
+    }
+  })
+
+  const toggleGroup = (groupId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    setExpandedGroups((prev) => {
+      const next = { ...prev, [groupId]: !prev[groupId] }
+      try {
+        sessionStorage.setItem('crm_sidebar_expanded_groups', JSON.stringify(next))
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
+
   const hasWhatsAppTab = tabs.some((t) => t.routeKey === 'whatsapp' || t.routeKey === '/whatsapp')
   const isAtendimentoRoute =
     location.pathname.startsWith('/whatsapp') || location.pathname.startsWith('/atendimento')
 
-  const navItems = [
-    { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { label: 'Pipeline', path: '/funil', icon: Filter },
-    { label: 'Pipeline de Compras', path: '/pipeline-compras', icon: ShoppingBag },
-    { label: 'Atendimento', path: '/whatsapp', icon: MessageCircle },
-    { label: 'Orçamentos', path: '/orcamentos', icon: FileText },
-    { label: 'Pedidos', path: '/pedidos', icon: ShoppingCart },
-    { label: 'Clientes', path: '/clientes', icon: Users },
-    ...(isAdmin ? [{ label: 'Usuários', path: '/usuarios', icon: Users }] : []),
-    { label: 'Produtos', path: '/produtos', icon: Package },
-    { label: 'Famílias', path: '/familias', icon: Layers },
-    { label: 'Ordens de Produção', path: '/ordens-producao', icon: Factory },
-    ...(isAdmin ? [{ label: 'Financeiro', path: '/financeiro', icon: DollarSign }] : []),
-    ...(isAdmin ? [{ label: 'Configurações', path: '/configuracoes', icon: Settings }] : []),
-  ]
+  // Estrutura reagrupada oficial inspirada no ERP SOU.IS
+  // Todos os itens foram auditados: existem páginas e rotas dedicadas no sistema
+  const navStructure: NavGroupItem[] = useMemo(() => {
+    return [
+      {
+        id: 'dashboard',
+        label: 'Dashboard',
+        icon: LayoutDashboard,
+        path: '/dashboard',
+      },
+      {
+        id: 'atendimento',
+        label: 'Atendimento',
+        icon: MessageCircle,
+        children: [
+          { id: 'whatsapp', label: 'Conversas', path: '/whatsapp', icon: MessageCircle },
+          { id: 'clientes', label: 'Contatos', path: '/clientes', icon: Users },
+        ],
+      },
+      {
+        id: 'vendas',
+        label: 'Vendas',
+        icon: TrendingUp,
+        children: [
+          { id: 'orcamentos', label: 'Orçamentos', path: '/orcamentos', icon: FileText },
+          { id: 'funil', label: 'Funil de Vendas', path: '/funil', icon: Filter },
+        ],
+      },
+      {
+        id: 'estoque',
+        label: 'Estoque & Produção',
+        icon: Package,
+        children: [
+          { id: 'produtos', label: 'Produtos', path: '/produtos', icon: Package },
+          { id: 'familias', label: 'Famílias', path: '/familias', icon: Layers },
+          {
+            id: 'ordens-producao',
+            label: 'Ordens de Produção',
+            path: '/ordens-producao',
+            icon: Factory,
+          },
+        ],
+      },
+      {
+        id: 'compras',
+        label: 'Compras',
+        icon: ShoppingBag,
+        children: [
+          {
+            id: 'pipeline-compras',
+            label: 'Pipeline de Compras',
+            path: '/pipeline-compras',
+            icon: ShoppingBag,
+          },
+        ],
+      },
+      ...(isAdmin
+        ? [
+            {
+              id: 'financeiro',
+              label: 'Financeiro',
+              icon: DollarSign,
+              adminOnly: true,
+              children: [
+                {
+                  id: 'financeiro-pagar',
+                  label: 'A Pagar',
+                  path: '/financeiro/pagar',
+                  icon: ArrowDownCircle,
+                },
+                {
+                  id: 'financeiro-receber',
+                  label: 'A Receber',
+                  path: '/financeiro/receber',
+                  icon: ArrowUpCircle,
+                },
+              ],
+            },
+            {
+              id: 'nfe',
+              label: 'NF-e',
+              icon: FileText,
+              adminOnly: true,
+              children: [
+                {
+                  id: 'nfe-fila-revisao',
+                  label: 'Fila de Revisão',
+                  path: '/nfe/fila-revisao',
+                  icon: ShieldAlert,
+                },
+                { id: 'nfe-notas', label: 'Notas Processadas', path: '/nfe/notas', icon: Inbox },
+              ],
+            },
+            {
+              id: 'configuracoes',
+              label: 'Configurações',
+              icon: Settings,
+              adminOnly: true,
+              children: [
+                {
+                  id: 'config-integracoes',
+                  label: 'Integrações',
+                  path: '/configuracoes',
+                  icon: Settings,
+                },
+                { id: 'config-usuarios', label: 'Usuários', path: '/usuarios', icon: Users },
+              ],
+            },
+          ]
+        : []),
+    ]
+  }, [isAdmin])
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -68,9 +220,9 @@ export default function Layout() {
 
   const getPageTitle = () => {
     const path = location.pathname
-    if (path === '/') return 'Dashboard'
+    if (path === '/' || path === '/dashboard') return 'Dashboard'
     if (path.startsWith('/pipeline-compras')) return 'Pipeline de Compras'
-    if (path.startsWith('/pipeline') || path.startsWith('/funil')) return 'Pipeline de Vendas'
+    if (path.startsWith('/funil')) return 'Funil de Vendas'
     if (path.startsWith('/atendimento') || path.startsWith('/whatsapp'))
       return 'Atendimento WhatsApp'
     if (path.startsWith('/orcamentos/novo')) return 'Novo Orçamento'
@@ -78,26 +230,168 @@ export default function Layout() {
     if (path.startsWith('/orcamentos/')) return 'Detalhes do Orçamento'
     if (path.startsWith('/orcamentos')) return 'Orçamentos'
     if (path.startsWith('/pedidos')) return 'Pedidos de Venda'
-    if (path.startsWith('/clientes/novo')) return 'Novo Cliente'
-    if (path.startsWith('/clientes') && path.includes('/editar')) return 'Editar Cliente'
-    if (path.startsWith('/clientes/')) return 'Detalhes do Cliente'
-    if (path.startsWith('/clientes')) return 'Clientes'
+    if (path.startsWith('/clientes/novo')) return 'Novo Contato'
+    if (path.startsWith('/clientes') && path.includes('/editar')) return 'Editar Contato'
+    if (path.startsWith('/clientes/')) return 'Detalhes do Contato'
+    if (path.startsWith('/clientes')) return 'Contatos'
     if (path.startsWith('/usuarios')) return 'Usuários'
-    if (path.startsWith('/produtos/novo') || path.startsWith('/estoque/novo')) return 'Novo Produto'
-    if ((path.startsWith('/produtos') || path.startsWith('/estoque')) && path.includes('/editar'))
-      return 'Editar Produto'
-    if (path.startsWith('/produtos/') || path.startsWith('/estoque/')) return 'Detalhes do Produto'
-    if (path.startsWith('/produtos') || path.startsWith('/estoque')) return 'Produtos'
-    if (path.startsWith('/familias')) return 'Famílias de Insumos'
-    if (path.startsWith('/ordens-producao')) return 'Ordens de Produção (PCP)'
+    if (path.startsWith('/produtos/novo')) return 'Novo Produto'
+    if (path.startsWith('/produtos') && path.includes('/editar')) return 'Editar Produto'
+    if (path.startsWith('/produtos/')) return 'Detalhes do Produto'
+    if (path.startsWith('/produtos')) return 'Produtos'
+    if (path.startsWith('/familias')) return 'Famílias'
+    if (path.startsWith('/ordens-producao')) return 'Ordens de Produção'
+    if (path.startsWith('/financeiro/pagar')) return 'Contas a Pagar'
+    if (path.startsWith('/financeiro/receber')) return 'Contas a Receber'
     if (path.startsWith('/financeiro')) return 'Financeiro'
-    if (path.startsWith('/configuracoes')) return 'Configurações'
+    if (path.startsWith('/nfe/fila-revisao')) return 'NF-e — Fila de Revisão'
+    if (path.startsWith('/nfe/notas')) return 'NF-e — Notas Processadas'
+    if (path.startsWith('/nfe')) return 'NF-e'
+    if (path.startsWith('/configuracoes')) return 'Integrações'
     return 'RPA Auto Parts'
+  }
+
+  const renderNavContent = (isMobile = false) => {
+    return (
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+        {navStructure.map((group) => {
+          const hasChildren = Boolean(group.children && group.children.length > 0)
+          const isExpanded = hasChildren ? !!expandedGroups[group.id] : false
+
+          // Se for item direto (sem filhos, ex: Dashboard)
+          if (!hasChildren && group.path) {
+            const Icon = group.icon
+            const active =
+              location.pathname === group.path ||
+              (group.path === '/dashboard' && location.pathname === '/')
+            return (
+              <button
+                key={group.id}
+                type="button"
+                onClick={() => {
+                  if (isMobile) setMobileOpen(false)
+                  openTab(group.path!, {
+                    title: group.label,
+                    iconName: group.id,
+                  })
+                }}
+                className={cn(
+                  'w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors relative whitespace-nowrap',
+                  active
+                    ? 'bg-emerald-50 text-emerald-700 font-semibold'
+                    : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900',
+                )}
+                title={group.label}
+              >
+                {active && (
+                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-emerald-500 rounded-r" />
+                )}
+                <Icon
+                  className={cn('h-4 w-4 shrink-0', active ? 'text-emerald-600' : 'text-slate-500')}
+                />
+                <span className="whitespace-nowrap select-none">{group.label}</span>
+              </button>
+            )
+          }
+
+          // Se for grupo de navegação em árvore
+          const GroupIcon = group.icon
+          const isChildActive = (group.children || []).some(
+            (c) => location.pathname === c.path || location.pathname.startsWith(`${c.path}/`),
+          )
+
+          return (
+            <div key={group.id} className="space-y-0.5 pt-1">
+              {/* Cabeçalho do Grupo: Botão de Expansão com "+" / "-" */}
+              <button
+                type="button"
+                onClick={(e) => toggleGroup(group.id, e)}
+                className={cn(
+                  'w-full text-left flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors select-none group',
+                  isChildActive
+                    ? 'text-emerald-800 bg-emerald-50/50'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100',
+                )}
+                title={group.label}
+              >
+                <div className="flex items-center gap-2 whitespace-nowrap min-w-0">
+                  <GroupIcon
+                    className={cn(
+                      'h-3.5 w-3.5 shrink-0',
+                      isChildActive ? 'text-emerald-600' : 'text-slate-500',
+                    )}
+                  />
+                  <span className="whitespace-nowrap">{group.label}</span>
+                </div>
+                {/* Botão '+' APENAS em grupos que têm filhos */}
+                {hasChildren && (
+                  <span
+                    className={cn(
+                      'h-4 w-4 rounded flex items-center justify-center shrink-0 text-slate-500 transition-colors',
+                      isExpanded
+                        ? 'bg-slate-200 text-slate-700'
+                        : 'bg-slate-100 group-hover:bg-slate-200 text-slate-600',
+                    )}
+                    aria-label={isExpanded ? 'Recolher grupo' : 'Expandir grupo'}
+                  >
+                    {isExpanded ? <Minus className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                  </span>
+                )}
+              </button>
+
+              {/* Filhos do Grupo (Árvore) */}
+              {hasChildren && isExpanded && (
+                <div className="pl-4 pr-1 space-y-0.5 border-l-2 border-slate-100 ml-3.5 mt-0.5 mb-1.5">
+                  {group.children!.map((child) => {
+                    const ChildIcon = child.icon || ChevronRight
+                    const active =
+                      location.pathname === child.path ||
+                      location.pathname.startsWith(`${child.path}/`)
+
+                    return (
+                      <button
+                        key={child.id}
+                        type="button"
+                        onClick={() => {
+                          if (isMobile) setMobileOpen(false)
+                          openTab(child.path, {
+                            title: child.label,
+                            iconName: child.id,
+                          })
+                        }}
+                        className={cn(
+                          'w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors relative whitespace-nowrap',
+                          active
+                            ? 'bg-emerald-100/70 text-emerald-800 font-bold shadow-2xs'
+                            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+                        )}
+                        title={child.label}
+                      >
+                        {active && (
+                          <span className="absolute left-0 top-1 bottom-1 w-0.5 bg-emerald-600 rounded-r" />
+                        )}
+                        <ChildIcon
+                          className={cn(
+                            'h-3.5 w-3.5 shrink-0',
+                            active ? 'text-emerald-700' : 'text-slate-400',
+                          )}
+                        />
+                        <span className="whitespace-nowrap">{child.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </nav>
+    )
   }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
-      <aside className="hidden md:flex w-[200px] flex-col bg-white border-r border-slate-200 fixed inset-y-0 z-30">
+      <aside className="hidden md:flex w-[230px] flex-col bg-white border-r border-slate-200 fixed inset-y-0 z-30">
         <div className="p-3.5 flex flex-col items-center justify-center border-b border-slate-100 bg-white">
           <button
             type="button"
@@ -112,40 +406,7 @@ export default function Layout() {
           </button>
         </div>
 
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            const active =
-              location.pathname === item.path ||
-              (item.path !== '/' && location.pathname.startsWith(item.path))
-            return (
-              <button
-                key={item.path}
-                type="button"
-                onClick={() =>
-                  openTab(item.path, {
-                    title: item.label,
-                    iconName: item.path.replace('/', '') || 'dashboard',
-                  })
-                }
-                className={cn(
-                  'w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors relative',
-                  active
-                    ? 'bg-emerald-50 text-emerald-700 font-semibold'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
-                )}
-              >
-                {active && (
-                  <span className="absolute left-0 top-1.5 bottom-1.5 w-1 bg-emerald-500 rounded-r" />
-                )}
-                <Icon
-                  className={cn('h-4 w-4 shrink-0', active ? 'text-emerald-600' : 'text-slate-400')}
-                />
-                <span className="truncate">{item.label}</span>
-              </button>
-            )
-          })}
-        </nav>
+        {renderNavContent(false)}
 
         <div className="p-3 border-t border-slate-100 bg-slate-50/50">
           <div className="flex items-center justify-between gap-1.5">
@@ -202,32 +463,7 @@ export default function Layout() {
               </Button>
             </div>
 
-            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-              {navItems.map((item) => {
-                const Icon = item.icon
-                const active = location.pathname === item.path
-                return (
-                  <button
-                    key={item.path}
-                    type="button"
-                    onClick={() => {
-                      setMobileOpen(false)
-                      openTab(item.path, {
-                        title: item.label,
-                        iconName: item.path.replace('/', '') || 'dashboard',
-                      })
-                    }}
-                    className={cn(
-                      'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium',
-                      active ? 'bg-emerald-50 text-emerald-700 font-semibold' : 'text-slate-600',
-                    )}
-                  >
-                    <Icon className="h-5 w-5 shrink-0" />
-                    <span>{item.label}</span>
-                  </button>
-                )
-              })}
-            </nav>
+            {renderNavContent(true)}
 
             <div className="p-4 border-t flex items-center justify-between">
               <div className="text-xs">
@@ -242,7 +478,7 @@ export default function Layout() {
         </div>
       )}
 
-      <div className="flex-1 md:pl-[200px] flex flex-col min-w-0">
+      <div className="flex-1 md:pl-[230px] flex flex-col min-w-0">
         <header className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 md:px-8 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Button

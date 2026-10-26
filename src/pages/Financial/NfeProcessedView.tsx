@@ -45,11 +45,21 @@ import { getProducts } from '@/services/products'
 import { getSettings } from '@/services/settings'
 import type { NfeProcessed, NfePriceQueueItem, NfeProductMapping, Product } from '@/types/crm'
 
-export function NfeProcessedView() {
+export interface NfeProcessedViewProps {
+  initialSubTab?: 'nfe' | 'pauta' | 'excecoes' | 'mapeamentos' | 'historico_dfe'
+}
+
+export function NfeProcessedView({ initialSubTab = 'nfe' }: NfeProcessedViewProps) {
   const { toast } = useToast()
   const [activeSubTab, setActiveSubTab] = useState<
     'nfe' | 'pauta' | 'excecoes' | 'mapeamentos' | 'historico_dfe'
-  >('nfe')
+  >(initialSubTab)
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab)
+    }
+  }, [initialSubTab])
 
   // Estado da FASE 2: Captura DFe (D2, D7, CF-1b, CF-1d, G5)
   const [dfePointer, setDfePointer] = useState<any>(null)

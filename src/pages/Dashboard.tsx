@@ -239,9 +239,9 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2 border-slate-200">
-          <CardHeader className="flex flex-row items-center justify-between">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+        <Card className="lg:col-span-2 border-slate-200 flex flex-col">
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
             <CardTitle className="text-base font-bold text-slate-800">Últimos Orçamentos</CardTitle>
             <Link
               to="/orcamentos"
@@ -250,18 +250,20 @@ export default function Dashboard() {
               Ver todos <ArrowRight className="h-3 w-3" />
             </Link>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex-1 flex flex-col justify-between">
             {quotes.length === 0 ? (
-              <p className="text-sm text-slate-500 py-4 text-center">
-                Nenhum orçamento cadastrado ainda.
-              </p>
+              <div className="flex-1 flex items-center justify-center py-8">
+                <p className="text-sm text-slate-500 text-center">
+                  Nenhum orçamento cadastrado ainda.
+                </p>
+              </div>
             ) : (
-              <div className="divide-y divide-slate-100">
+              <div className="divide-y divide-slate-100 flex-1 flex flex-col justify-around">
                 {quotes.slice(0, 5).map((q) => (
                   <div
                     key={q.id}
                     onClick={() => navigate(`/orcamentos/${q.id}`)}
-                    className="py-3 flex items-center justify-between hover:bg-slate-50 px-2 rounded-lg cursor-pointer transition-colors"
+                    className="py-2.5 flex items-center justify-between hover:bg-slate-50 px-2 rounded-lg cursor-pointer transition-colors"
                   >
                     <div>
                       <p className="text-sm font-semibold text-slate-900">{q.number}</p>
@@ -287,35 +289,39 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="border-slate-200">
-          <CardHeader>
+        <Card className="border-slate-200 flex flex-col">
+          <CardHeader className="pb-3">
             <CardTitle className="text-base font-bold text-slate-800">
               Distribuição por Status
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex-1 flex flex-col items-center justify-center">
             {statusData.length === 0 ? (
               <p className="text-sm text-slate-500 py-8 text-center">Sem dados de orçamentos.</p>
             ) : (
-              <div className="h-[220px] w-full flex flex-col items-center justify-center">
-                <ResponsiveContainer width="100%" height={180}>
-                  <PieChart>
-                    <Pie
-                      data={statusData}
-                      innerRadius={50}
-                      outerRadius={75}
-                      paddingAngle={4}
-                      dataKey="value"
-                    >
-                      {statusData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value: number) => [`${value} orçamentos`, 'Quantidade']} />
-                  </PieChart>
-                </ResponsiveContainer>
+              <div className="w-full h-full flex flex-col items-center justify-center">
+                <div className="w-full h-[200px] flex items-center justify-center">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={statusData}
+                        innerRadius={50}
+                        outerRadius={75}
+                        paddingAngle={4}
+                        dataKey="value"
+                      >
+                        {statusData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value: number) => [`${value} orçamentos`, 'Quantidade']}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
 
-                <div className="flex flex-wrap gap-2 justify-center mt-2">
+                <div className="flex flex-wrap gap-2 justify-center mt-2 pt-1 border-t border-slate-100 w-full">
                   {statusData.map((item) => (
                     <div
                       key={item.name}

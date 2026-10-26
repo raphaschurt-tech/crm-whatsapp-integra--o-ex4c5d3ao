@@ -24,6 +24,10 @@ import SettingsPage from './pages/Settings/SettingsPage'
 import PaymentPage from './pages/Payment/PaymentPage'
 import ProductionOrderList from './pages/Stock/ProductionOrderList'
 import FinancialPage from './pages/Financial/FinancialPage'
+import ContasPagarPage from './pages/Financial/ContasPagarPage'
+import ContasReceberPage from './pages/Financial/ContasReceberPage'
+import NfeFilaRevisaoPage from './pages/Financial/NfeFilaRevisaoPage'
+import NfeNotasPage from './pages/Financial/NfeNotasPage'
 import NotFound from './pages/NotFound'
 import ErrorBoundary from './components/ErrorBoundary'
 
@@ -69,6 +73,38 @@ export function App() {
                   element={
                     <ProtectedRoute adminOnly>
                       <FinancialPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="financeiro/pagar"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <ContasPagarPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="financeiro/receber"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <ContasReceberPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="nfe/fila-revisao"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <NfeFilaRevisaoPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="nfe/notas"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <NfeNotasPage />
                     </ProtectedRoute>
                   }
                 />
