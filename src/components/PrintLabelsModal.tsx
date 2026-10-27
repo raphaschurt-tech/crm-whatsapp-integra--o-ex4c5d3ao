@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom'
 import {
   Printer,
   Copy,
-  RotateCcw,
   Search,
   CheckSquare,
   Square,
@@ -91,7 +90,6 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
   // -------------------------------------------------------------
   const [bulkCopies, setBulkCopies] = useState<number>(1)
   const [previewProductId, setPreviewProductId] = useState<string | null>(null)
-  const [rotatedPreview, setRotatedPreview] = useState<boolean>(true)
   const [isPrinting, setIsPrinting] = useState<boolean>(false)
   const [showLargeBatchConfirm, setShowLargeBatchConfirm] = useState<boolean>(false)
 
@@ -445,34 +443,18 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setRotatedPreview(!rotatedPreview)}
-                      className="text-xs font-semibold px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-1 transition-colors cursor-pointer"
-                      title={
-                        rotatedPreview
-                          ? 'Ver na horizontal normal'
-                          : 'Ver na vertical/90° do modelo real'
-                      }
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      {rotatedPreview ? '90° Vertical (Em pé)' : 'Horizontal'}
-                    </button>
-                  </div>
+                  <Badge
+                    variant="outline"
+                    className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border-emerald-200"
+                  >
+                    Horizontal (70×30 mm)
+                  </Badge>
                 </div>
 
-                {/* ÁREA DA ETIQUETA COM BORDA DE 2mm E ROTAÇÃO 90° REAL */}
+                {/* ÁREA DA ETIQUETA COM BORDA DE 2mm - SEMPRE EM HORIZONTAL */}
                 <div className="p-3 bg-slate-100 rounded-lg border border-slate-300 flex items-center justify-center min-h-[170px] w-full overflow-hidden">
                   {currentPreviewProduct ? (
-                    <div
-                      className={`transition-transform duration-200 flex items-center justify-center ${
-                        rotatedPreview ? 'rotate-90 my-8' : ''
-                      }`}
-                      style={{
-                        transformOrigin: 'center center',
-                      }}
-                    >
+                    <div className="flex items-center justify-center">
                       <ProductLabel
                         product={currentPreviewProduct}
                         mode="preview"
@@ -529,8 +511,9 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
                   <p className="font-bold">Dica para Zebra/Argox (Tear-off):</p>
                   <p className="text-[11px] leading-relaxed text-amber-800">
                     No diálogo de impressão do navegador, selecione a impressora térmica, papel{' '}
-                    <strong>70×30 mm</strong>, margens <strong>Nenhuma</strong> e escala{' '}
-                    <strong>100%</strong>. A etiqueta sai EM PÉ com 2mm de recuo de segurança.
+                    <strong>70×30 mm</strong> (Paisagem/Horizontal), margens{' '}
+                    <strong>Nenhuma</strong> e escala <strong>100%</strong>. A etiqueta imprime em
+                    formato horizontal exato 70×30 mm com 2 mm de recuo de segurança.
                   </p>
                 </div>
               </div>
@@ -996,19 +979,12 @@ export const PrintLabelsModal: React.FC<PrintLabelsModalProps> = ({
         </DialogContent>
       </Dialog>
 
-      {/* PORTAL DE IMPRESSÃO FÍSICA PARA O CTRL+P (RENDERIZA CADA VIA EM UMA PÁGINA 70x30mm) */}
+      {/* PORTAL DE IMPRESSÃO FÍSICA PARA O CTRL+P (RENDERIZA CADA VIA EM UMA PÁGINA 70x30mm EM HORIZONTAL) */}
       {createPortal(
         <div id="thermal-print-portal" style={{ display: isPrinting ? 'block' : 'none' }}>
           {printQueuePages.map((prod, pageIdx) => (
             <div key={`${prod.id}-page-${pageIdx}`} className="product-label-print-page">
-              <div
-                className="rotate-90"
-                style={{
-                  transformOrigin: 'center center',
-                }}
-              >
-                <ProductLabel product={prod} mode="print" showBorder={false} />
-              </div>
+              <ProductLabel product={prod} mode="print" showBorder={false} />
             </div>
           ))}
         </div>,

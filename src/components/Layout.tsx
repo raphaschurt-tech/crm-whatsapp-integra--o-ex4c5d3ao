@@ -59,6 +59,7 @@ export default function Layout() {
   const [searchTerm, setSearchTerm] = useState('')
 
   // Estado dos grupos expandidos no menu lateral em árvore
+  // Padrão: TODOS os grupos fechados ao iniciar a sessão (sessionStorage; fechou o navegador -> volta tudo fechado)
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
     try {
       const saved = sessionStorage.getItem('crm_sidebar_expanded_groups')
@@ -66,15 +67,7 @@ export default function Layout() {
     } catch {
       // ignore
     }
-    return {
-      atendimento: true,
-      vendas: true,
-      estoque: true,
-      compras: true,
-      financeiro: true,
-      nfe: true,
-      configuracoes: true,
-    }
+    return {}
   })
 
   const toggleGroup = (groupId: string, e?: React.MouseEvent) => {

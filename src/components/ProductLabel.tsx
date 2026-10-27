@@ -32,8 +32,7 @@ export function formatLocation(product: Product): string {
  * REQUISITOS DO MODELO:
  * - Dimensões: 70mm de largura por 30mm de altura (alimentação contínua da impressora térmica Argox/Zebra).
  * - O rolo de etiqueta tem 70mm de largura e 30mm de comprimento na direção de avanço do cabeçote.
- * - Na etiqueta física (vertical / girada 90° em relação à leitura horizontal):
- *   O texto é orientado para que a leitura fique vertical:
+ * - Impressão horizontal direta (70×30 mm):
  *   [ TOPO ] Código de barras Code 128 (do SKU)
  *   [ SUB-TOPO ] SKU em fonte grande de alto contraste (ex: "8722")
  *   [ CORPO ] Descrição completa do produto em caixa alta

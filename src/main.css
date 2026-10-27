@@ -313,7 +313,7 @@
    ========================================================================== */
 @media print {
   @page {
-    size: 70mm 30mm;
+    size: 70mm 30mm landscape;
     margin: 0 !important;
   }
 
