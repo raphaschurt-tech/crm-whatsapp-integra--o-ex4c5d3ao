@@ -112,7 +112,7 @@ export function TabsBar() {
   }
 
   return (
-    <div className="hidden md:flex flex-col bg-slate-100/80 border-b border-slate-200 select-none">
+    <div className="hidden md:flex flex-col bg-slate-100 select-none">
       {/* Alerta discreto de limite atingido */}
       {maxTabsReached && (
         <div className="bg-amber-50 text-amber-900 border-b border-amber-200 px-3 py-1 text-xs flex items-center justify-between">

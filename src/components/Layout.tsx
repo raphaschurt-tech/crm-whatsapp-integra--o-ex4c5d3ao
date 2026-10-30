@@ -504,8 +504,10 @@ export default function Layout() {
           </div>
         </header>
 
-        {/* Barra de Abas (Desktop) */}
-        <TabsBar />
+        {/* Barra de Abas Fixa no Topo (Desktop) */}
+        <div className="sticky top-[57px] z-10 bg-slate-100 border-b border-slate-200 shadow-2xs">
+          <TabsBar />
+        </div>
 
         <main className="flex-1 p-4 md:p-8 max-w-[1400px] w-full mx-auto relative">
           {/* Keep-Alive para WhatsApp Atendimento enquanto a aba existir */}
