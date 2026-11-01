@@ -70,6 +70,55 @@ export function normalizeCanonicalRouteKey(rawKey: string): string {
   return key
 }
 
+/**
+ * Verifica se um pathname ou rota deve ser ignorado pelo gerenciador de abas:
+ * Rotas públicas fora do Layout protegido (/login, /pagamento/:id, etc.).
+ * Nenhuma aba deve nascer nem ser ativada para essas rotas.
+ */
+export function isIgnoredRoute(pathname: string): boolean {
+  if (!pathname) return false
+  const clean = (pathname.split('?')[0] || '').replace(/\/+$/, '') || '/'
+
+  // Rota de login
+  if (clean === '/login' || clean === 'login') {
+    return true
+  }
+
+  // Rota de pagamento público
+  if (clean === '/pagamento' || clean.startsWith('/pagamento/') || clean.startsWith('pagamento/')) {
+    return true
+  }
+
+  return false
+}
+
+/**
+ * Verifica se uma aba é fantasma (originada de rotas públicas/inválidas fora do Layout)
+ * e deve ser descartada ao restaurar ou higienizar.
+ */
+export function isGhostTab(tab: Partial<TabItem>): boolean {
+  if (!tab) return true
+
+  const routeKey = tab.routeKey ? normalizeCanonicalRouteKey(tab.routeKey) : ''
+  const pathname = tab.pathname || (tab.path ? tab.path.split('?')[0] : '')
+  const cleanPath = (pathname || '').replace(/\/+$/, '')
+
+  // RouteKey 'login' ou começa com 'pagamento:' ou pathname de login / pagamento
+  if (
+    routeKey === 'login' ||
+    routeKey.startsWith('pagamento:') ||
+    routeKey.startsWith('pagamento/')
+  ) {
+    return true
+  }
+
+  if (cleanPath === '/login' || cleanPath.startsWith('/pagamento')) {
+    return true
+  }
+
+  return false
+}
+
 export function getRouteKey(pathname: string): {
   routeKey: string
   entityId?: string
@@ -186,10 +235,20 @@ function deduplicateAndSanitizeTabs(
   for (const tab of rawTabs) {
     if (!tab || typeof tab.id !== 'string' || !tab.path) continue
 
+    // Varredura defensiva: descartar abas fantasma gravadas (/login, /pagamento/:id, etc.)
+    if (isGhostTab(tab)) {
+      continue
+    }
+
     // Determinar a chave canônica a partir do routeKey existente ou do pathname/path
     const rawPath = tab.pathname || tab.path || ''
     const calculatedKey = getRouteKey(rawPath.split('?')[0]).routeKey
     const canonicalKey = normalizeCanonicalRouteKey(tab.routeKey || calculatedKey)
+
+    // Checagem adicional contra chave fantasma pós-canonicalização
+    if (canonicalKey === 'login' || canonicalKey.startsWith('pagamento:')) {
+      continue
+    }
 
     const normalizedTab: TabItem = {
       ...tab,
@@ -371,6 +430,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     if (clean.startsWith('/financeiro')) return 'Financeiro'
     if (clean === '/usuarios') return 'Usuários'
     if (clean === '/configuracoes') return 'Integrações'
+    if (clean === '/pedidos') return 'Pedidos'
     return 'Página'
   }, [])
 
@@ -381,8 +441,19 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       return
     }
 
+    // Fix (1): Ignorar rotas públicas (/login, /pagamento/:id e fora do Layout protegido)
+    // Não criar nem ativar nenhuma aba ao passar por essas rotas.
+    if (isIgnoredRoute(location.pathname)) {
+      return
+    }
+
     const fullPath = location.pathname + location.search
     const { routeKey, entityId, isForm } = getRouteKey(location.pathname)
+
+    // Proteção adicional para routeKey pública
+    if (routeKey === 'login' || routeKey.startsWith('pagamento:')) {
+      return
+    }
 
     setTabsState((prevState) => {
       const prevTabs = prevState.tabs
@@ -474,7 +545,21 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     (path: string, options?: { title?: string; iconName?: string; isForm?: boolean }) => {
       const [pathname] = path.split('?')
       const fullPath = path
+
+      // Ignorar rotas públicas (/login, /pagamento/:id, etc.)
+      if (isIgnoredRoute(pathname)) {
+        isNavigatingFromTabsRef.current = true
+        navigate(fullPath)
+        return
+      }
+
       const { routeKey, entityId, isForm: isFormAuto } = getRouteKey(pathname)
+      if (routeKey === 'login' || routeKey.startsWith('pagamento:')) {
+        isNavigatingFromTabsRef.current = true
+        navigate(fullPath)
+        return
+      }
+
       const isForm = options?.isForm ?? isFormAuto
 
       setTabsState((prevState) => {
