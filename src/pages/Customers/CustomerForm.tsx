@@ -1,55 +1,49 @@
-import { useEffect, useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useTabState } from '@/hooks/use-tab-state'
-import {
-  getCustomer,
-  createCustomer,
-  updateCustomer,
-  checkDuplicateDocument,
-  cleanDocument,
-} from '@/services/customers'
-import { getFamilies } from '@/services/families'
-import { CustomerType, EntityCustomerType, LeadSource, ItemFamily } from '@/types/crm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { toast } from '@/hooks/use-toast'
+import { Badge } from '@/components/ui/badge'
 import {
-  User,
-  Building2,
+  getCustomer,
+  createCustomer,
+  updateCustomer,
+  getCustomers,
+  getCustomerDocuments,
+  addCustomerDocument,
+  DuplicateConflictInfo,
+  extractDuplicateErrorInfo,
+} from '@/services/customers'
+import { getFamilies } from '@/services/families'
+import { CustomerType, LeadSource, ItemFamily } from '@/types/crm'
+import { useToast } from '@/hooks/use-toast'
+import { useTabState } from '@/hooks/use-tab-state'
+import {
   AlertCircle,
-  Truck,
+  Building2,
+  User,
   Users,
+  Truck,
   Check,
   Layers,
   ExternalLink,
+  FileText,
+  Plus,
 } from 'lucide-react'
-import { DuplicateConflictInfo, extractDuplicateErrorInfo } from '@/services/customers'
 import { LEAD_SOURCE_OPTIONS } from '@/components/LeadSourceBadge'
-
-// Funções utilitárias de formatação
-const maskCPF = (val: string) => {
-  const digits = val.replace(/\D/g, '').slice(0, 11)
-  return digits
-    .replace(/^(\d{3})(\d)/, '$1.$2')
-    .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
-    .replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2')
-}
-
-const maskCNPJ = (val: string) => {
-  const digits = val.replace(/\D/g, '').slice(0, 14)
-  return digits
-    .replace(/^(\d{2})(\d)/, '$1.$2')
-    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
-    .replace(/\.(\d{3})(\d)/, '.$1/$2')
-    .replace(/(\d{4})(\d{1,2})$/, '$1-$2')
-}
+import {
+  parseAndNormalizeDocument,
+  findDuplicateContact,
+  cleanDigits,
+  formatDocumentDisplay,
+} from '@/services/contactDedupeEngine'
 
 export default function CustomerForm() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { markDirty, closeTab } = useTabState()
+  const { toast } = useToast()
 
   const [customerType, setCustomerType] = useState<'Cliente' | 'Fornecedor' | 'Ambos'>('Cliente')
   const [type, setType] = useState<CustomerType>('PF')
@@ -58,16 +52,20 @@ export default function CustomerForm() {
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [company, setCompany] = useState('')
-  const [cpf, setCpf] = useState('')
-  const [cnpj, setCnpj] = useState('')
+  const [documentInput, setDocumentInput] = useState('')
+  const [detectedDocType, setDetectedDocType] = useState<'CPF' | 'CNPJ' | 'UNKNOWN'>('UNKNOWN')
   const [leadSource, setLeadSource] = useState<LeadSource>('other')
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
-  const [documentError, setDocumentError] = useState<string | null>(null)
+  const [documentWarning, setDocumentWarning] = useState<string | null>(null)
   const [allFamilies, setAllFamilies] = useState<ItemFamily[]>([])
   const [selectedFamilyIds, setSelectedFamilyIds] = useState<string[]>([])
   const [familiesError, setFamiliesError] = useState<string | null>(null)
   const [duplicateBanner, setDuplicateBanner] = useState<DuplicateConflictInfo | null>(null)
+  const [existingDocuments, setExistingDocuments] = useState<any[]>([])
+  const [showAddBranchDoc, setShowAddBranchDoc] = useState(false)
+  const [newBranchDoc, setNewBranchDoc] = useState('')
+  const [newBranchLabel, setNewBranchLabel] = useState('')
 
   const isEditing = Boolean(id)
 
@@ -106,31 +104,105 @@ export default function CustomerForm() {
           } else {
             setLeadSource('other')
           }
-          if (c.type) {
-            setType(c.type)
-          } else if (c.cnpj) {
+
+          if (c.cnpj) {
             setType('PJ')
-          } else {
+            setDocumentInput(formatDocumentDisplay(c.cnpj))
+            setDetectedDocType('CNPJ')
+          } else if (c.cpf) {
             setType('PF')
+            setDocumentInput(formatDocumentDisplay(c.cpf))
+            setDetectedDocType('CPF')
+          } else {
+            setType(c.type || 'PF')
+            setDocumentInput('')
+            setDetectedDocType('UNKNOWN')
           }
-          setCpf(c.cpf ? maskCPF(c.cpf) : '')
-          setCnpj(c.cnpj ? maskCNPJ(c.cnpj) : '')
         })
         .catch((e) => {
           console.error(e)
           toast({ title: 'Erro ao carregar cliente', variant: 'destructive' })
         })
+
+      getCustomerDocuments(id)
+        .then((docs) => setExistingDocuments(docs))
+        .catch(console.error)
     }
   }, [id])
+
+  const handleDocumentChange = (raw: string) => {
+    const digits = cleanDigits(raw).slice(0, 14)
+    markDirty(true)
+    setDocumentWarning(null)
+
+    if (digits.length <= 11) {
+      // Formata como CPF enquanto até 11 dígitos
+      const parsed = parseAndNormalizeDocument(digits)
+      setDocumentInput(parsed.formatted)
+      if (digits.length === 11) {
+        setDetectedDocType('CPF')
+        setType('PF')
+      } else {
+        setDetectedDocType('UNKNOWN')
+      }
+    } else {
+      // 12 a 14 dígitos formata como CNPJ
+      const parsed = parseAndNormalizeDocument(digits)
+      setDocumentInput(parsed.formatted)
+      if (digits.length === 14) {
+        setDetectedDocType('CNPJ')
+        setType('PJ')
+      } else {
+        setDetectedDocType('UNKNOWN')
+      }
+    }
+  }
+
   const toggleFamilySelection = (familyId: string) => {
     markDirty(true)
     setSelectedFamilyIds((prev) => {
       const next = prev.includes(familyId)
-        ? prev.filter((id) => id !== familyId)
+        ? prev.filter((fid) => fid !== familyId)
         : [...prev, familyId]
       if (next.length > 0) setFamiliesError(null)
       return next
     })
+  }
+
+  const handleAddBranchDocument = async () => {
+    if (!id) return
+    const parsed = parseAndNormalizeDocument(newBranchDoc)
+    if (!parsed.isValidLength) {
+      toast({
+        title: 'Documento inválido',
+        description: 'Digite um CPF (11 dígitos) ou CNPJ (14 dígitos) válido.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      await addCustomerDocument({
+        customer: id,
+        document_type: parsed.type as 'CPF' | 'CNPJ',
+        document_number: parsed.cleanDigits,
+        root_cnpj: parsed.rootCnpj,
+        label: newBranchLabel.trim() || 'Filial/Unidade Adicional',
+        is_primary: false,
+      })
+      toast({ title: 'Documento vinculado com sucesso!' })
+      setNewBranchDoc('')
+      setNewBranchLabel('')
+      setShowAddBranchDoc(false)
+      const updated = await getCustomerDocuments(id)
+      setExistingDocuments(updated)
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao vincular documento',
+        description: err?.message || 'Falha ao salvar documento',
+        variant: 'destructive',
+      })
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -140,7 +212,7 @@ export default function CustomerForm() {
       return
     }
 
-    // Regra item 11: ao salvar com Tipo = Fornecedor ou Ambos, exigir pelo menos 1 família selecionada
+    // Regra: ao salvar com Tipo = Fornecedor ou Ambos, exigir pelo menos 1 família selecionada
     if (
       (customerType === 'Fornecedor' || customerType === 'Ambos') &&
       selectedFamilyIds.length === 0
@@ -156,42 +228,74 @@ export default function CustomerForm() {
     }
     setFamiliesError(null)
 
-    const currentDoc = type === 'PF' ? cpf : cnpj
-    const cleanDoc = cleanDocument(currentDoc)
+    // Validação de deduplicação preventiva via motor unificado
+    const parsedDoc = parseAndNormalizeDocument(documentInput)
+    try {
+      const allCusts = await getCustomers(false)
+      const dedupeResult = findDuplicateContact(
+        {
+          document: parsedDoc.cleanDigits,
+          phone,
+          name,
+          customerType,
+          excludeCustomerId: id,
+        },
+        allCusts as any,
+      )
 
-    // Validação preventiva de documento duplicado (respeitando o mesmo grupo: cliente vs fornecedor)
-    if (cleanDoc) {
-      const duplicate = await checkDuplicateDocument(cleanDoc, id, customerType)
-      if (duplicate) {
-        const docLabel = type === 'PF' ? 'CPF' : 'CNPJ'
-        const entityLabel =
-          (duplicate.customer_type || '').toLowerCase() === 'fornecedor' ||
-          (duplicate.customer_type || '').toLowerCase() === 'ambos'
-            ? 'fornecedor'
-            : 'cliente'
-        const errorMsg = `Já existe um ${entityLabel} cadastrado com este ${docLabel}: ${duplicate.name}`
-        setDocumentError(errorMsg)
+      if (dedupeResult.action === 'match_found' && dedupeResult.existingCustomer) {
+        const errorMsg = dedupeResult.warningMessage || 'Contato já existe no sistema.'
+        setDocumentWarning(errorMsg)
         setDuplicateBanner({
           isDuplicate: true,
           message: errorMsg,
-          existingId: duplicate.id,
-          existingName: duplicate.name,
-          field: docLabel as 'CPF' | 'CNPJ',
-          entityLabel: entityLabel as 'cliente' | 'fornecedor',
+          existingId: dedupeResult.existingCustomer.id,
+          existingName: dedupeResult.existingCustomer.name,
+          field: dedupeResult.matchType === 'canonical_phone' ? 'telefone' : 'documento',
+          entityLabel:
+            (dedupeResult.existingCustomer.customer_type || '').toLowerCase() === 'fornecedor'
+              ? 'fornecedor'
+              : 'cliente',
         })
         toast({
-          title: `${docLabel} já cadastrado`,
+          title: 'Cadastro duplicado identificado',
           description: errorMsg,
           variant: 'destructive',
         })
         return
       }
+
+      if (dedupeResult.action === 'branch_group_found' && dedupeResult.existingCustomer) {
+        // Alerta de que a unidade pertence à mesma empresa
+        toast({
+          title: 'Unidade pertencente à mesma empresa',
+          description: dedupeResult.warningMessage,
+        })
+      } else if (dedupeResult.action === 'fuzzy_warning' && dedupeResult.existingCustomer) {
+        toast({
+          title: 'Aviso de nome similar',
+          description: dedupeResult.warningMessage,
+        })
+      }
+    } catch (err) {
+      console.warn('Erro ao validar deduplicação prévia:', err)
     }
 
-    setDocumentError(null)
+    setDocumentWarning(null)
     setDuplicateBanner(null)
     setLoading(true)
+
     try {
+      const isCnpj = parsedDoc.type === 'CNPJ'
+      const isCpf = parsedDoc.type === 'CPF'
+
+      const roles =
+        customerType === 'Fornecedor'
+          ? ['fornecedor']
+          : customerType === 'Ambos'
+            ? ['cliente', 'fornecedor']
+            : ['cliente']
+
       const payload: Partial<any> = {
         name,
         contact_name: contactName.trim() || undefined,
@@ -199,19 +303,45 @@ export default function CustomerForm() {
         email,
         company,
         notes,
-        type,
+        type: isCnpj ? 'PJ' : 'PF',
         customer_type: customerType,
+        roles,
         item_families: selectedFamilyIds,
         lead_source: leadSource,
-        cpf: type === 'PF' ? cpf : '',
-        cnpj: type === 'PJ' ? cnpj : '',
+        cpf: isCpf ? parsedDoc.cleanDigits : '',
+        cnpj: isCnpj ? parsedDoc.cleanDigits : '',
       }
 
+      let savedId = id
       if (isEditing && id) {
         await updateCustomer(id, payload)
       } else {
-        await createCustomer(payload)
+        const created = await createCustomer(payload)
+        savedId = created.id
       }
+
+      // Se documento preenchido, garantir sincronização em customer_documents
+      if (savedId && parsedDoc.isValidLength) {
+        try {
+          const existingDocs = await getCustomerDocuments(savedId)
+          const alreadyLinked = existingDocs.some(
+            (d: any) => d.document_number === parsedDoc.cleanDigits,
+          )
+          if (!alreadyLinked) {
+            await addCustomerDocument({
+              customer: savedId,
+              document_type: parsedDoc.type as 'CPF' | 'CNPJ',
+              document_number: parsedDoc.cleanDigits,
+              root_cnpj: parsedDoc.rootCnpj,
+              label: parsedDoc.type === 'CNPJ' ? 'Matriz/Unidade Principal' : 'CPF Principal',
+              is_primary: true,
+            })
+          }
+        } catch (docErr) {
+          console.warn('Erro ao gravar customer_document secundário:', docErr)
+        }
+      }
+
       markDirty(false)
       toast({
         title:
@@ -251,7 +381,7 @@ export default function CustomerForm() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <h1 className="text-2xl font-bold text-slate-900">
-        {isEditing ? 'Editar Cliente' : 'Novo Cliente'}
+        {isEditing ? 'Editar Contato' : 'Novo Contato'}
       </h1>
 
       {duplicateBanner && (
@@ -284,9 +414,9 @@ export default function CustomerForm() {
         onSubmit={handleSubmit}
         className="bg-white p-6 rounded-xl border border-slate-200 space-y-5"
       >
-        {/* Classificação: Cliente / Fornecedor / Ambos */}
+        {/* Classificação do Papel: Cliente / Fornecedor / Ambos */}
         <div className="space-y-1.5">
-          <Label className="text-sm font-semibold text-slate-700">Tipo *</Label>
+          <Label className="text-sm font-semibold text-slate-700">Papel do Contato *</Label>
           <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 rounded-lg max-w-md">
             <button
               type="button"
@@ -395,98 +525,153 @@ export default function CustomerForm() {
           </div>
         )}
 
-        {/* Seletor Tipo: PF ou PJ */}
-        <div className="space-y-1.5">
-          <Label className="text-sm font-semibold text-slate-700">
-            Pessoa Física ou Jurídica *
-          </Label>
-          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-lg max-w-sm">
-            <button
-              type="button"
-              onClick={() => {
-                setType('PF')
-                markDirty(true)
-              }}
-              className={`flex items-center justify-center gap-2 py-2 px-3 text-sm font-medium rounded-md transition-all ${
-                type === 'PF'
-                  ? 'bg-white text-emerald-700 font-semibold shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <User className="h-4 w-4" />
-              Pessoa Física (PF)
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setType('PJ')
-                markDirty(true)
-              }}
-              className={`flex items-center justify-center gap-2 py-2 px-3 text-sm font-medium rounded-md transition-all ${
-                type === 'PJ'
-                  ? 'bg-white text-emerald-700 font-semibold shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Building2 className="h-4 w-4" />
-              Pessoa Jurídica (PJ)
-            </button>
+        {/* CAMPO ÚNICO DE DOCUMENTO (CPF / CNPJ) COM AUTO-DETECÇÃO */}
+        <div className="space-y-1.5 p-4 bg-slate-50/70 rounded-xl border border-slate-200">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="doc-input" className="text-sm font-semibold text-slate-800">
+              Documento (CPF ou CNPJ)
+            </Label>
+            <div className="flex items-center gap-1.5">
+              {detectedDocType === 'CPF' && (
+                <Badge
+                  variant="outline"
+                  className="bg-emerald-50 text-emerald-700 border-emerald-300 text-[11px] font-semibold"
+                >
+                  <User className="w-3 h-3 mr-1" /> CPF Detectado (11 dígitos)
+                </Badge>
+              )}
+              {detectedDocType === 'CNPJ' && (
+                <Badge
+                  variant="outline"
+                  className="bg-indigo-50 text-indigo-700 border-indigo-300 text-[11px] font-semibold"
+                >
+                  <Building2 className="w-3 h-3 mr-1" /> CNPJ Detectado (14 dígitos)
+                </Badge>
+              )}
+              {detectedDocType === 'UNKNOWN' && documentInput.length > 0 && (
+                <span className="text-[11px] text-slate-500">
+                  {cleanDigits(documentInput).length} dígitos
+                </span>
+              )}
+            </div>
           </div>
+
+          <Input
+            id="doc-input"
+            value={documentInput}
+            onChange={(e) => handleDocumentChange(e.target.value)}
+            placeholder="Digite CPF (11 dígitos) ou CNPJ (14 dígitos)"
+            className={documentWarning ? 'border-red-500 focus-visible:ring-red-500' : ''}
+          />
+          <p className="text-xs text-slate-500">
+            Detecção automática: 11 dígitos = CPF (Pessoa Física), 14 dígitos = CNPJ (Pessoa
+            Jurídica).
+          </p>
+
+          {documentWarning && (
+            <p className="text-xs text-red-600 flex items-center gap-1 mt-1 font-medium">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+              {documentWarning}
+            </p>
+          )}
+
+          {/* Lista de documentos vinculados / unidades da mesma empresa (se já editando) */}
+          {isEditing && existingDocuments.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
+              <span className="text-xs font-semibold text-slate-700 flex items-center gap-1">
+                <FileText className="w-3.5 h-3.5 text-slate-500" />
+                Unidades / Documentos vinculados ({existingDocuments.length}):
+              </span>
+              <div className="space-y-1.5">
+                {existingDocuments.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="flex items-center justify-between text-xs bg-white p-2 rounded-lg border border-slate-200"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="text-[10px]">
+                        {doc.document_type}
+                      </Badge>
+                      <span className="font-mono font-medium text-slate-800">
+                        {formatDocumentDisplay(doc.document_number)}
+                      </span>
+                      {doc.label && <span className="text-slate-500">({doc.label})</span>}
+                    </div>
+                    {doc.is_primary && (
+                      <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100 text-[10px]">
+                        Principal
+                      </Badge>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Adicionar nova unidade/filial (N documentos por contato) */}
+          {isEditing && (
+            <div className="pt-2">
+              {!showAddBranchDoc ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowAddBranchDoc(true)}
+                  className="text-xs text-indigo-700 hover:text-indigo-800 hover:bg-indigo-50 p-0 h-auto gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Vincular outra unidade/CNPJ à mesma empresa
+                </Button>
+              ) : (
+                <div className="p-3 bg-indigo-50/60 rounded-lg border border-indigo-200 space-y-2">
+                  <span className="text-xs font-semibold text-indigo-900">
+                    Vincular Unidade / Filial
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <Input
+                      placeholder="CNPJ ou CPF da unidade"
+                      value={newBranchDoc}
+                      onChange={(e) => setNewBranchDoc(e.target.value)}
+                      className="text-xs h-8 bg-white"
+                    />
+                    <Input
+                      placeholder="Identificação (ex: Filial Campinas)"
+                      value={newBranchLabel}
+                      onChange={(e) => setNewBranchLabel(e.target.value)}
+                      className="text-xs h-8 bg-white"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs h-7"
+                      onClick={() => setShowAddBranchDoc(false)}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="text-xs h-7 bg-indigo-600 hover:bg-indigo-700 text-white"
+                      onClick={handleAddBranchDocument}
+                    >
+                      Vincular Unidade
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Campos condicionais: CPF para PF, CNPJ para PJ */}
-        {type === 'PF' ? (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="cpf">CPF</Label>
-            </div>
-            <Input
-              id="cpf"
-              value={cpf}
-              onChange={(e) => {
-                setCpf(maskCPF(e.target.value))
-                markDirty(true)
-                if (documentError) setDocumentError(null)
-              }}
-              placeholder="000.000.000-00"
-              maxLength={14}
-              className={documentError ? 'border-red-500 focus-visible:ring-red-500' : ''}
-            />
-            {documentError && (
-              <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                {documentError}
-              </p>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="cnpj">CNPJ</Label>
-            </div>
-            <Input
-              id="cnpj"
-              value={cnpj}
-              onChange={(e) => {
-                setCnpj(maskCNPJ(e.target.value))
-                markDirty(true)
-                if (documentError) setDocumentError(null)
-              }}
-              placeholder="00.000.000/0000-00"
-              maxLength={18}
-              className={documentError ? 'border-red-500 focus-visible:ring-red-500' : ''}
-            />
-            {documentError && (
-              <p className="text-xs text-red-600 flex items-center gap-1 mt-1">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                {documentError}
-              </p>
-            )}
-          </div>
-        )}
-
         <div className="space-y-1.5">
-          <Label>{type === 'PF' ? 'Nome Completo *' : 'Razão Social / Nome Fantasia *'}</Label>
+          <Label>
+            {detectedDocType === 'CNPJ' || type === 'PJ'
+              ? 'Razão Social / Nome Fantasia *'
+              : 'Nome Completo *'}
+          </Label>
           <Input
             value={name}
             onChange={(e) => {
@@ -494,13 +679,20 @@ export default function CustomerForm() {
               markDirty(true)
             }}
             required
-            placeholder={type === 'PF' ? 'Ex: Carlos Silva' : 'Ex: Auto Peças Silva Ltda'}
+            placeholder={
+              detectedDocType === 'CNPJ' || type === 'PJ'
+                ? 'Ex: Auto Peças Silva Ltda'
+                : 'Ex: Carlos Silva'
+            }
           />
         </div>
 
         <div className="space-y-1.5">
           <Label>
-            Nome da Pessoa de Contato {type === 'PJ' ? '(Responsável / Comprador)' : '(opcional)'}
+            Nome da Pessoa de Contato{' '}
+            {detectedDocType === 'CNPJ' || type === 'PJ'
+              ? '(Responsável / Comprador)'
+              : '(opcional)'}
           </Label>
           <Input
             value={contactName}
@@ -543,33 +735,17 @@ export default function CustomerForm() {
           </div>
         </div>
 
-        {type === 'PJ' && (
-          <div className="space-y-1.5">
-            <Label>Nome Fantasia / Contato Comercial</Label>
-            <Input
-              value={company}
-              onChange={(e) => {
-                setCompany(e.target.value)
-                markDirty(true)
-              }}
-              placeholder="Ex: Filial Centro / Contato: Marcos"
-            />
-          </div>
-        )}
-
-        {type === 'PF' && (
-          <div className="space-y-1.5">
-            <Label>Empresa / Vínculo (opcional)</Label>
-            <Input
-              value={company}
-              onChange={(e) => {
-                setCompany(e.target.value)
-                markDirty(true)
-              }}
-              placeholder="Empresa onde trabalha ou oficina parceira"
-            />
-          </div>
-        )}
+        <div className="space-y-1.5">
+          <Label>Nome Fantasia / Empresa Parceira</Label>
+          <Input
+            value={company}
+            onChange={(e) => {
+              setCompany(e.target.value)
+              markDirty(true)
+            }}
+            placeholder="Ex: Filial Centro / Oficina Silva"
+          />
+        </div>
 
         {/* Origem do Lead */}
         <div className="space-y-1.5">
@@ -618,7 +794,7 @@ export default function CustomerForm() {
             disabled={loading}
             className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold"
           >
-            {loading ? 'Salvando...' : 'Salvar Cliente'}
+            {loading ? 'Salvando...' : 'Salvar Contato'}
           </Button>
         </div>
       </form>

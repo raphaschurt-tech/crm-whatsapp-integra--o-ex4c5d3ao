@@ -1718,12 +1718,19 @@ export default function WhatsAppAtendimento() {
         return
       }
 
-      // 2. Procurar se o cliente já existe na base de dados de customers
+      // 2. Procurar se o cliente já existe na base de dados de customers (REAPROVEITAMENTO OBRIGATÓRIO)
       let existingCustomer: Customer | null = null
       try {
         existingCustomer = await findCustomerByPhone(rawClean)
         if (!existingCustomer && standardPhone !== rawClean) {
           existingCustomer = await findCustomerByPhone(standardPhone)
+        }
+        // Fallback amplo em todas as variantes conhecidas do motor de deduplicação
+        if (!existingCustomer) {
+          for (const v of variants) {
+            existingCustomer = await findCustomerByPhone(v)
+            if (existingCustomer) break
+          }
         }
       } catch (err) {
         console.warn('Erro ao consultar cliente por telefone:', err)

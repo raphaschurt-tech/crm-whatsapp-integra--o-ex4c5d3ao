@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-01T16:09:32.956Z",
+  "generatedAt": "2026-11-01T17:29:49.637Z",
   "collections": [
     {
       "name": "users",
@@ -220,6 +220,12 @@
         {
           "name": "last_interaction_at",
           "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "roles",
+          "type": "json",
           "required": false,
           "system": false
         }
@@ -3147,6 +3153,76 @@
         "CREATE UNIQUE INDEX idx_nfe_email_msg_id ON nfe_email_inbox (gmail_message_id)",
         "CREATE INDEX idx_nfe_email_status ON nfe_email_inbox (status)",
         "CREATE INDEX idx_nfe_email_sender ON nfe_email_inbox (sender_email)"
+      ]
+    },
+    {
+      "name": "customer_documents",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "customer",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "customers"
+        },
+        {
+          "name": "document_type",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["CPF", "CNPJ"]
+        },
+        {
+          "name": "document_number",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "root_cnpj",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "label",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_primary",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_cust_docs_customer ON customer_documents (customer)",
+        "CREATE INDEX idx_cust_docs_number ON customer_documents (document_number)",
+        "CREATE INDEX idx_cust_docs_root ON customer_documents (root_cnpj)"
       ]
     }
   ]

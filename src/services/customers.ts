@@ -232,11 +232,56 @@ export const checkDuplicateDocument = async (
         return c
       }
     }
+
+    // Verificar também em customer_documents
+    try {
+      const docs = await pb.collection('customer_documents').getFullList({
+        filter: `document_number = "${clean}"`,
+      })
+      if (docs.length > 0) {
+        const matchedCustId = docs[0].customer
+        if (!excludeCustomerId || matchedCustId !== excludeCustomerId) {
+          const matched = allCustomers.find((c) => c.id === matchedCustId)
+          if (matched) return matched
+        }
+      }
+    } catch {
+      /* ignore */
+    }
   } catch (error) {
     console.warn('Erro ao verificar duplicidade de documento:', error)
   }
 
   return null
+}
+
+/**
+ * Adiciona um documento a um cliente na tabela customer_documents
+ */
+export async function addCustomerDocument(data: {
+  customer: string
+  document_type: 'CPF' | 'CNPJ'
+  document_number: string
+  root_cnpj?: string
+  label?: string
+  is_primary?: boolean
+}) {
+  return pb.collection('customer_documents').create(data)
+}
+
+/**
+ * Busca todos os documentos vinculados a um cliente
+ */
+export async function getCustomerDocuments(customerId: string) {
+  try {
+    return await pb.collection('customer_documents').getFullList({
+      filter: `customer = "${customerId}"`,
+      sort: '-is_primary,created',
+    })
+  } catch (err) {
+    console.warn('Erro ao buscar documentos do cliente:', err)
+    return []
+  }
 }
 
 // Cache em memória de busca de cliente por telefone para prevenir rajadas / loops (TTL 10 minutos)

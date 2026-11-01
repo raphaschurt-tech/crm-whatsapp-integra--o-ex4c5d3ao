@@ -1,13 +1,11 @@
 // Hook de bloqueio de duplicidade em customers (clientes e fornecedores)
+// FASE 2: Unificado com o motor anti-duplicidade
 // Regras:
-// 1. Ao salvar cliente ou fornecedor (criar ou editar), verificar se o telefone, CPF ou CNPJ já pertence a outro registro do mesmo tipo.
-// 2. Comparação normalizada:
-//    - Telefone sem pontuação/55/9º dígito: DDD + 8 dígitos canônicos (ou variantes).
-//    - CPF/CNPJ apenas dígitos — grafias diferentes do mesmo documento devem casar.
-//    - Campo vazio de CPF/CNPJ nunca bloqueia.
-// 3. Duplicidade -> bloquear o salvamento com aviso claro:
-//    "Já existe um cliente/fornecedor cadastrado com este telefone/CPF/CNPJ: {nome do existente}"
-// 4. Ao editar um registro, o próprio registro não conta como duplicado (comparar apenas contra os outros).
+// 1. Fornecedor e Cliente PJ: dedupe por CNPJ normalizado.
+// 2. Cliente PF: dedupe por CPF se houver; senão por TELEFONE NORMALIZADO (DDI+DDD canônico).
+// 3. Ao editar, o próprio registro não conta como duplicado.
+// 4. Registros deleted = true são ignorados na validação de salvamento ativo.
+// IMPORTANTE: Todas as funções auxiliares são declaradas inline dentro de cada callback (PocketBase JSVM scoping rule)
 
 onRecordCreateRequest((e) => {
   const record = e.record
@@ -18,16 +16,28 @@ onRecordCreateRequest((e) => {
     return String(val).replace(/\D/g, '')
   }
 
-  function getCorePhoneKey(raw) {
+  function getCorePhoneKey(raw, defaultDdd) {
     if (!raw) return ''
+    const ddd = defaultDdd || '11'
     const s = String(raw).trim()
     if (s.toLowerCase().indexOf('@lid') !== -1) return ''
     const digits = cleanDigits(s)
-    if (digits.length >= 14 || digits.length < 8) return ''
+    if (!digits || digits.length < 8) return ''
 
-    let withoutDdi = digits
-    if (digits.indexOf('55') === 0 && (digits.length === 12 || digits.length === 13)) {
-      withoutDdi = digits.slice(2)
+    let canonical = digits
+    if (canonical.length === 8) {
+      canonical = '55' + ddd + canonical
+    } else if (canonical.length === 10 && canonical.indexOf('55') !== 0) {
+      canonical = '55' + canonical
+    } else if (canonical.length === 9) {
+      canonical = '55' + ddd + canonical
+    } else if (canonical.length === 11 && canonical.indexOf('55') !== 0) {
+      canonical = '55' + canonical
+    }
+
+    let withoutDdi = canonical
+    if (canonical.indexOf('55') === 0 && canonical.length >= 12) {
+      withoutDdi = canonical.slice(2)
     }
 
     if (withoutDdi.length === 11 && withoutDdi[2] === '9') {
@@ -61,18 +71,18 @@ onRecordCreateRequest((e) => {
 
     const existingName = existing.getString('name') || 'Sem Nome'
 
-    // 1. Validar telefone
-    if (phoneCore) {
-      const existingPhoneCore = getCorePhoneKey(existing.getString('phone'))
-      if (existingPhoneCore && existingPhoneCore === phoneCore) {
+    // 1. Validar CNPJ exato
+    if (cleanCnpj && cleanCnpj.length === 14) {
+      const existingCnpj = cleanDigits(existing.getString('cnpj'))
+      if (existingCnpj && existingCnpj === cleanCnpj) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este telefone: ${existingName} [id:${existing.id}]`,
+          `Já existe um ${entityLabel} cadastrado com este CNPJ: ${existingName} [id:${existing.id}]`,
         )
       }
     }
 
-    // 2. Validar CPF
-    if (cleanCpf) {
+    // 2. Validar CPF exato
+    if (cleanCpf && cleanCpf.length === 11) {
       const existingCpf = cleanDigits(existing.getString('cpf'))
       if (existingCpf && existingCpf === cleanCpf) {
         throw new BadRequestError(
@@ -81,12 +91,12 @@ onRecordCreateRequest((e) => {
       }
     }
 
-    // 3. Validar CNPJ
-    if (cleanCnpj) {
-      const existingCnpj = cleanDigits(existing.getString('cnpj'))
-      if (existingCnpj && existingCnpj === cleanCnpj) {
+    // 3. Validar telefone normalizado (chave principal para cliente PF e atendimento)
+    if (phoneCore) {
+      const existingPhoneCore = getCorePhoneKey(existing.getString('phone'))
+      if (existingPhoneCore && existingPhoneCore === phoneCore) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este CNPJ: ${existingName} [id:${existing.id}]`,
+          `Já existe um ${entityLabel} cadastrado com este telefone: ${existingName} [id:${existing.id}]`,
         )
       }
     }
@@ -104,16 +114,28 @@ onRecordUpdateRequest((e) => {
     return String(val).replace(/\D/g, '')
   }
 
-  function getCorePhoneKey(raw) {
+  function getCorePhoneKey(raw, defaultDdd) {
     if (!raw) return ''
+    const ddd = defaultDdd || '11'
     const s = String(raw).trim()
     if (s.toLowerCase().indexOf('@lid') !== -1) return ''
     const digits = cleanDigits(s)
-    if (digits.length >= 14 || digits.length < 8) return ''
+    if (!digits || digits.length < 8) return ''
 
-    let withoutDdi = digits
-    if (digits.indexOf('55') === 0 && (digits.length === 12 || digits.length === 13)) {
-      withoutDdi = digits.slice(2)
+    let canonical = digits
+    if (canonical.length === 8) {
+      canonical = '55' + ddd + canonical
+    } else if (canonical.length === 10 && canonical.indexOf('55') !== 0) {
+      canonical = '55' + canonical
+    } else if (canonical.length === 9) {
+      canonical = '55' + ddd + canonical
+    } else if (canonical.length === 11 && canonical.indexOf('55') !== 0) {
+      canonical = '55' + canonical
+    }
+
+    let withoutDdi = canonical
+    if (canonical.indexOf('55') === 0 && canonical.length >= 12) {
+      withoutDdi = canonical.slice(2)
     }
 
     if (withoutDdi.length === 11 && withoutDdi[2] === '9') {
@@ -150,18 +172,18 @@ onRecordUpdateRequest((e) => {
 
     const existingName = existing.getString('name') || 'Sem Nome'
 
-    // 1. Validar telefone
-    if (phoneCore) {
-      const existingPhoneCore = getCorePhoneKey(existing.getString('phone'))
-      if (existingPhoneCore && existingPhoneCore === phoneCore) {
+    // 1. Validar CNPJ
+    if (cleanCnpj && cleanCnpj.length === 14) {
+      const existingCnpj = cleanDigits(existing.getString('cnpj'))
+      if (existingCnpj && existingCnpj === cleanCnpj) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este telefone: ${existingName} [id:${existing.id}]`,
+          `Já existe um ${entityLabel} cadastrado com este CNPJ: ${existingName} [id:${existing.id}]`,
         )
       }
     }
 
     // 2. Validar CPF
-    if (cleanCpf) {
+    if (cleanCpf && cleanCpf.length === 11) {
       const existingCpf = cleanDigits(existing.getString('cpf'))
       if (existingCpf && existingCpf === cleanCpf) {
         throw new BadRequestError(
@@ -170,12 +192,12 @@ onRecordUpdateRequest((e) => {
       }
     }
 
-    // 3. Validar CNPJ
-    if (cleanCnpj) {
-      const existingCnpj = cleanDigits(existing.getString('cnpj'))
-      if (existingCnpj && existingCnpj === cleanCnpj) {
+    // 3. Validar telefone
+    if (phoneCore) {
+      const existingPhoneCore = getCorePhoneKey(existing.getString('phone'))
+      if (existingPhoneCore && existingPhoneCore === phoneCore) {
         throw new BadRequestError(
-          `Já existe um ${entityLabel} cadastrado com este CNPJ: ${existingName} [id:${existing.id}]`,
+          `Já existe um ${entityLabel} cadastrado com este telefone: ${existingName} [id:${existing.id}]`,
         )
       }
     }

@@ -15,6 +15,15 @@ export type EntityCustomerType = 'Cliente' | 'Fornecedor' | 'Ambos' | 'cliente' 
 
 export type LeadSource = 'whatsapp' | 'instagram' | 'google' | 'other'
 
+export interface CustomerDocument extends RecordModel {
+  customer: string
+  document_type: 'CPF' | 'CNPJ'
+  document_number: string
+  root_cnpj?: string
+  label?: string
+  is_primary?: boolean
+}
+
 export interface Customer extends RecordModel {
   name: string
   contact_name?: string
@@ -24,6 +33,7 @@ export interface Customer extends RecordModel {
   notes?: string
   type?: CustomerType
   customer_type?: EntityCustomerType
+  roles?: string[]
   cpf?: string
   cnpj?: string
   pipeline_status?: string
@@ -38,8 +48,10 @@ export interface Customer extends RecordModel {
   lead_viewed?: boolean
   first_message_at?: string
   last_interaction_at?: string
+  documents?: CustomerDocument[]
   expand?: {
     item_families?: ItemFamily[]
+    customer_documents_via_customer?: CustomerDocument[]
     [key: string]: any
   }
 }
