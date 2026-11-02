@@ -1,0 +1,73 @@
+{
+  "timestamp": "2026-11-02T16:03:00-03:00",
+  "reason": "Âncora 🟡 BACKUP PRIMEIRO antes do ajuste no worker DF-e cStat 656, fila de comandos pendente e filtro do cron nfe-email-inbox",
+  "task": "Corrigir defeitos de abastecimento de NF-e: (1) worker DF-e travado por cStat 656; (2) fila de comandos dfe_command_queue pendente; (3) poll de email em loop reprocessando sem_xml/erro",
+  "dfe_pointer_state": [
+    {
+      "id": "1cz9gy9g3s8f2tx",
+      "collectionId": "pbc_3966208078",
+      "collectionName": "dfe_pointer_state",
+      "cert_cnpj": "00496593000129",
+      "cert_days_remaining": 46,
+      "cert_valid_until": "2026-12-08T20:10:00.000Z",
+      "consecutive_failures": 0,
+      "cstat_last": "656",
+      "is_initialized": true,
+      "is_running": false,
+      "last_error": "",
+      "last_poll_at": "2026-10-23T17:00:00.177-03:00",
+      "last_success_at": "2026-10-23T17:00:00.177-03:00",
+      "max_nsu": "000000000000002",
+      "ult_nsu": "000000000000002",
+      "worker_mode": "real",
+      "worker_status": "online",
+      "created": "2026-10-19 04:06:40.817Z",
+      "updated": "2026-10-23 20:00:00.177Z"
+    }
+  ],
+  "dfe_command_queue_pending": [
+    {
+      "id": "2ifv7vchd8qfc9x",
+      "command": "consultar_agora",
+      "created": "2026-10-26 21:18:22.546Z",
+      "created_by": "20vr2sqduxn0gvh",
+      "executed_at": "",
+      "params": {},
+      "result_summary": "",
+      "status": "pendente"
+    },
+    {
+      "id": "z29sftuc34e9ka8",
+      "command": "busca_por_chave",
+      "created": "2026-10-25 22:10:33.821Z",
+      "created_by": "",
+      "executed_at": "",
+      "params": {
+        "access_key": "35260960625586000101550010000021741659300497",
+        "audit_trail": {
+          "fileName": "danfe_35260960625586000101550010000021741659300497.pdf",
+          "messageId": "AC4CA447C99F6DBA157C67FB62C28447",
+          "origin": "whatsapp"
+        }
+      },
+      "result_summary": "",
+      "status": "pendente"
+    },
+    {
+      "id": "rm7b6am37pzewue",
+      "command": "consultar_agora",
+      "created": "2026-10-24 22:25:33.064Z",
+      "created_by": "20vr2sqduxn0gvh",
+      "executed_at": "",
+      "params": {},
+      "result_summary": "",
+      "status": "pendente"
+    }
+  ],
+  "files_to_modify": [
+    "worker-dfe/dfeAdapter.js",
+    "worker-dfe/index.js",
+    "worker-dfe/crmClient.js",
+    "pocketbase/hooks/nfe_email_inbox.js"
+  ]
+}

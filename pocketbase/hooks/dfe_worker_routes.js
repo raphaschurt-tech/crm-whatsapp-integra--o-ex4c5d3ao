@@ -311,17 +311,37 @@ routerAdd('POST', '/backend/v1/dfe/pointer', (e) => {
     if (body.cstat_last !== undefined) pointerRec.set('cstat_last', String(body.cstat_last))
     if (body.worker_mode !== undefined) pointerRec.set('worker_mode', String(body.worker_mode))
 
+    if (body.consecutive_failures !== undefined) {
+      pointerRec.set('consecutive_failures', Number(body.consecutive_failures) || 0)
+    }
+
+    if (body.worker_status !== undefined) {
+      pointerRec.set('worker_status', String(body.worker_status))
+    }
+
+    if (body.last_error !== undefined) {
+      pointerRec.set('last_error', String(body.last_error))
+    }
+
     if (body.success) {
       pointerRec.set('last_success_at', bIso)
-      pointerRec.set('consecutive_failures', 0)
-      pointerRec.set('last_error', '')
-      pointerRec.set('worker_status', 'online')
+      if (body.consecutive_failures === undefined) {
+        pointerRec.set('consecutive_failures', 0)
+      }
+      if (body.last_error === undefined) {
+        pointerRec.set('last_error', '')
+      }
+      if (body.worker_status === undefined) {
+        pointerRec.set('worker_status', 'online')
+      }
     } else if (body.error) {
       pointerRec.set('last_error', String(body.error))
-      const currentFails = Number(pointerRec.get('consecutive_failures')) || 0
-      pointerRec.set('consecutive_failures', currentFails + 1)
-      if (currentFails + 1 >= 3) {
-        pointerRec.set('worker_status', 'error')
+      if (body.consecutive_failures === undefined) {
+        const currentFails = Number(pointerRec.get('consecutive_failures')) || 0
+        pointerRec.set('consecutive_failures', currentFails + 1)
+        if (currentFails + 1 >= 3 && body.worker_status === undefined) {
+          pointerRec.set('worker_status', 'error')
+        }
       }
     }
 

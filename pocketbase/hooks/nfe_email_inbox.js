@@ -2893,9 +2893,26 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       )
     } catch (_) {}
 
-    // Se já processado com sucesso, pula; se estava 'sem_xml' ou 'erro', permite reprocessar
-    if (existingRecord && existingRecord.getString('status') === 'processado') {
-      continue
+    // Se já processado com sucesso, pula.
+    // Se status for 'sem_xml' ou 'erro', pular se já foi processado nas últimas 24h
+    // (só reprocessar no cron se processed_at for nulo/vazio ou tiver mais de 24h).
+    if (existingRecord) {
+      const recStatus = existingRecord.getString('status')
+      if (recStatus === 'processado') {
+        continue
+      }
+      if (recStatus === 'sem_xml' || recStatus === 'erro') {
+        const procAtStr = existingRecord.getString('processed_at') || ''
+        if (procAtStr) {
+          const procTime = new Date(procAtStr).getTime()
+          const nowTime = new Date(horarioBrasilia).getTime()
+          const diffMs = nowTime - procTime
+          const diffHours = diffMs / (1000 * 60 * 60)
+          if (!isNaN(diffHours) && diffHours < 24 && diffHours >= 0) {
+            continue
+          }
+        }
+      }
     }
 
     let senderRaw = ''

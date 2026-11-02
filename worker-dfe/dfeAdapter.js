@@ -812,6 +812,81 @@ class DfeAdapter {
   }
 
   /**
+   * Executa a consulta NFeDistribuicaoDFe por Chave de Acesso (NT 2014.002)
+   */
+  async consultarPorChave(chaveAcesso) {
+    const cleanKey = String(chaveAcesso || '').replace(/\D/g, '')
+    if (!cleanKey || cleanKey.length !== 44) {
+      throw new Error(`Chave de acesso inválida (${cleanKey}): deve conter 44 dígitos.`)
+    }
+
+    await this.initWizard()
+
+    if (this.mode === 'real') {
+      console.log(`[DFE-MODE] real | SEFAZ Produção Oficial (NFeWizard-io) | Chave: ${cleanKey}`)
+    } else {
+      console.warn(`[DFE-MODE] simulacao | Motivo: ${this.modeReason} | Chave: ${cleanKey}`)
+    }
+
+    try {
+      if (this.mode === 'real' && this.wizardInstance) {
+        console.log(
+          `[DFE-KEY-QUERY] Consultando SEFAZ Nacional via NFeWizard (Chave: ${cleanKey}, cUFAutor: ${this.cUfAutor || 35}, CNPJ: ${this.cleanCnpj})...`,
+        )
+
+        const payload = {
+          cUFAutor: Number(this.cUfAutor || 35),
+          CNPJ: String(this.cleanCnpj || '').replace(/\D/g, ''),
+          consChNFe: {
+            chNFe: cleanKey,
+          },
+        }
+
+        let result = null
+        if (typeof this.wizardInstance.NFE_DistribuicaoDFePorChave === 'function') {
+          result = await this.wizardInstance.NFE_DistribuicaoDFePorChave(payload)
+        } else if (typeof this.wizardInstance.NFE_DistribuicaoDFe === 'function') {
+          result = await this.wizardInstance.NFE_DistribuicaoDFe(payload)
+        } else {
+          throw new Error(
+            'Nenhum método compatível de Distribuição DFe por chave encontrado no NFeWizard.',
+          )
+        }
+
+        return this.parseWizardResponse(result, '0')
+      }
+
+      // Mock de resposta para simulação
+      return {
+        cStat: '138',
+        xMotivo: 'Documento localizado por chave (simulação)',
+        ultNSU: '0',
+        maxNSU: '0',
+        docs: [
+          {
+            nsu: '0',
+            schema: 'procNFe_v4.00.xsd',
+            accessKey: cleanKey,
+            model: cleanKey.slice(20, 22) || '55',
+            emitterCnpj: cleanKey.slice(6, 20),
+            emitterName: 'FORNECEDOR SIMULADO BUSCA CHAVE',
+            issueDate: new Date().toISOString(),
+            totalAmount: 1500.0,
+            nfeNumber: cleanKey.slice(25, 34),
+            isSummary: false,
+            isFullNfe: true,
+            isEvent: false,
+            rawXml: `<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><NFe><infNFe Id="NFe${cleanKey}" versao="4.00"><ide><cUF>35</cUF><nNF>${parseInt(cleanKey.slice(25, 34), 10)}</nNF><dhEmi>${new Date().toISOString()}</dhEmi></ide><emit><CNPJ>${cleanKey.slice(6, 20)}</CNPJ><xNome>FORNECEDOR SIMULADO</xNome></emit><dest><CNPJ>00496593000129</CNPJ><xNome>RPA AUTO PECAS</xNome></dest><total><ICMSTot><vNF>1500.00</vNF></ICMSTot></total></infNFe></NFe><protNFe versao="4.00"><infProt><chNFe>${cleanKey}</chNFe><nProt>135240000000000</nProt><cStat>100</cStat></infProt></protNFe></nfeProc>`,
+          },
+        ],
+      }
+    } catch (err) {
+      console.error('[DFE-SEFAZ-KEY-ERR]', err.message)
+      throw err
+    }
+  }
+
+  /**
    * Mock / Ensaio para validação quando NFeWizard não estiver instalado
    */
   mockSefazResponse(ultNsu) {
