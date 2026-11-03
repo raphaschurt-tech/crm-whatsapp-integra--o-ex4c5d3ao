@@ -485,27 +485,67 @@ export async function markSouisStockLaunched(
   })
 }
 
-export async function updateNfeItemDestiny(
-  nfeId: string,
-  itemIndex: number,
-  destinoDeclarado: 'revenda' | 'insumo_producao' | 'insumo_consumo',
-): Promise<{
+export interface NfeItemDestinyDeclaration {
+  index: number
+  destino_declarado: 'revenda' | 'insumo_producao' | 'insumo_consumo' | string
+}
+
+export interface UpdateNfeItemDestinyResponse {
   success: boolean
   message?: string
   error?: string
   cfop_entrada?: string
+  cfop_entrada_sugerido?: string
   destino_declarado?: string
   payables_updated?: number
   raw_items?: any[]
-}> {
-  return pb.send('/backend/v1/nfe/update-item-destiny', {
-    method: 'POST',
-    body: {
-      nfe_id: nfeId,
-      item_index: itemIndex,
-      destino_declarado: destinoDeclarado,
-    },
-  })
+}
+
+export async function updateNfeItemDestiny(
+  nfeId: string,
+  itemIndexOrDeclarations: number | NfeItemDestinyDeclaration[],
+  destinoDeclarado?: 'revenda' | 'insumo_producao' | 'insumo_consumo' | string,
+): Promise<UpdateNfeItemDestinyResponse> {
+  // Chamada única unitária
+  if (typeof itemIndexOrDeclarations === 'number') {
+    const res = await pb.send<UpdateNfeItemDestinyResponse>('/backend/v1/nfe/update-item-destiny', {
+      method: 'POST',
+      body: {
+        nfe_id: nfeId,
+        item_index: itemIndexOrDeclarations,
+        destino_declarado: destinoDeclarado,
+      },
+    })
+    return {
+      ...res,
+      cfop_entrada_sugerido: res.cfop_entrada_sugerido || res.cfop_entrada,
+    }
+  }
+
+  // Chamada em lote (array de declarações por item)
+  const declarations = Array.isArray(itemIndexOrDeclarations) ? itemIndexOrDeclarations : []
+  let lastRes: UpdateNfeItemDestinyResponse = { success: true }
+
+  for (const decl of declarations) {
+    if (!decl.destino_declarado) continue
+    const r = await pb.send<UpdateNfeItemDestinyResponse>('/backend/v1/nfe/update-item-destiny', {
+      method: 'POST',
+      body: {
+        nfe_id: nfeId,
+        item_index: decl.index,
+        destino_declarado: decl.destino_declarado,
+      },
+    })
+    if (!r.success) {
+      return r
+    }
+    lastRes = r
+  }
+
+  return {
+    ...lastRes,
+    cfop_entrada_sugerido: lastRes.cfop_entrada_sugerido || lastRes.cfop_entrada,
+  }
 }
 
 export async function getNfeProcessedList(): Promise<NfeProcessed[]> {
