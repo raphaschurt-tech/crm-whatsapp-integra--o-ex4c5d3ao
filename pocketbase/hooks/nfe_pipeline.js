@@ -360,6 +360,14 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
     }
   }
 
+  // F4 (0.0.266): Auto-cadastro / Dedupe do fornecedor via XML
+  const emitData = nfeExtractEmitDataFromXml(xmlContent)
+  if (!emitData.cnpj && parsed.emitCnpj) emitData.cnpj = parsed.emitCnpj
+  if (!emitData.name && parsed.emitName) emitData.name = parsed.emitName
+
+  const resolvedSupplier = nfeResolveOrCreateSupplier(emitData, 'pipeline')
+  const supplierRec = resolvedSupplier ? resolvedSupplier.supplier : null
+
   // Guard 2a — CFOP (Regra Contábil Validada)
   // (1) Nota de fornecedor FABRICANTE com CFOP de venda de produção própria:
   //     - 5102 (interna) ou 6102 (interestadual)
@@ -370,36 +378,12 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
   //     - Revenda: 1102 / 2102 (1403 / 2403 se com ST)
   //     - Insumo de produção: 1101 / 2101
   //     - Insumo de consumo: 1556 / 2556
-  // (3) DEFAULT TEMPORÁRIO hardcoded por fornecedor:
-  //     NOTA DE ARQUITETURA: F4 substituirá este default por atributo formal de natureza do fornecedor no cadastro.
-  //     - Jahu Borrachas e MEC LAN = revenda
-  //     - Oxilapa = insumo de produção
-  //     Fornecedores sem default ficam como 'classificacao_pendente' para classificação no lançamento.
-  // (4) Tratamento financeiro:
-  //     - Contas a pagar pelo VALOR TOTAL da nota (vNF).
-  //     - Mapeamento SKU fornecedor -> produto NÃO bloqueia o financeiro.
-  //     - Nota com ST -> alerta registrado nas notas da NF e nos lançamentos a pagar para conferir destaque do ICMS-ST.
+  // (3) F4: Natureza lida do atributo supplier_nature do fornecedor no cadastro
+  //     (valores: 'revenda' | 'insumo_producao' | 'insumo_consumo').
+  //     Fallback: fornecedor sem atributo gravado -> 'classificacao_pendente'
+  //     (a nota NÃO é retida; classificação fica para o lançamento).
   const ACCEPTED_ORIGIN_CFOPS = ['5102', '6102', '5405', '6403', '6405', '1102', '2102']
   const ST_CFOPS = ['5405', '6403', '6405']
-
-  function resolveSupplierNatureDefault(cnpjDigits, suppName) {
-    const cnpj = String(cnpjDigits || '').replace(/\D/g, '')
-    const name = String(suppName || '').toUpperCase()
-
-    // Jahu Borrachas: CNPJ raiz 61.136.701 (matriz 0001-47, filiais 0007-32 etc.)
-    if (cnpj.startsWith('61136701') || name.includes('JAHU')) {
-      return 'revenda'
-    }
-    // MEC LAN: CNPJ 62.538.228/0001-97
-    if (cnpj.startsWith('62538228') || name.includes('MEC LAN') || name.includes('MECLAN')) {
-      return 'revenda'
-    }
-    // Oxilapa: CNPJ 59.417.469/0001-73
-    if (cnpj.startsWith('59417469') || name.includes('OXILAPA')) {
-      return 'insumo_producao'
-    }
-    return ''
-  }
 
   function computeSuggestedEntryCfop(originCfop, declaredDestiny) {
     const oCfop = String(originCfop || '').trim()
@@ -426,7 +410,10 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
   }
 
   let hasStAlert = false
-  const supplierNatureDefault = resolveSupplierNatureDefault(parsed.emitCnpj, parsed.emitName)
+  const supplierNature =
+    supplierRec && supplierRec.getString('supplier_nature')
+      ? supplierRec.getString('supplier_nature')
+      : ''
 
   if (!isException) {
     let hasNonPurchaseCfop = false
@@ -456,7 +443,7 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
     for (let c = 0; c < parsed.items.length; c++) {
       const it = parsed.items[c]
       const originCfop = String(it.cfop || '').trim()
-      const itemDestiny = supplierNatureDefault || 'classificacao_pendente'
+      const itemDestiny = supplierNature || 'classificacao_pendente'
       const suggestedEntryCfop = computeSuggestedEntryCfop(originCfop, itemDestiny)
       it.cfop_origem = originCfop
       it.cfop_entrada_sugerido = suggestedEntryCfop
@@ -480,42 +467,6 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
         ') difere do total de produtos da nota (' +
         parsed.itemsTotal.toFixed(2) +
         ').'
-    }
-  }
-
-  // 1. Fornecedor
-  let supplierRec = null
-  if (parsed.emitCnpj) {
-    try {
-      const foundSuppliers = $app.findRecordsByFilter(
-        'customers',
-        'cnpj = {:cnpj} && deleted = false',
-        '-created',
-        1,
-        0,
-        { cnpj: parsed.emitCnpj },
-      )
-      if (foundSuppliers && foundSuppliers.length > 0) {
-        supplierRec = foundSuppliers[0]
-      }
-    } catch (_) {}
-
-    if (!supplierRec) {
-      try {
-        const custCol = $app.findCollectionByNameOrId('customers')
-        const newSupp = new Record(custCol)
-        newSupp.set('name', parsed.emitName || 'Fornecedor CNPJ ' + parsed.emitCnpj)
-        newSupp.set('company', parsed.emitName || '')
-        newSupp.set('cnpj', parsed.emitCnpj)
-        newSupp.set('type', 'PJ')
-        newSupp.set('customer_type', 'Fornecedor')
-        newSupp.set('source', 'nfe_pipeline')
-        newSupp.set('notes', 'Cadastrado automaticamente via ingestão de NF-e de compra.')
-        $app.save(newSupp)
-        supplierRec = newSupp
-      } catch (suppErr) {
-        console.log('[NFE-SUPPLIER-CREATE-ERR]', String(suppErr))
-      }
     }
   }
 

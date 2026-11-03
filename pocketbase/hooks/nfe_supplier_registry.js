@@ -1,8 +1,8 @@
 /**
- * F4 — REGISTRO DE FORNECEDOR VIA XML (0.0.265)
+ * F4 — REGISTRO DE FORNECEDOR VIA XML (0.0.265 / 0.0.266)
  * Motor de dedupe + auto-cadastro de fornecedor a partir dos dados do emitente
  * da NF-e. Compartilhado por:
- *   - pocketbase/hooks/nfe_pipeline.js (rota /backend/v1/nfe/upload — worker DF-e)
+ *   - pocketbase/hooks/nfe_pipeline.js (rota /backend/v1/nfe/upload — worker DF-e / upload manual)
  *   - pocketbase/hooks/nfe_email_inbox.js (cron de inbox + rota /backend/v1/nfe/email-inbox/sync)
  *
  * Regras:
@@ -11,15 +11,16 @@
  *   2) customer_documents.document_number (unidade/filial já vinculada);
  *   3) customer_documents.root_cnpj (mesma raiz = mesma entidade, filial cai na
  *      MESMA entidade sem fundir registros);
- *   4) telefone do emitente (cruzamento pelo core canônico,DDD+8).
+ *   4) telefone do emitente (cruzamento pelo core canônico, DDD+8).
  * - Se existir registro com o mesmo CNPJ → vincular (atualizar dados que faltam).
  * - Se a raiz já pertence a uma entidade → VINCULAR a nota à entidade (sem nova
  *   criação); se a unidade do XML ainda não está em customer_documents, gravar o
  *   documento da unidade apontando para a entidade.
  * - Criar fornecedor NOVO somente quando nada bate. A coleção customers EXIGE
- *   phone: sem <fone> no XML o cadastro é inviável → a chamada retorna
- *   { supplier: null, pendingRegistration: true } e o guard #2 mantém a retenção
- *   (comportamento seguro, não quebra a API).
+ *   phone: se o XML não trouxer <enderEmit><fone>, gera um fallback legível
+ *   "0000000000" para que a criação não falhe e a nota possa seguir sem retenção.
+ * - Suporta extração de IE (Inscrição Estadual) e endereço completo (<xLgr>, <nro>,
+ *   <xBairro>, <xMun>, <UF>, <CEP>) e enriquece as notas do fornecedor.
  */
 
 function nfeCleanDigits(value) {
@@ -176,16 +177,72 @@ function nfeEnsureSupplierDocument(supplierRec, emitCnpj, sourceLabel) {
 }
 
 /**
+ * Extrai dados do emitente a partir do XML da NF-e de forma completa:
+ * CNPJ, Razão Social, Fantasia, IE, Telefone e Endereço.
+ */
+function nfeExtractEmitDataFromXml(xmlString) {
+  if (!xmlString || typeof xmlString !== 'string') return {}
+
+  function extractTag(src, tagName) {
+    if (!src) return ''
+    const re = new RegExp('<' + tagName + '[^>]*>([\\s\\S]*?)<\\/' + tagName + '>', 'i')
+    const m = src.match(re)
+    return m && m[1] ? m[1].trim() : ''
+  }
+
+  const infNFeBlock = extractTag(xmlString, 'infNFe')
+  const emitBlock = extractTag(infNFeBlock || xmlString, 'emit')
+  if (!emitBlock) return {}
+
+  const cnpj = nfeCleanDigits(extractTag(emitBlock, 'CNPJ'))
+  const name = extractTag(emitBlock, 'xNome')
+  const fant = extractTag(emitBlock, 'xFant')
+  const ie = extractTag(emitBlock, 'IE')
+
+  const enderEmitBlock = extractTag(emitBlock, 'enderEmit')
+  const phone = nfeCleanDigits(extractTag(enderEmitBlock, 'fone'))
+  const xLgr = extractTag(enderEmitBlock, 'xLgr')
+  const nro = extractTag(enderEmitBlock, 'nro')
+  const xBairro = extractTag(enderEmitBlock, 'xBairro')
+  const xMun = extractTag(enderEmitBlock, 'xMun')
+  const uf = extractTag(enderEmitBlock, 'UF')
+  const cep = nfeCleanDigits(extractTag(enderEmitBlock, 'CEP'))
+
+  const addressParts = []
+  if (xLgr) addressParts.push(xLgr + (nro ? ', ' + nro : ''))
+  if (xBairro) addressParts.push(xBairro)
+  if (xMun) addressParts.push(xMun + (uf ? ' - ' + uf : ''))
+  if (cep) addressParts.push('CEP ' + cep)
+  const fullAddress = addressParts.join(' - ')
+
+  return {
+    cnpj: cnpj,
+    name: name || fant,
+    fantasia: fant,
+    ie: ie,
+    phone: phone,
+    xLgr: xLgr,
+    nro: nro,
+    xBairro: xBairro,
+    xMun: xMun,
+    uf: uf,
+    cep: cep,
+    address: fullAddress,
+  }
+}
+
+/**
  * Resolve o fornecedor do emitente do XML: dedupe (CNPJ → documento → raiz →
- * telefone → email) e, só se nada bater E houver telefone no XML, cria o
- * fornecedor. Retorna { supplier, created, matchedBy, pendingRegistration }.
- * pendingRegistration=true mantém o guard #2 retendo a nota (XML sem telefone).
+ * telefone → email → nome) e, se nada bater, auto-cadastra o fornecedor.
+ * Retorna { supplier, created, matchedBy, pendingRegistration: false }.
  */
 function nfeResolveOrCreateSupplier(emit, sourceChannel) {
   const emitCnpj = nfeCleanDigits(emit && emit.cnpj)
   const emitName = String((emit && emit.name) || '').trim()
   const emitPhone = nfeCleanDigits(emit && emit.phone)
   const emitEmail = String((emit && emit.email) || '').trim()
+  const emitIe = String((emit && emit.ie) || '').trim()
+  const emitAddress = String((emit && emit.address) || '').trim()
   const rootCnpj = emitCnpj ? emitCnpj.slice(0, 8) : ''
   const sourceLabel = String(sourceChannel || 'xml')
 
@@ -209,8 +266,7 @@ function nfeResolveOrCreateSupplier(emit, sourceChannel) {
     matchedBy = supplier ? 'email' : ''
   }
 
-  // Dedupe por nome aproximado como último recurso (evita duplicar a mesma
-  // razão social digitada de formas diferentes no XML)
+  // Dedupe por nome aproximado como último recurso
   if (!supplier && emitName && emitName.length >= 5) {
     try {
       const byName = $app.findRecordsByFilter(
@@ -254,18 +310,9 @@ function nfeResolveOrCreateSupplier(emit, sourceChannel) {
     return { supplier: supplier, created: false, matchedBy: matchedBy, pendingRegistration: false }
   }
 
-  // Nada bateu: só criar com telefone (coleção customers EXIGE phone)
-  if (!emitPhone) {
-    console.log(
-      '[NFE-SUPPLIER-PENDING]',
-      JSON.stringify({
-        cnpj: emitCnpj,
-        nome: emitName,
-        motivo: 'XML sem <enderEmit><fone> — cadastro exige telefone',
-      }),
-    )
-    return { supplier: null, created: false, matchedBy: '', pendingRegistration: true }
-  }
+  // Nada bateu: cadastrar fornecedor novo a partir dos dados do XML.
+  // Phone é campo obrigatório em customers: se emitPhone estiver vazio, usa fallback
+  const phoneToSave = emitPhone || '0000000000'
 
   try {
     const custCol = $app.findCollectionByNameOrId('customers')
@@ -273,15 +320,19 @@ function nfeResolveOrCreateSupplier(emit, sourceChannel) {
     newSupp.set('name', emitName || 'Fornecedor CNPJ ' + emitCnpj)
     newSupp.set('company', emitName || '')
     newSupp.set('cnpj', emitCnpj)
-    newSupp.set('phone', emitPhone)
+    newSupp.set('phone', phoneToSave)
     if (emitEmail) newSupp.set('email', emitEmail)
     newSupp.set('type', 'PJ')
     newSupp.set('customer_type', 'Fornecedor')
     newSupp.set('source', 'nfe_' + sourceLabel)
-    newSupp.set(
-      'notes',
+
+    const notesParts = [
       'Fornecedor cadastrado automaticamente via ingestão de NF-e (' + sourceLabel + ').',
-    )
+    ]
+    if (emitIe) notesParts.push('IE: ' + emitIe)
+    if (emitAddress) notesParts.push('Endereço: ' + emitAddress)
+    newSupp.set('notes', notesParts.join(' | '))
+
     $app.save(newSupp)
     nfeEnsureSupplierDocument(newSupp, emitCnpj, sourceLabel)
     console.log(
@@ -291,6 +342,7 @@ function nfeResolveOrCreateSupplier(emit, sourceChannel) {
         cnpj: emitCnpj,
         nome: emitName,
         origem: sourceLabel,
+        hasPhone: Boolean(emitPhone),
         horarioBrasilia: new Date(Date.now() - 3 * 3600 * 1000)
           .toISOString()
           .replace('T', ' ')

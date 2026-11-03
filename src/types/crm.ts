@@ -38,6 +38,7 @@ export interface Customer extends RecordModel {
   cnpj?: string
   pipeline_status?: string
   lead_source?: LeadSource
+  supplier_nature?: 'revenda' | 'insumo_producao' | 'insumo_consumo' | ''
   deleted?: boolean
   deleted_at?: string
   lost_reason?: string

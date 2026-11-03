@@ -308,69 +308,15 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       }
     }
 
-    // Identificação do fornecedor / remetente
-    let senderKnown = false
-    let supplierRec = null
+    // F4 (0.0.266): Auto-cadastro / Dedupe do fornecedor via XML
+    const emitData = nfeExtractEmitDataFromXml(xmlContent)
+    if (!emitData.cnpj && parsed.emitCnpj) emitData.cnpj = parsed.emitCnpj
+    if (!emitData.name && parsed.emitName) emitData.name = parsed.emitName
+    if (!emitData.phone && parsed.emitPhone) emitData.phone = parsed.emitPhone
+    if (senderEmail) emitData.email = senderEmail
 
-    if (parsed.emitCnpj) {
-      try {
-        const foundByCnpj = $app.findRecordsByFilter(
-          'customers',
-          'cnpj = {:cnpj} && deleted = false',
-          '-created',
-          1,
-          0,
-          { cnpj: parsed.emitCnpj },
-        )
-        if (foundByCnpj && foundByCnpj.length > 0) {
-          supplierRec = foundByCnpj[0]
-          senderKnown = true
-        }
-      } catch (_) {}
-    }
-
-    if (!senderKnown && senderEmail) {
-      try {
-        const foundByEmail = $app.findRecordsByFilter(
-          'customers',
-          'email = {:email} && deleted = false',
-          '-created',
-          1,
-          0,
-          { email: senderEmail },
-        )
-        if (foundByEmail && foundByEmail.length > 0) {
-          if (!supplierRec) supplierRec = foundByEmail[0]
-          senderKnown = true
-        }
-      } catch (_) {}
-    }
-
-    let supplierPendingRegistration = false
-    if (!supplierRec && parsed.emitCnpj) {
-      if (parsed.emitPhone) {
-        try {
-          const custCol = $app.findCollectionByNameOrId('customers')
-          const newSupp = new Record(custCol)
-          newSupp.set('name', parsed.emitName || 'Fornecedor CNPJ ' + parsed.emitCnpj)
-          newSupp.set('company', parsed.emitName || '')
-          newSupp.set('cnpj', parsed.emitCnpj)
-          newSupp.set('phone', parsed.emitPhone)
-          newSupp.set('email', senderEmail || '')
-          newSupp.set('type', 'PJ')
-          newSupp.set('customer_type', 'Fornecedor')
-          newSupp.set('source', 'nfe_email_inbox')
-          newSupp.set('notes', 'Cadastrado automaticamente via entrada de NF-e por Email.')
-          $app.save(newSupp)
-          supplierRec = newSupp
-        } catch (suppErr) {
-          console.log('[NFE-EMAIL-SUPPLIER-CREATE-ERR]', String(suppErr))
-          supplierPendingRegistration = true
-        }
-      } else {
-        supplierPendingRegistration = true
-      }
-    }
+    const resolvedSupplier = nfeResolveOrCreateSupplier(emitData, 'email_inbox_cron')
+    const supplierRec = resolvedSupplier ? resolvedSupplier.supplier : null
 
     // Leitura das configurações (CNPJ da empresa, flag de auto launch do email, margens de famílias)
     let companyCnpj = ''
@@ -411,21 +357,11 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       )
     }
 
-    // 2. Remetente conhecido do CRM (se desconhecido, segue para revisão com alerta)
-    if (!senderKnown) {
+    // 2. F4: Fornecedor resolvido via motor de dedupe / auto-cadastro
+    // Remetente desconhecido NÃO é mais retido se tiver fornecedor cadastrado ou resolvido.
+    if (!supplierRec) {
       guardReasons.push(
-        'Remetente desconhecido: CNPJ (' +
-          (parsed.emitCnpj || 'vazio') +
-          ') ou email (' +
-          (senderEmail || 'vazio') +
-          ') não consta previamente como fornecedor/contato conhecido do CRM.',
-      )
-    }
-
-    // 2.1 Fornecedor pendente de cadastro (sem telefone no XML para cadastro automático)
-    if (supplierPendingRegistration) {
-      guardReasons.push(
-        'Fornecedor pendente de cadastro: XML sem telefone do emitente (<enderEmit><fone>) para cadastro automático no CRM.',
+        'Fornecedor não identificado: XML sem CNPJ do emitente legível para auto-cadastro no CRM.',
       )
     }
 
@@ -444,26 +380,9 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
 
     // 4. CFOP de compra direta (Regra Contábil Validada)
     // 5102, 6102, 5405, 6403, 6405 aceitos junto a 1102/2102
+    // F4: Natureza do fornecedor lida do atributo supplier_nature
     const ACCEPTED_ORIGIN_CFOPS = ['5102', '6102', '5405', '6403', '6405', '1102', '2102']
     const ST_CFOPS = ['5405', '6403', '6405']
-
-    function resolveSupplierNatureDefault(cnpjDigits, suppName) {
-      const cnpj = String(cnpjDigits || '').replace(/\D/g, '')
-      const name = String(suppName || '').toUpperCase()
-      // Jahu Borrachas: CNPJ raiz 61.136.701 (matriz 0001-47, filiais 0007-32 etc.)
-      if (cnpj.startsWith('61136701') || name.includes('JAHU')) {
-        return 'revenda'
-      }
-      // MEC LAN: CNPJ 62.538.228/0001-97
-      if (cnpj.startsWith('62538228') || name.includes('MEC LAN') || name.includes('MECLAN')) {
-        return 'revenda'
-      }
-      // Oxilapa: CNPJ 59.417.469/0001-73
-      if (cnpj.startsWith('59417469') || name.includes('OXILAPA')) {
-        return 'insumo_producao'
-      }
-      return ''
-    }
 
     function computeSuggestedEntryCfop(originCfop, declaredDestiny) {
       const oCfop = String(originCfop || '').trim()
@@ -489,7 +408,10 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
     }
 
     let hasStAlert = false
-    const supplierNatureDefault = resolveSupplierNatureDefault(parsed.emitCnpj, parsed.emitName)
+    const supplierNatureDefault =
+      supplierRec && supplierRec.getString('supplier_nature')
+        ? supplierRec.getString('supplier_nature')
+        : ''
 
     for (let c = 0; c < parsed.items.length; c++) {
       const itCfop = String(parsed.items[c].cfop || '').trim()
@@ -2289,69 +2211,15 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       }
     }
 
-    // Identificação do fornecedor / remetente
-    let senderKnown = false
-    let supplierRec = null
+    // F4 (0.0.266): Auto-cadastro / Dedupe do fornecedor via XML
+    const emitData = nfeExtractEmitDataFromXml(xmlContent)
+    if (!emitData.cnpj && parsed.emitCnpj) emitData.cnpj = parsed.emitCnpj
+    if (!emitData.name && parsed.emitName) emitData.name = parsed.emitName
+    if (!emitData.phone && parsed.emitPhone) emitData.phone = parsed.emitPhone
+    if (senderEmail) emitData.email = senderEmail
 
-    if (parsed.emitCnpj) {
-      try {
-        const foundByCnpj = $app.findRecordsByFilter(
-          'customers',
-          'cnpj = {:cnpj} && deleted = false',
-          '-created',
-          1,
-          0,
-          { cnpj: parsed.emitCnpj },
-        )
-        if (foundByCnpj && foundByCnpj.length > 0) {
-          supplierRec = foundByCnpj[0]
-          senderKnown = true
-        }
-      } catch (_) {}
-    }
-
-    if (!senderKnown && senderEmail) {
-      try {
-        const foundByEmail = $app.findRecordsByFilter(
-          'customers',
-          'email = {:email} && deleted = false',
-          '-created',
-          1,
-          0,
-          { email: senderEmail },
-        )
-        if (foundByEmail && foundByEmail.length > 0) {
-          if (!supplierRec) supplierRec = foundByEmail[0]
-          senderKnown = true
-        }
-      } catch (_) {}
-    }
-
-    let supplierPendingRegistration = false
-    if (!supplierRec && parsed.emitCnpj) {
-      if (parsed.emitPhone) {
-        try {
-          const custCol = $app.findCollectionByNameOrId('customers')
-          const newSupp = new Record(custCol)
-          newSupp.set('name', parsed.emitName || 'Fornecedor CNPJ ' + parsed.emitCnpj)
-          newSupp.set('company', parsed.emitName || '')
-          newSupp.set('cnpj', parsed.emitCnpj)
-          newSupp.set('phone', parsed.emitPhone)
-          newSupp.set('email', senderEmail || '')
-          newSupp.set('type', 'PJ')
-          newSupp.set('customer_type', 'Fornecedor')
-          newSupp.set('source', 'nfe_email_inbox')
-          newSupp.set('notes', 'Cadastrado automaticamente via entrada de NF-e por Email.')
-          $app.save(newSupp)
-          supplierRec = newSupp
-        } catch (suppErr) {
-          console.log('[NFE-EMAIL-SUPPLIER-CREATE-ERR]', String(suppErr))
-          supplierPendingRegistration = true
-        }
-      } else {
-        supplierPendingRegistration = true
-      }
-    }
+    const resolvedSupplier = nfeResolveOrCreateSupplier(emitData, 'email_inbox_sync')
+    const supplierRec = resolvedSupplier ? resolvedSupplier.supplier : null
 
     // Leitura de configurações
     let companyCnpj = ''
@@ -2390,21 +2258,11 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       )
     }
 
-    // 2. Remetente conhecido do CRM
-    if (!senderKnown) {
+    // 2. F4: Fornecedor resolvido via motor de dedupe / auto-cadastro
+    // Remetente desconhecido NÃO é mais retido se tiver fornecedor cadastrado ou resolvido.
+    if (!supplierRec) {
       guardReasons.push(
-        'Remetente desconhecido: CNPJ (' +
-          (parsed.emitCnpj || 'vazio') +
-          ') ou email (' +
-          (senderEmail || 'vazio') +
-          ') não consta previamente como fornecedor/contato conhecido do CRM.',
-      )
-    }
-
-    // 2.1 Fornecedor pendente de cadastro (sem telefone no XML para cadastro automático)
-    if (supplierPendingRegistration) {
-      guardReasons.push(
-        'Fornecedor pendente de cadastro: XML sem telefone do emitente (<enderEmit><fone>) para cadastro automático no CRM.',
+        'Fornecedor não identificado: XML sem CNPJ do emitente legível para auto-cadastro no CRM.',
       )
     }
 
@@ -2422,23 +2280,9 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
     }
 
     // 4. CFOP compra direta (Regra Contábil Validada)
+    // F4: Natureza do fornecedor lida do atributo supplier_nature
     const ACCEPTED_ORIGIN_CFOPS = ['5102', '6102', '5405', '6403', '6405', '1102', '2102']
     const ST_CFOPS = ['5405', '6403', '6405']
-
-    function resolveSupplierNatureDefault(cnpjDigits, suppName) {
-      const cnpj = String(cnpjDigits || '').replace(/\D/g, '')
-      const name = String(suppName || '').toUpperCase()
-      if (cnpj.startsWith('61136701') || name.includes('JAHU')) {
-        return 'revenda'
-      }
-      if (cnpj.startsWith('62538228') || name.includes('MEC LAN') || name.includes('MECLAN')) {
-        return 'revenda'
-      }
-      if (cnpj.startsWith('59417469') || name.includes('OXILAPA')) {
-        return 'insumo_producao'
-      }
-      return ''
-    }
 
     function computeSuggestedEntryCfop(originCfop, declaredDestiny) {
       const oCfop = String(originCfop || '').trim()
@@ -2464,7 +2308,10 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
     }
 
     let hasStAlert = false
-    const supplierNatureDefault = resolveSupplierNatureDefault(parsed.emitCnpj, parsed.emitName)
+    const supplierNatureDefault =
+      supplierRec && supplierRec.getString('supplier_nature')
+        ? supplierRec.getString('supplier_nature')
+        : ''
 
     for (let c = 0; c < parsed.items.length; c++) {
       const itCfop = String(parsed.items[c].cfop || '').trim()

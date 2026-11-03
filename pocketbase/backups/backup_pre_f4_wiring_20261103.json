@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-11-03T16:45:00.000Z",
+  "reason": "backup_pre_f4_wiring",
+  "status": "pre_migration_0118_and_pipeline_wiring",
+  "notes": "Backup logico pre-aplicacao da migration 0118 e ligacao do nfe_supplier_registry nas 3 copias do pipeline.",
+  "suppliers_target": [
+    {
+      "id": "ukuwsuetw0d3p2m",
+      "name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "cnpj": "61136701000147",
+      "target_nature": "revenda"
+    },
+    {
+      "id": "bwd7wotwwizccnn",
+      "name": "MEC LAN INDUSTRIA E COMERCIO LTDA EPP",
+      "cnpj": "62538228000197",
+      "target_nature": "revenda"
+    },
+    {
+      "id": "klma9h4msc1nsw3",
+      "name": "OXILAPA GASES EQUIPAMENTOS E SOLDAS LTDA",
+      "cnpj": "59417469000173",
+      "target_nature": "insumo_producao"
+    }
+  ],
+  "previous_backup": "pocketbase/backups/backup_pre_f4_fornecedor_auto_20261103.json"
+}
