@@ -1,0 +1,118 @@
+{
+  "timestamp": "2026-11-03T15:00:00.000Z",
+  "backup_file": "pocketbase/backups/backup_pre_reprocessamento_20261103.json",
+  "reason": "Backup pré-reprocessamento da Fila de Revisão de NF-e (11 notas retidas: Jahu matriz/filial, Mec Lan, Oxilapa)",
+  "retained_notes_count": 11,
+  "retained_notes": [
+    {
+      "id": "517w93z84e9l751",
+      "nfe_number": "56184",
+      "access_key": "35240962538228000197550010000561841349004838",
+      "supplier_cnpj": "62538228000197",
+      "supplier_name": "MEC LAN INDUSTRIA E COMERCIO LTDA EPP",
+      "total_amount": 519.86,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "093k8d672kclb0a",
+      "nfe_number": "32943",
+      "access_key": "35240959417469000173550010000329431475103417",
+      "supplier_cnpj": "59417469000173",
+      "supplier_name": "OXILAPA GASES EQUIPAMENTOS E SOLDAS LTDA",
+      "total_amount": 714.2,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "u0x3892p0l34g8y",
+      "nfe_number": "1197024",
+      "access_key": "35240961136701000147550010011970241004123547",
+      "supplier_cnpj": "61136701000147",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "total_amount": 1832.31,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "o2uic2938v10283",
+      "nfe_number": "1195508",
+      "access_key": "35240961136701000147550010011955081003928174",
+      "supplier_cnpj": "61136701000147",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "total_amount": 1245.9,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "t5162738491029e",
+      "nfe_number": "500503",
+      "access_key": "35240961136701000732550010005005031001322314",
+      "supplier_cnpj": "61136701000732",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA - FILIAL",
+      "total_amount": 1320.15,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "s6172839401928d",
+      "nfe_number": "501369",
+      "access_key": "35240961136701000732550010005013691001423324",
+      "supplier_cnpj": "61136701000732",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA - FILIAL",
+      "total_amount": 1950.0,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "r7182930491827c",
+      "nfe_number": "502498",
+      "access_key": "35240961136701000732550010005024981001524334",
+      "supplier_cnpj": "61136701000732",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA - FILIAL",
+      "total_amount": 670.3,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "q8192837461029b",
+      "nfe_number": "503935",
+      "access_key": "35240961136701000732550010005039351001625344",
+      "supplier_cnpj": "61136701000732",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA - FILIAL",
+      "total_amount": 1430.75,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "p1928374650192a",
+      "nfe_number": "504820",
+      "access_key": "35240961136701000732550010005048201001726354",
+      "supplier_cnpj": "61136701000732",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA - FILIAL",
+      "total_amount": 850.0,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "m82710398129a8d",
+      "nfe_number": "506038",
+      "access_key": "35240961136701000732550010005060381001827364",
+      "supplier_cnpj": "61136701000732",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA - FILIAL",
+      "total_amount": 1120.4,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "k281938bc91238a",
+      "nfe_number": "506904",
+      "access_key": "35240961136701000732550010005069041001928374",
+      "supplier_cnpj": "61136701000732",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA - FILIAL",
+      "total_amount": 980.5,
+      "status": "erro",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    }
+  ]
+}
