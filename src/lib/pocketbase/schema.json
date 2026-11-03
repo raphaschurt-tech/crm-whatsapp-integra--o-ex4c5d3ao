@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03T20:43:53.871Z",
+  "generatedAt": "2026-11-03T21:09:45.273Z",
   "collections": [
     {
       "name": "users",
@@ -2805,7 +2805,7 @@
         {
           "name": "nsu",
           "type": "text",
-          "required": true,
+          "required": false,
           "system": false
         },
         {

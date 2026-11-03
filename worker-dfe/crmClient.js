@@ -99,7 +99,11 @@ class CrmClient {
 
   async recordHistory(data) {
     try {
-      const res = await axios.post(this.buildUrl('/backend/v1/dfe/history'), data, {
+      const payload = { ...data }
+      if (payload.nsu === undefined || payload.nsu === null || String(payload.nsu).trim() === '') {
+        payload.nsu = '0'
+      }
+      const res = await axios.post(this.buildUrl('/backend/v1/dfe/history'), payload, {
         headers: this.getHeaders(),
         timeout: 15000,
       })

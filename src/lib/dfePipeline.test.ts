@@ -55,4 +55,33 @@ describe('DF-e Adapter & Real/Simulacao Mode', () => {
     expect(parsedEvent.eventSeq).toBe(1)
     expect(parsedEvent.justification).toBe('Erro de digitacao')
   })
+
+  it('valida conversão de intervalo em expressão cron e guards de mínimo 1h', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const workerModule = await import('../../worker-dfe/index.js')
+    const { getCronExpressionForHours, applyConfiguredPollInterval, getActivePollIntervalHours } =
+      workerModule.default || workerModule
+
+    expect(getCronExpressionForHours(1)).toBe('0 * * * *')
+    expect(getCronExpressionForHours(2)).toBe('0 */2 * * *')
+    expect(getCronExpressionForHours(6)).toBe('0 */6 * * *')
+
+    // Guard contra valor zero ou negativo (mínimo 1h)
+    expect(getCronExpressionForHours(0)).toBe('0 * * * *')
+    expect(getCronExpressionForHours(-5)).toBe('0 * * * *')
+
+    // Aplicar intervalo 2h
+    applyConfiguredPollInterval(2, 'test-unit')
+    expect(getActivePollIntervalHours()).toBe(2)
+
+    // Guard ao receber valor menor que 1h
+    applyConfiguredPollInterval(0, 'test-guard')
+    expect(getActivePollIntervalHours()).toBeGreaterThanOrEqual(1)
+
+    // Se receber inválido, mantém o último válido conhecido
+    applyConfiguredPollInterval(5, 'test-5h')
+    expect(getActivePollIntervalHours()).toBe(5)
+    applyConfiguredPollInterval('not-a-number', 'test-fail')
+    expect(getActivePollIntervalHours()).toBe(5)
+  })
 })

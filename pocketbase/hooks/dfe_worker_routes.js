@@ -650,7 +650,12 @@ routerAdd('POST', '/backend/v1/dfe/history', (e) => {
     const histRec = existingHist || new Record(col)
 
     histRec.set('access_key', accessKey)
-    if (body.nsu) histRec.set('nsu', String(body.nsu))
+    // Se NSU ausente ou vazio, usa sentinela '0' para consistência e prevenção de erros
+    const sanitizedNsu =
+      body.nsu !== undefined && body.nsu !== null && String(body.nsu).trim() !== ''
+        ? String(body.nsu).trim()
+        : '0'
+    histRec.set('nsu', sanitizedNsu)
     if (body.schema) histRec.set('schema', String(body.schema))
     if (body.model) histRec.set('model', String(body.model))
     if (body.emitter_cnpj) histRec.set('emitter_cnpj', String(body.emitter_cnpj).replace(/\D/g, ''))

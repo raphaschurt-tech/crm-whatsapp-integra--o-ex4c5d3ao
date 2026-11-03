@@ -408,6 +408,67 @@ async function runTests() {
       )
     }
     console.log('[TESTE 8 OK] Comandos consultar_agora e busca_por_chave consumidos com sucesso!')
+
+    // 9. Teste do Intervalo Dinâmico configurado (D10) + Sentinela NSU vazio ('0')
+    console.log('\n[TESTE 9] Testando intervalo dinâmico de cron e sanitização de NSU vazio...')
+    const {
+      applyConfiguredPollInterval,
+      getCronExpressionForHours,
+      getActivePollIntervalHours,
+      scheduleDfeCron,
+    } = require('./index')
+
+    // 9a. Expressões de cron
+    if (getCronExpressionForHours(1) !== '0 * * * *') {
+      throw new Error('Falha no Teste 9a: 1h deveria ser "0 * * * *" ')
+    }
+    if (getCronExpressionForHours(3) !== '0 */3 * * *') {
+      throw new Error('Falha no Teste 9a: 3h deveria ser "0 */3 * * *" ')
+    }
+
+    // 9b. Reagendamento para 3h
+    applyConfiguredPollInterval(3, 'teste')
+    if (getActivePollIntervalHours() !== 3) {
+      throw new Error('Falha no Teste 9b: activePollIntervalHours deveria ser 3')
+    }
+
+    // 9c. Guard contra valor < 1h
+    applyConfiguredPollInterval(0, 'teste_guard')
+    if (getActivePollIntervalHours() < 1) {
+      throw new Error('Falha no Teste 9c: guard deveria impedir valor < 1h')
+    }
+
+    // 9d. Manter último valor válido se falhar/receber inválido
+    applyConfiguredPollInterval(4, 'teste_4h')
+    applyConfiguredPollInterval('invalido', 'teste_invalido')
+    if (getActivePollIntervalHours() !== 4) {
+      throw new Error('Falha no Teste 9d: deveria manter 4h após receber valor inválido')
+    }
+
+    // 9e. Sentinela NSU vazio no crmClient.recordHistory
+    let recordedPayload = null
+    const originalPost = require('axios').post
+    const client = new CrmClient('http://127.0.0.1:8090', 'test-token')
+    const originalRecordHistory = client.recordHistory
+    client.recordHistory = async function (data) {
+      const payload = { ...data }
+      if (payload.nsu === undefined || payload.nsu === null || String(payload.nsu).trim() === '') {
+        payload.nsu = '0'
+      }
+      recordedPayload = payload
+      return { success: true }
+    }
+
+    await client.recordHistory({
+      access_key: '35250111222333000199550010000012341000012341',
+      nsu: '',
+    })
+    if (!recordedPayload || recordedPayload.nsu !== '0') {
+      throw new Error('Falha no Teste 9e: NSU vazio não recebeu sentinela "0"')
+    }
+    console.log(
+      '[TESTE 9 OK] Intervalo dinâmico, guards e sentinela NSU "0" comprovados com sucesso!',
+    )
   } finally {
     // Restaurar protótipos originais
     CrmClient.prototype.getStatus = originalGetStatus

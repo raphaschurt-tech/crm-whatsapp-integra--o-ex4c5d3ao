@@ -216,6 +216,8 @@ let isCycleRunning = false
 // Estado em memória do Backoff para cStat 656 / Consumo Indevido (Fase 2)
 let backoffUntil = 0 // Timestamp ms em que o backoff expira
 const BACKOFF_DURATION_MS = 60 * 60 * 1000 // 60 minutos regulamentares da SEFAZ NT 2014.002
+let activePollIntervalHours = 1 // Último intervalo válido conhecido (mínimo 1h, D10)
+let scheduledCronJob = null // Referência ao job cron ativo para reagendamento dinâmico
 
 /**
  * PROBE TLS DE BOOT (Item 3 do FIX):
@@ -463,8 +465,13 @@ async function runDfeCycle(trigger = 'cron') {
     return
   }
 
-  const { dfe_enabled, company_cnpj, pointer } = crmStatus
+  const { dfe_enabled, company_cnpj, pointer, poll_interval_hours } = crmStatus
   const currentModeInfo = dfeAdapter.getMode()
+
+  // Atualizar/reagendar cron se o intervalo configurado no CRM mudou (D10)
+  if (poll_interval_hours !== undefined && poll_interval_hours !== null) {
+    applyConfiguredPollInterval(poll_interval_hours, 'ciclo')
+  }
 
   // Toggle DFe ligado/desligado (D7)
   if (!dfe_enabled && trigger === 'cron') {
@@ -613,7 +620,7 @@ async function runDfeCycle(trigger = 'cron') {
         for (const doc of docs) {
           await crm.recordHistory({
             access_key: doc.accessKey,
-            nsu: doc.nsu,
+            nsu: doc.nsu && String(doc.nsu).trim() ? String(doc.nsu).trim() : '0',
             schema: doc.schema,
             model: doc.model,
             emitter_cnpj: doc.emitterCnpj,
@@ -691,7 +698,7 @@ async function runDfeCycle(trigger = 'cron') {
             )
             await crm.recordHistory({
               access_key: doc.accessKey,
-              nsu: doc.nsu,
+              nsu: doc.nsu && String(doc.nsu).trim() ? String(doc.nsu).trim() : '0',
               schema: doc.schema,
               model: doc.model,
               emitter_cnpj: doc.emitterCnpj,
@@ -727,7 +734,7 @@ async function runDfeCycle(trigger = 'cron') {
             // Registrar no histórico DFe como importada
             await crm.recordHistory({
               access_key: doc.accessKey,
-              nsu: doc.nsu,
+              nsu: doc.nsu && String(doc.nsu).trim() ? String(doc.nsu).trim() : '0',
               schema: doc.schema,
               model: doc.model,
               emitter_cnpj: doc.emitterCnpj,
@@ -902,23 +909,99 @@ function startWorker() {
     `[INIT] Observador de comandos do CRM ativo (intervalo: ${COMMAND_POLL_INTERVAL_SEC}s).`,
   )
 
-  // 2. Iniciar agendador cron periódico (D10, CF-2: a cada 60 min)
-  cron.schedule('0 * * * *', () => {
-    console.log(`[CRON] Disparando ciclo periódico DFe horário...`)
-    runDfeCycle('cron')
-  })
-  console.log(`[INIT] Cron SEFAZ DFe agendado para rodar a cada hora (0 * * * *).`)
+  // 2. Leitura do status no boot para sincronizar intervalo real e agendar cron
+  setTimeout(async () => {
+    try {
+      const bootStatus = await crm.getStatus()
+      if (bootStatus && bootStatus.poll_interval_hours !== undefined) {
+        applyConfiguredPollInterval(bootStatus.poll_interval_hours, 'boot')
+      } else {
+        scheduleDfeCron(activePollIntervalHours)
+      }
+    } catch (bootErr) {
+      console.warn(
+        `[INIT-WARN] Falha ao ler status do CRM no boot: ${bootErr.message}. Mantendo último intervalo válido conhecido (${activePollIntervalHours}h).`,
+      )
+      if (!scheduledCronJob) {
+        scheduleDfeCron(activePollIntervalHours)
+      }
+    }
 
-  // 3. Execução imediata inicial de handshake, probe TLS e probe HTTP (Itens 1, 2, 3 e 5 do FIX)
-  if (process.env.NODE_ENV !== 'test') {
-    setTimeout(async () => {
+    if (process.env.NODE_ENV !== 'test') {
       try {
         await probeSefazTlsChain()
         await probeSefazHttpViaAxios()
       } catch (_) {}
       runDfeCycle('startup')
-    }, 3000)
+    }
+  }, 1000)
+}
+
+/**
+ * Converte intervalo em horas (>= 1) em expressão cron válida
+ */
+function getCronExpressionForHours(hours) {
+  const safeHours = Math.max(1, Math.floor(Number(hours) || 1))
+  if (safeHours === 1) {
+    return '0 * * * *' // A cada hora
   }
+  return `0 */${safeHours} * * *` // A cada N horas
+}
+
+/**
+ * Agenda ou reagenda o cron job periódico do worker DF-e
+ */
+function scheduleDfeCron(intervalHours) {
+  const safeHours = Math.max(1, Math.floor(Number(intervalHours) || 1))
+  const cronExpr = getCronExpressionForHours(safeHours)
+
+  if (scheduledCronJob) {
+    try {
+      scheduledCronJob.stop()
+      if (typeof scheduledCronJob.destroy === 'function') {
+        scheduledCronJob.destroy()
+      }
+    } catch (_) {}
+    scheduledCronJob = null
+  }
+
+  scheduledCronJob = cron.schedule(cronExpr, () => {
+    console.log(`[CRON] Disparando ciclo periódico DFe (intervalo configurado: ${safeHours}h)...`)
+    runDfeCycle('cron')
+  })
+
+  activePollIntervalHours = safeHours
+  console.log(
+    `[CRON-SCHEDULE] intervalo configurado: ${safeHours}h — cron reagendado (${cronExpr})`,
+  )
+  return safeHours
+}
+
+/**
+ * Aplica o intervalo configurado com guard de mínimo 1h e preservação do último valor conhecido em falha
+ */
+function applyConfiguredPollInterval(newIntervalRaw, context = 'ciclo') {
+  const parsed = Number(newIntervalRaw)
+
+  if (isNaN(parsed) || parsed <= 0) {
+    console.warn(
+      `[POLL-INTERVAL-WARN] Valor de intervalo inválido recebido do CRM (${JSON.stringify(newIntervalRaw)}). Mantendo último intervalo válido conhecido (${activePollIntervalHours}h).`,
+    )
+    return activePollIntervalHours
+  }
+
+  // Guard contra valor menor que 1 hora para evitar cStat 656 da SEFAZ
+  const safeHours = Math.max(1, Math.floor(parsed))
+
+  if (safeHours !== activePollIntervalHours || !scheduledCronJob) {
+    const previous = activePollIntervalHours
+    scheduleDfeCron(safeHours)
+    console.log(
+      `[POLL-INTERVAL-UPDATED] [${context}] Intervalo DF-e alterado de ${previous}h para ${safeHours}h sem restart do worker.`,
+    )
+  }
+
+  return safeHours
 }
 
 module.exports = {
@@ -927,6 +1010,14 @@ module.exports = {
   checkCommandQueue,
   isRateLimitResponse,
   installPasswordLogSanitizer,
+  getCronExpressionForHours,
+  scheduleDfeCron,
+  applyConfiguredPollInterval,
+  getActivePollIntervalHours: () => activePollIntervalHours,
+  setActivePollIntervalHours: (val) => {
+    activePollIntervalHours = val
+  },
+  getScheduledCronJob: () => scheduledCronJob,
   getBackoffUntil: () => backoffUntil,
   setBackoffUntil: (val) => {
     backoffUntil = val
