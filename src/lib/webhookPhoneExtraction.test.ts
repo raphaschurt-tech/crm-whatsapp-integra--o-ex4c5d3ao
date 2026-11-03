@@ -502,111 +502,166 @@ console.log(
   `\nResultado: ${pass} passaram, ${fail} falharam. ${fail === 0 ? 'G-E / G-G OK.' : 'FALHAS DETECTADAS — revisar hook e teste.'}\n`,
 )
 
-console.log('\n12. TESTE DE REGRESSÃO G-E — CFOP Guard & Sugestão de Entrada no Pipeline de NF-e:')
-// Validação das regras da contabilidade:
-// (1) 5102, 6102, 5405, 6403, 6405 aceitos como compra direta
-// (2) CFOP de entrada não é cópia do emitente
-// (3) Defaults: Jahu/MEC LAN -> revenda; Oxilapa -> insumo_producao
-// (4) ST -> alerta de conferência de ICMS-ST
-const ACCEPTED_ORIGIN_CFOPS = ['5102', '6102', '5405', '6403', '6405', '1102', '2102']
-const ST_CFOPS = ['5405', '6403', '6405']
+console.log('\n12. TESTE DE REGRESSÃO G-E — CFOP Guard F4 (Natureza por Atributo + Dedupe):')
+// F4 (versão 0.0.266):
+// (1) Natureza lida do atributo supplier_nature no cadastro (revenda, insumo_producao, insumo_consumo)
+// (2) Fornecedor sem atributo -> sem default ('classificacao_pendente'), nota segue sem retenção
+// (3) Dedupe e auto-cadastro de fornecedor via XML: CNPJ novo cria; mesma CNPJ vincula; filial cai na mesma entidade
+import {
+  evaluateCfopGuard,
+  computeSuggestedEntryCfop,
+  simulateNfeResolveOrCreateSupplier,
+  type SupplierRecordStub,
+  type DedupeStore,
+} from './cfopGuardRegression.test'
 
-function resolveSupplierNatureDefaultTest(cnpjDigits: unknown, suppName: unknown): string {
-  const cnpj = String(cnpjDigits || '').replace(/\D/g, '')
-  const name = String(suppName || '').toUpperCase()
-  if (cnpj.startsWith('61136701') || name.includes('JAHU')) return 'revenda'
-  if (cnpj.startsWith('62538228') || name.includes('MEC LAN') || name.includes('MECLAN'))
-    return 'revenda'
-  if (cnpj.startsWith('59417469') || name.includes('OXILAPA')) return 'insumo_producao'
-  return ''
+const suppJahu: SupplierRecordStub = {
+  id: 'supp_jahu_1',
+  name: 'JAHU BORRACHAS E AUTOPECAS LTDA',
+  cnpj: '61136701000147',
+  supplier_nature: 'revenda',
 }
 
-function computeSuggestedEntryCfopTest(originCfop: unknown, declaredDestiny: string): string {
-  const oCfop = String(originCfop || '').trim()
-  const isInterstate = oCfop.startsWith('6') || oCfop.startsWith('2')
-  const hasSt = ST_CFOPS.includes(oCfop)
-  if (declaredDestiny === 'insumo_consumo') return isInterstate ? '2556' : '1556'
-  if (declaredDestiny === 'insumo_producao') return isInterstate ? '2101' : '1101'
-  if (declaredDestiny === 'revenda') {
-    if (hasSt) return isInterstate ? '2403' : '1403'
-    return isInterstate ? '2102' : '1102'
-  }
-  if (hasSt) return isInterstate ? '2403' : '1403'
-  return isInterstate ? '2102' : '1102'
+const suppOxilapa: SupplierRecordStub = {
+  id: 'supp_oxilapa_1',
+  name: 'OXILAPA GASES EQUIPAMENTOS E SOLDAS LTDA',
+  cnpj: '59417469000173',
+  supplier_nature: 'insumo_producao',
 }
 
-function evaluateCfopGuardSimple(
-  emitCnpj: string,
-  emitName: string,
-  items: Array<{ cfop: string }>,
-) {
-  let isException = false
-  let hasStAlert = false
-  const nature = resolveSupplierNatureDefaultTest(emitCnpj, emitName)
-  for (let c = 0; c < items.length; c++) {
-    const it = String(items[c].cfop || '').trim()
-    if (!ACCEPTED_ORIGIN_CFOPS.includes(it)) {
-      isException = true
-      break
-    }
-    if (ST_CFOPS.includes(it)) hasStAlert = true
-  }
-  const enriched = items.map((it) => {
-    const originCfop = String(it.cfop || '').trim()
-    const destiny = nature || 'classificacao_pendente'
-    return {
-      cfop_origem: originCfop,
-      cfop_entrada_sugerido: computeSuggestedEntryCfopTest(originCfop, destiny),
-      destino_declarado: destiny,
-      has_st: ST_CFOPS.includes(originCfop),
-    }
-  })
-  return { isException, hasStAlert, nature, enriched }
+const suppSemNatureza: SupplierRecordStub = {
+  id: 'supp_sem_nat_1',
+  name: 'FORNECEDOR NOVO SEM NATUREZA',
+  cnpj: '33444555000166',
+  supplier_nature: '',
 }
 
-const gJahu = evaluateCfopGuardSimple('61136701000147', 'JAHU BORRACHAS', [{ cfop: '5102' }])
-check('G-E CFOP: Nota 5102 Jahu é aceita', gJahu.isException, false)
+const gJahu = evaluateCfopGuard({
+  emitCnpj: '61136701000147',
+  emitName: 'JAHU BORRACHAS',
+  supplier: suppJahu,
+  items: [{ cfop: '5102' }],
+})
+check('G-E CFOP F4: Nota 5102 Jahu é aceita', gJahu.isException, false)
+check('G-E CFOP F4: Jahu lê atributo revenda', gJahu.supplierNature, 'revenda')
 check(
-  'G-E CFOP: Jahu sugere entrada 1102 (revenda)',
-  gJahu.enriched[0].cfop_entrada_sugerido,
+  'G-E CFOP F4: Jahu sugere entrada 1102 (revenda)',
+  gJahu.enrichedItems[0].cfop_entrada_sugerido,
   '1102',
 )
 check(
-  'G-E CFOP: Jahu CFOP emitente NUNCA copiado para entrada',
-  gJahu.enriched[0].cfop_entrada_sugerido !== '5102',
+  'G-E CFOP F4: Jahu CFOP emitente NUNCA copiado para entrada',
+  gJahu.enrichedItems[0].cfop_entrada_sugerido !== '5102',
   true,
 )
 
-const gOxilapa = evaluateCfopGuardSimple('59417469000173', 'OXILAPA GASES', [{ cfop: '5102' }])
+const gOxilapa = evaluateCfopGuard({
+  emitCnpj: '59417469000173',
+  emitName: 'OXILAPA GASES',
+  supplier: suppOxilapa,
+  items: [{ cfop: '5102' }],
+})
 check(
-  'G-E CFOP: Oxilapa sugere entrada 1101 (insumo de produção)',
-  gOxilapa.enriched[0].cfop_entrada_sugerido,
+  'G-E CFOP F4: Oxilapa sugere entrada 1101 (insumo de produção)',
+  gOxilapa.enrichedItems[0].cfop_entrada_sugerido,
   '1101',
 )
 
-const gInterstate = evaluateCfopGuardSimple('61136701000732', 'JAHU BORRACHAS', [{ cfop: '6102' }])
+const gInterstate = evaluateCfopGuard({
+  emitCnpj: '61136701000732',
+  emitName: 'JAHU BORRACHAS FILIAL',
+  supplier: suppJahu,
+  items: [{ cfop: '6102' }],
+})
 check(
-  'G-E CFOP: 6102 interestadual revenda sugere entrada 2102',
-  gInterstate.enriched[0].cfop_entrada_sugerido,
+  'G-E CFOP F4: 6102 interestadual revenda sugere entrada 2102',
+  gInterstate.enrichedItems[0].cfop_entrada_sugerido,
   '2102',
 )
 
-const gStInternal = evaluateCfopGuardSimple('62538228000197', 'MEC LAN', [{ cfop: '5405' }])
-check('G-E CFOP: ST 5405 sugere 1403', gStInternal.enriched[0].cfop_entrada_sugerido, '1403')
-check('G-E CFOP: ST 5405 ativa alerta ICMS-ST', gStInternal.hasStAlert, true)
-
-const gStInterstate = evaluateCfopGuardSimple('61136701000147', 'JAHU BORRACHAS', [
-  { cfop: '6405' },
-])
+const gStInternal = evaluateCfopGuard({
+  emitCnpj: '62538228000197',
+  emitName: 'MEC LAN',
+  supplier: {
+    id: 'supp_meclan_1',
+    name: 'MEC LAN',
+    cnpj: '62538228000197',
+    supplier_nature: 'revenda',
+  },
+  items: [{ cfop: '5405' }],
+})
 check(
-  'G-E CFOP: ST interestadual 6405 sugere 2403',
-  gStInterstate.enriched[0].cfop_entrada_sugerido,
-  '2403',
+  'G-E CFOP F4: ST 5405 sugere 1403',
+  gStInternal.enrichedItems[0].cfop_entrada_sugerido,
+  '1403',
 )
-check('G-E CFOP: ST interestadual 6405 ativa alerta ICMS-ST', gStInterstate.hasStAlert, true)
+check('G-E CFOP F4: ST 5405 ativa alerta ICMS-ST', gStInternal.hasStAlert, true)
 
-const gDevolucao = evaluateCfopGuardSimple('61136701000147', 'JAHU BORRACHAS', [{ cfop: '5202' }])
-check('G-E CFOP: Devolução 5202 continua retida em revisão', gDevolucao.isException, true)
+const gSemNat = evaluateCfopGuard({
+  emitCnpj: '33444555000166',
+  emitName: 'FORNECEDOR NOVO',
+  supplier: suppSemNatureza,
+  items: [{ cfop: '5102' }],
+})
+check('G-E CFOP F4: Fornecedor sem atributo NÃO é retido', gSemNat.isException, false)
+check(
+  'G-E CFOP F4: Sem atributo fica classificacao_pendente',
+  gSemNat.enrichedItems[0].destino_declarado,
+  'classificacao_pendente',
+)
+check(
+  'G-E CFOP F4: Entrada preliminar neutra é 1102',
+  gSemNat.enrichedItems[0].cfop_entrada_sugerido,
+  '1102',
+)
+
+check(
+  'G-E CFOP F4: Consumo interno sugere 1556',
+  computeSuggestedEntryCfop('5102', 'insumo_consumo'),
+  '1556',
+)
+check(
+  'G-E CFOP F4: Consumo interestadual sugere 2556',
+  computeSuggestedEntryCfop('6102', 'insumo_consumo'),
+  '2556',
+)
+
+const gDevolucao = evaluateCfopGuard({
+  emitCnpj: '61136701000147',
+  emitName: 'JAHU BORRACHAS',
+  supplier: suppJahu,
+  items: [{ cfop: '5202' }],
+})
+check('G-E CFOP F4: Devolução 5202 continua retida em revisão', gDevolucao.isException, true)
+
+// Dedupe rápido no webhookPhoneExtraction
+const miniStore: DedupeStore = {
+  customers: [
+    { id: 'supp_jahu_1', name: 'JAHU MATRIZ', cnpj: '61136701000147', supplier_nature: 'revenda' },
+  ],
+  documents: [
+    { id: 'd1', customer: 'supp_jahu_1', document_type: 'CNPJ', document_number: '61136701000147' },
+  ],
+}
+const resNovoAuto = simulateNfeResolveOrCreateSupplier(
+  { cnpj: '88999000000111', name: 'AUTO TEST LTDA' },
+  miniStore,
+)
+check('G-E Dedupe: CNPJ novo auto-cadastra fornecedor', resNovoAuto.wasCreated, true)
+const resMesmo = simulateNfeResolveOrCreateSupplier(
+  { cnpj: '88999000000111', name: 'AUTO TEST LTDA' },
+  miniStore,
+)
+check('G-E Dedupe: Segunda nota mesmo CNPJ vincula sem duplicar', resMesmo.wasCreated, false)
+const resFilial = simulateNfeResolveOrCreateSupplier(
+  { cnpj: '61136701000732', name: 'JAHU FILIAL CAMPINAS' },
+  miniStore,
+)
+check(
+  'G-E Dedupe: Filial Jahu vincula à mesma entidade matriz',
+  resFilial.supplier.id,
+  'supp_jahu_1',
+)
 
 console.log(
   `\nResultado Final: ${pass} passaram, ${fail} falharam. ${fail === 0 ? 'G-E / G-G / CFOP OK.' : 'FALHAS DETECTADAS.'}\n`,

@@ -661,6 +661,95 @@ assertCheck(
 )
 assertCheck('Método de resolução foi cnpj_root', resFilialTropical.matchedBy, 'cnpj_root')
 
+// ------------------------------------------------------------
+// PARTE 3: PARIDADE NAS 3 CÓPIAS DO PIPELINE E CAMINHO DE EMAIL
+// ------------------------------------------------------------
+console.log('\n--- PARTE 3: PARIDADE ENTRE AS 3 CÓPIAS (pipeline, email inline, email retry) ---')
+
+// As 3 cópias do pipeline (nfe_pipeline.js, nfe_email_inbox.js linha 434 e nfe_email_inbox.js linha 2334)
+// compartilham a mesma regra de enrich:
+// itemDestiny = supplierNature || 'classificacao_pendente'
+// suggestedEntryCfop = computeSuggestedEntryCfop(originCfop, itemDestiny)
+function simulatePipelineCopy(
+  copyName: string,
+  supplierRecord: SupplierRecordStub | null | undefined,
+  items: Array<{ cfop: string; vProd?: number }>,
+) {
+  const nature = resolveSupplierNatureFromRecord(supplierRecord)
+  const itemDestiny = nature || 'classificacao_pendente'
+  return items.map((it) => ({
+    copy: copyName,
+    originCfop: it.cfop,
+    destiny: itemDestiny,
+    suggestedEntryCfop: computeSuggestedEntryCfop(it.cfop, itemDestiny),
+    hasSt: ST_CFOPS.includes(it.cfop),
+  }))
+}
+
+const copy1 = simulatePipelineCopy('nfe_pipeline.js', jahuSupplier, [
+  { cfop: '5102' },
+  { cfop: '5405' },
+])
+const copy2 = simulatePipelineCopy('nfe_email_inbox_inline', jahuSupplier, [
+  { cfop: '5102' },
+  { cfop: '5405' },
+])
+const copy3 = simulatePipelineCopy('nfe_email_inbox_retry', jahuSupplier, [
+  { cfop: '5102' },
+  { cfop: '5405' },
+])
+
+assertCheck(
+  'Cópia 1 e Cópia 2 produzem exatamente o mesmo resultado para Jahu',
+  copy1.map((c) => ({ o: c.originCfop, d: c.destiny, s: c.suggestedEntryCfop })),
+  copy2.map((c) => ({ o: c.originCfop, d: c.destiny, s: c.suggestedEntryCfop })),
+)
+assertCheck(
+  'Cópia 1 e Cópia 3 produzem exatamente o mesmo resultado para Jahu',
+  copy1.map((c) => ({ o: c.originCfop, d: c.destiny, s: c.suggestedEntryCfop })),
+  copy3.map((c) => ({ o: c.originCfop, d: c.destiny, s: c.suggestedEntryCfop })),
+)
+
+const copyOxilapa1 = simulatePipelineCopy('nfe_pipeline.js', oxilapaSupplier, [{ cfop: '5102' }])
+const copyOxilapa2 = simulatePipelineCopy('nfe_email_inbox_inline', oxilapaSupplier, [
+  { cfop: '5102' },
+])
+const copyOxilapa3 = simulatePipelineCopy('nfe_email_inbox_retry', oxilapaSupplier, [
+  { cfop: '5102' },
+])
+
+assertCheck(
+  'Paridade Oxilapa cópia 1 e 2: insumo_producao -> 1101',
+  copyOxilapa1[0].suggestedEntryCfop,
+  copyOxilapa2[0].suggestedEntryCfop,
+)
+assertCheck(
+  'Paridade Oxilapa cópia 1 e 3: insumo_producao -> 1101',
+  copyOxilapa1[0].suggestedEntryCfop,
+  copyOxilapa3[0].suggestedEntryCfop,
+)
+
+const copySemNat1 = simulatePipelineCopy('nfe_pipeline.js', unknownSupplierNoNature, [
+  { cfop: '5102' },
+])
+const copySemNat2 = simulatePipelineCopy('nfe_email_inbox_inline', unknownSupplierNoNature, [
+  { cfop: '5102' },
+])
+const copySemNat3 = simulatePipelineCopy('nfe_email_inbox_retry', unknownSupplierNoNature, [
+  { cfop: '5102' },
+])
+
+assertCheck(
+  'Paridade Fornecedor Sem Atributo cópia 1 e 2: classificacao_pendente -> 1102',
+  copySemNat1[0].destiny,
+  copySemNat2[0].destiny,
+)
+assertCheck(
+  'Paridade Fornecedor Sem Atributo cópia 1 e 3: classificacao_pendente -> 1102',
+  copySemNat1[0].destiny,
+  copySemNat3[0].destiny,
+)
+
 console.log(`\nResultado Total: ${pass} passaram, ${fail} falharam.\n`)
 
 if (fail > 0) {
