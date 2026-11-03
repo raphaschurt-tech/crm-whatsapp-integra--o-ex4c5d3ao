@@ -506,6 +506,20 @@ export function NfeProcessedView({ initialSubTab = 'nfe' }: NfeProcessedViewProp
         </div>
       )}
 
+      {/* 1b. Worker em Backoff por Consumo Indevido (cStat 656) */}
+      {dfePointer && dfePointer.worker_status === 'backoff_656' && (
+        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-amber-900 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>WORKER EM BACKOFF (cStat 656):</strong> Limite de frequência da SEFAZ atingido
+              (Consumo Indevido). O worker está temporariamente em repouso e retomará o ciclo após o
+              período de espera regulamentar (60 min).
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* 2. Certificado digital A1 não configurado */}
       {(!dfePointer || !dfePointer.cert_cnpj) && (
         <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-amber-900 shadow-xs">

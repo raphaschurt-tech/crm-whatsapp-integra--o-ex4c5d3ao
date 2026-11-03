@@ -603,8 +603,15 @@ class DfeAdapter {
             errMsg.includes('496')
 
           if (isRateLimitErr) {
-            // Repassa imediatamente sem retry/fallback PorNSU->PorUltNSU
-            throw callErr
+            // Retorna objeto estruturado cStat 656 para tratamento uniforme com backoff (não quebra o fluxo)
+            return {
+              cStat: '656',
+              xMotivo:
+                'Rejeicao: Consumo Indevido (Deve ser utilizado o ultNSU nas solicitacoes subsequentes. Tente apos 1 hora)',
+              ultNSU: formattedNsu,
+              maxNSU: formattedNsu,
+              docs: [],
+            }
           }
 
           // Se NFE_DistribuicaoDFePorNSU rejeitou localmente (ex: assinatura da lib ou schema),

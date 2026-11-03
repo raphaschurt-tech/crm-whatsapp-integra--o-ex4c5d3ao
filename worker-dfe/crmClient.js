@@ -83,6 +83,20 @@ class CrmClient {
     }
   }
 
+  async reportKeyDownload(data) {
+    try {
+      const res = await axios.post(this.buildUrl('/backend/v1/dfe/key-download'), data, {
+        headers: this.getHeaders(),
+        timeout: 30000,
+      })
+      return res.data
+    } catch (err) {
+      const status = err.response ? err.response.status : null
+      const resData = err.response ? err.response.data : null
+      throw new Error(`[CRM-KEY-DOWNLOAD-ERR ${status}] ${JSON.stringify(resData || err.message)}`)
+    }
+  }
+
   async recordHistory(data) {
     try {
       const res = await axios.post(this.buildUrl('/backend/v1/dfe/history'), data, {

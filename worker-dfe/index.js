@@ -213,6 +213,10 @@ const dfeAdapter = new DfeAdapter({
 
 let isCycleRunning = false
 
+// Estado em memória do Backoff para cStat 656 / Consumo Indevido (Fase 2)
+let backoffUntil = 0 // Timestamp ms em que o backoff expira
+const BACKOFF_DURATION_MS = 60 * 60 * 1000 // 60 minutos regulamentares da SEFAZ NT 2014.002
+
 /**
  * PROBE TLS DE BOOT (Item 3 do FIX):
  * Conecta via tls.connect em www1.nfe.fazenda.gov.br:443 com validação estrita (rejectUnauthorized: true).
@@ -471,6 +475,25 @@ async function runDfeCycle(trigger = 'cron') {
     return
   }
 
+  // Verificação de Janela de Backoff ativa (cStat 656)
+  const now = Date.now()
+  if (backoffUntil > now && trigger === 'cron') {
+    const minutesRemaining = Math.ceil((backoffUntil - now) / 60000)
+    console.warn(
+      `[DFE-RATE-LIMIT] Janela de backoff cStat 656 ainda ativa (${minutesRemaining} min restantes). Pulando ciclo cron programado para evitar consumo indevido na SEFAZ.`,
+    )
+    try {
+      await crm.updatePointer({
+        success: true,
+        cstat_last: '656',
+        worker_status: 'backoff_656',
+        worker_mode: currentModeInfo.mode,
+      })
+    } catch (_) {}
+    isCycleRunning = false
+    return
+  }
+
   // Validação de Certificado
   const certValidation = validateCert(company_cnpj)
   if (!certValidation.ok) {
@@ -512,12 +535,14 @@ async function runDfeCycle(trigger = 'cron') {
       } catch (pollErr) {
         // Se a lib lançou exceção com "Consumo Indevido" ou cStat 656/496 (Requisitos 1 e 2)
         if (isRateLimitResponse('', '', pollErr.message)) {
+          backoffUntil = Date.now() + BACKOFF_DURATION_MS
           console.warn(
-            `[DFE-RATE-LIMIT] Aguardando janela SEFAZ (1h) | Regra de ritmo NT 2014.002 (cStat 656/496 / Consumo Indevido). Ciclo encerrado com sucesso até a próxima hora.`,
+            `[DFE-RATE-LIMIT] Aguardando janela SEFAZ (1h) | Regra de ritmo NT 2014.002 (cStat 656/496 / Consumo Indevido). Backoff até ${new Date(backoffUntil).toISOString()}. Ciclo encerrado com sucesso até a próxima hora.`,
           )
           await crm.updatePointer({
             success: true,
             cstat_last: '656',
+            worker_status: 'backoff_656',
             worker_mode: dfeAdapter.getMode().mode,
             cert_cnpj: cert.extractedCnpj,
             cert_valid_until: cert.notAfter,
@@ -538,15 +563,16 @@ async function runDfeCycle(trigger = 'cron') {
 
       // Requisitos 1 e 2: Classificar "Consumo Indevido" como ESPERA NORMAL
       // Casar pela MENSAGEM ("Consumo Indevido") E pelo código cStat 656 (aceitar também 496).
-      // Log próprio [DFE-RATE-LIMIT] "Aguardando janela SEFAZ (1h)" emitido como warning (NUNCA como error)
-      // e o ciclo encerra COM SUCESSO até a próxima hora — sem [DFE-POLL-FAIL], sem stack de erro.
+      // Ativa backoff temporário de 60 min, atualiza worker_status = 'backoff_656' no CRM.
       if (isRateLimitResponse(cStat, xMotivo)) {
+        backoffUntil = Date.now() + BACKOFF_DURATION_MS
         console.warn(
-          `[DFE-RATE-LIMIT] Aguardando janela SEFAZ (1h) | cStat ${cStat} (${xMotivo || 'Consumo Indevido'}). Ciclo encerrado com sucesso até a próxima hora.`,
+          `[DFE-RATE-LIMIT] Aguardando janela SEFAZ (1h) | cStat ${cStat} (${xMotivo || 'Consumo Indevido'}). Backoff ativo até ${new Date(backoffUntil).toISOString()}. Ciclo encerrado em repouso programado.`,
         )
         await crm.updatePointer({
           success: true,
           cstat_last: cStat || '656',
+          worker_status: 'backoff_656',
           worker_mode: dfeAdapter.getMode().mode,
           cert_cnpj: cert.extractedCnpj,
           cert_valid_until: cert.notAfter,
@@ -555,6 +581,9 @@ async function runDfeCycle(trigger = 'cron') {
         keepPaging = false
         break
       }
+
+      // Ao obter retorno com sucesso (137 ou 138), zerar a janela de backoff
+      backoffUntil = 0
 
       // cStat 137: Nenhum documento localizado
       if (cStat === '137' || docs.length === 0) {
@@ -766,13 +795,86 @@ async function checkCommandQueue() {
         await crm.acknowledgeCommand(cmd.id, 'em_execucao', 'Executando comando no worker')
 
         if (cmd.command === 'consultar_agora') {
+          // Comando manual bypassa temporariamente backoff de cron se o operador solicitar
+          backoffUntil = 0
           await runDfeCycle('comando_manual')
           await crm.acknowledgeCommand(cmd.id, 'concluido', 'Consulta manual executada com sucesso')
         } else if (cmd.command === 'importacao_retroativa') {
           // Importação retroativa com janela configurável (D2)
           console.log(`[DFE-COMMAND-RETRO] Executando importação retroativa...`)
+          backoffUntil = 0
           await runDfeCycle('importacao_retroativa')
           await crm.acknowledgeCommand(cmd.id, 'concluido', 'Importação retroativa finalizada')
+        } else if (cmd.command === 'busca_por_chave') {
+          // Consumo de comando busca_por_chave (DANFE PDF / chave individual de 44 dígitos)
+          const accessKey = String(cmd.params?.access_key || cmd.params?.chave || '').replace(
+            /\D/g,
+            '',
+          )
+          const auditTrail = cmd.params?.audit_trail || cmd.params?.audit || {}
+          console.log(`[DFE-COMMAND-KEY] Executando busca_por_chave para a chave ${accessKey}...`)
+
+          if (!accessKey || accessKey.length !== 44) {
+            await crm.acknowledgeCommand(
+              cmd.id,
+              'erro',
+              `Chave de acesso inválida (${accessKey}): deve conter 44 dígitos.`,
+            )
+            continue
+          }
+
+          try {
+            const keyRes = await dfeAdapter.consultarPorChave(accessKey)
+            const fullDoc =
+              (keyRes.docs || []).find((d) => d.isFullNfe && d.rawXml) || (keyRes.docs || [])[0]
+
+            if (fullDoc && fullDoc.rawXml && fullDoc.isFullNfe) {
+              await crm.reportKeyDownload({
+                access_key: accessKey,
+                xml: fullDoc.rawXml,
+                command_id: cmd.id,
+                audit_trail: auditTrail,
+              })
+              await crm.acknowledgeCommand(
+                cmd.id,
+                'concluido',
+                `XML obtido da SEFAZ com sucesso para a chave ${accessKey} e processado no CRM.`,
+              )
+            } else {
+              // SEFAZ não retornou o XML completo (pode ser resumo ou não autorizado)
+              const reason =
+                keyRes.xMotivo || 'XML completo não retornado pela SEFAZ para a chave consultada.'
+              await crm.reportKeyDownload({
+                access_key: accessKey,
+                failed: true,
+                error: reason,
+                command_id: cmd.id,
+                audit_trail: auditTrail,
+              })
+              await crm.acknowledgeCommand(
+                cmd.id,
+                'erro',
+                `SEFAZ não retornou XML completo: ${reason}`,
+              )
+            }
+          } catch (keyErr) {
+            console.error(
+              `[DFE-COMMAND-KEY-ERR] Falha na busca por chave ${accessKey}:`,
+              keyErr.message,
+            )
+            await crm.reportKeyDownload({
+              access_key: accessKey,
+              failed: true,
+              error: keyErr.message,
+              command_id: cmd.id,
+              audit_trail: auditTrail,
+            })
+            await crm.acknowledgeCommand(
+              cmd.id,
+              'erro',
+              `Erro ao consultar chave na SEFAZ: ${keyErr.message}`,
+            )
+          }
         } else {
           await crm.acknowledgeCommand(cmd.id, 'erro', `Comando desconhecido: ${cmd.command}`)
         }
@@ -808,20 +910,27 @@ function startWorker() {
   console.log(`[INIT] Cron SEFAZ DFe agendado para rodar a cada hora (0 * * * *).`)
 
   // 3. Execução imediata inicial de handshake, probe TLS e probe HTTP (Itens 1, 2, 3 e 5 do FIX)
-  setTimeout(async () => {
-    try {
-      await probeSefazTlsChain()
-      await probeSefazHttpViaAxios()
-    } catch (_) {}
-    runDfeCycle('startup')
-  }, 3000)
+  if (process.env.NODE_ENV !== 'test') {
+    setTimeout(async () => {
+      try {
+        await probeSefazTlsChain()
+        await probeSefazHttpViaAxios()
+      } catch (_) {}
+      runDfeCycle('startup')
+    }, 3000)
+  }
 }
 
 module.exports = {
   startWorker,
   runDfeCycle,
+  checkCommandQueue,
   isRateLimitResponse,
   installPasswordLogSanitizer,
+  getBackoffUntil: () => backoffUntil,
+  setBackoffUntil: (val) => {
+    backoffUntil = val
+  },
 }
 
 // Iniciar apenas se executado diretamente

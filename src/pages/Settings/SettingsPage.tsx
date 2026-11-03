@@ -1369,13 +1369,22 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                   variant={
                     dfePointer?.worker_status === 'online'
                       ? 'secondary'
-                      : dfePointer?.worker_status === 'error'
-                        ? 'destructive'
-                        : 'outline'
+                      : dfePointer?.worker_status === 'backoff_656'
+                        ? 'outline'
+                        : dfePointer?.worker_status === 'error'
+                          ? 'destructive'
+                          : 'outline'
                   }
-                  className="capitalize font-mono text-[10px]"
+                  className={`capitalize font-mono text-[10px] ${
+                    dfePointer?.worker_status === 'backoff_656'
+                      ? 'bg-amber-100 text-amber-900 border-amber-300 font-semibold'
+                      : ''
+                  }`}
                 >
-                  Worker: {dfePointer?.worker_status || 'offline'}
+                  Worker:{' '}
+                  {dfePointer?.worker_status === 'backoff_656'
+                    ? 'Backoff (cStat 656)'
+                    : dfePointer?.worker_status || 'offline'}
                 </Badge>
               </div>
 
@@ -1502,6 +1511,17 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
                     </span>
                   </div>
                 )}
+
+              {dfePointer?.worker_status === 'backoff_656' && (
+                <div className="text-amber-900 bg-amber-50 p-2 rounded border border-amber-300 flex items-center gap-2 mt-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+                  <span>
+                    <strong>Janela de Backoff Ativa (cStat 656 — Consumo Indevido):</strong> A SEFAZ
+                    solicitou pausa de 60 minutos entre consultas no mesmo NSU. O worker está
+                    aguardando a janela expirar para retomar o ciclo automaticamente.
+                  </span>
+                </div>
+              )}
 
               {dfePointer?.last_error && (
                 <div className="text-rose-800 bg-rose-50 p-2 rounded border border-rose-200 flex items-center gap-2 mt-2">

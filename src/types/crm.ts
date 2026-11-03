@@ -510,7 +510,7 @@ export interface DfePointerState extends RecordModel {
   cert_cnpj?: string
   cert_valid_until?: string
   cert_days_remaining?: number
-  worker_status: 'online' | 'offline' | 'error' | 'idle'
+  worker_status: 'online' | 'offline' | 'error' | 'idle' | 'backoff_656'
   cstat_last?: string
   is_running: boolean
 }

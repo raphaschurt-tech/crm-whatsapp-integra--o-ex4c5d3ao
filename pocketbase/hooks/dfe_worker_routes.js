@@ -332,7 +332,12 @@ routerAdd('POST', '/backend/v1/dfe/pointer', (e) => {
         pointerRec.set('last_error', '')
       }
       if (body.worker_status === undefined) {
-        pointerRec.set('worker_status', 'online')
+        // Se cstat_last for 656 ou 496, status explícito de backoff
+        if (String(body.cstat_last || '') === '656' || String(body.cstat_last || '') === '496') {
+          pointerRec.set('worker_status', 'backoff_656')
+        } else {
+          pointerRec.set('worker_status', 'online')
+        }
       }
     } else if (body.error) {
       pointerRec.set('last_error', String(body.error))
@@ -342,6 +347,12 @@ routerAdd('POST', '/backend/v1/dfe/pointer', (e) => {
         if (currentFails + 1 >= 3 && body.worker_status === undefined) {
           pointerRec.set('worker_status', 'error')
         }
+      }
+      if (
+        body.worker_status === undefined &&
+        (Number(pointerRec.get('consecutive_failures')) || 0) >= 1
+      ) {
+        pointerRec.set('worker_status', 'error')
       }
     }
 

@@ -1,0 +1,100 @@
+{
+  "timestamp": "2026-11-03T01:30:00-03:00",
+  "reason": "Âncora 🟡 BACKUP PRIMEIRO antes do ajuste no worker DF-e cStat 656 e fila de comandos",
+  "task": "Fix cStat 656 backoff, dfe_command_queue consumption, visibility of worker backoff status, zip regeneration",
+  "backup_file": "pocketbase/backups/backup_pre_dfe_worker_fix_20261103.json",
+  "dfe_pointer_state": [
+    {
+      "id": "1cz9gy9g3s8f2tx",
+      "cert_cnpj": "00496593000129",
+      "cert_days_remaining": 46,
+      "cert_valid_until": "2026-12-08T20:10:00.000Z",
+      "consecutive_failures": 0,
+      "cstat_last": "656",
+      "is_initialized": true,
+      "is_running": false,
+      "last_error": "",
+      "last_poll_at": "2026-10-23T17:00:00.177-03:00",
+      "last_success_at": "2026-10-23T17:00:00.177-03:00",
+      "max_nsu": "000000000000002",
+      "ult_nsu": "000000000000002",
+      "worker_mode": "real",
+      "worker_status": "online",
+      "created": "2026-10-19 04:06:40.817Z",
+      "updated": "2026-10-23 20:00:00.177Z"
+    }
+  ],
+  "dfe_command_queue": [
+    {
+      "id": "bkd53x4w40w69r5",
+      "command": "consultar_agora",
+      "created": "2026-11-03 03:39:16.680Z",
+      "created_by": "20vr2sqduxn0gvh",
+      "executed_at": "",
+      "params": {},
+      "result_summary": "",
+      "status": "pendente"
+    },
+    {
+      "id": "2ifv7vchd8qfc9x",
+      "command": "consultar_agora",
+      "created": "2026-10-26 21:18:22.546Z",
+      "created_by": "20vr2sqduxn0gvh",
+      "executed_at": "",
+      "params": {},
+      "result_summary": "",
+      "status": "pendente"
+    },
+    {
+      "id": "z29sftuc34e9ka8",
+      "command": "busca_por_chave",
+      "created": "2026-10-25 22:10:33.821Z",
+      "created_by": "",
+      "executed_at": "",
+      "params": {
+        "access_key": "35260960625586000101550010000021741659300497",
+        "audit_trail": {
+          "fileName": "danfe_35260960625586000101550010000021741659300497.pdf",
+          "messageId": "AC4CA447C99F6DBA157C67FB62C28447",
+          "origin": "whatsapp"
+        }
+      },
+      "result_summary": "",
+      "status": "pendente"
+    },
+    {
+      "id": "rm7b6am37pzewue",
+      "command": "consultar_agora",
+      "created": "2026-10-24 22:25:33.064Z",
+      "created_by": "20vr2sqduxn0gvh",
+      "executed_at": "",
+      "params": {},
+      "result_summary": "",
+      "status": "pendente"
+    },
+    {
+      "id": "jjm62z2emce8fy0",
+      "command": "consultar_agora",
+      "created": "2026-10-23 17:52:58.269Z",
+      "created_by": "20vr2sqduxn0gvh",
+      "executed_at": "2026-10-23T14:59:37.558-03:00",
+      "params": {},
+      "result_summary": "Consulta manual executada com sucesso",
+      "status": "concluido"
+    },
+    {
+      "id": "8kzdwi6gu9lphxs",
+      "command": "consultar_agora",
+      "created": "2026-10-20 01:02:50.094Z",
+      "created_by": "20vr2sqduxn0gvh",
+      "executed_at": "2026-10-22T15:51:53.326-03:00",
+      "params": {},
+      "result_summary": "Consulta manual executada com sucesso",
+      "status": "concluido"
+    }
+  ],
+  "dfe_history_summary": {
+    "total_records": 2,
+    "last_nsu": "000000000000002"
+  }
+}

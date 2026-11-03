@@ -207,6 +207,218 @@ async function runTests() {
     console.log('[TESTE 6 INFO] isRateLimitResponse validado no index.')
   }
 
+  // 7. Simulação COMPLETA: 656 -> Backoff -> Retomada pós-janela -> NSU avança além de 002
+  console.log(
+    '\n[TESTE 7] Testando ciclo completo: cStat 656 -> Backoff -> Sucesso com avanço de NSU além do 002...',
+  )
+  const { runDfeCycle, getBackoffUntil, setBackoffUntil, checkCommandQueue } = require('./index')
+
+  // Mock do CRM Client para interceptar chamadas do ciclo
+  let pointerUpdated = null
+  let acknowledgedCommands = []
+  let reportedKeyDownloads = []
+
+  const originalGetStatus = CrmClient.prototype.getStatus
+  const originalUpdatePointer = CrmClient.prototype.updatePointer
+  const originalGetPendingCommands = CrmClient.prototype.getPendingCommands
+  const originalAcknowledgeCommand = CrmClient.prototype.acknowledgeCommand
+  const originalReportKeyDownload = CrmClient.prototype.reportKeyDownload
+  const originalConsultarPorUltNsu = DfeAdapter.prototype.consultarPorUltNsu
+  const originalConsultarPorChave = DfeAdapter.prototype.consultarPorChave
+
+  try {
+    CrmClient.prototype.getStatus = async function () {
+      return {
+        dfe_enabled: true,
+        company_cnpj: '00496593000129',
+        pointer: {
+          ult_nsu: '000000000000002',
+          max_nsu: '000000000000002',
+          is_initialized: true,
+        },
+      }
+    }
+
+    CrmClient.prototype.updatePointer = async function (data) {
+      pointerUpdated = { ...data }
+      return { success: true, ...data }
+    }
+
+    // Fase 7a: SEFAZ responde cStat 656
+    DfeAdapter.prototype.consultarPorUltNsu = async function (ultNsu) {
+      return {
+        cStat: '656',
+        xMotivo: 'Rejeicao: Consumo Indevido (Tente apos 1 hora)',
+        ultNSU: ultNsu,
+        maxNSU: ultNsu,
+        docs: [],
+      }
+    }
+
+    setBackoffUntil(0)
+    await runDfeCycle('cron')
+
+    console.log(
+      `[TESTE 7a RESULTADO] cStat registrado: ${pointerUpdated?.cstat_last} | worker_status: ${pointerUpdated?.worker_status} | backoff ativo: ${getBackoffUntil() > Date.now()}`,
+    )
+    if (
+      pointerUpdated?.cstat_last !== '656' ||
+      pointerUpdated?.worker_status !== 'backoff_656' ||
+      getBackoffUntil() <= Date.now()
+    ) {
+      throw new Error(
+        `Falha no Teste 7a: backoff cStat 656 não ativado corretamente (${JSON.stringify(pointerUpdated)})`,
+      )
+    }
+    console.log(
+      '[TESTE 7a OK] cStat 656 tratou com backoff temporário e worker_status=backoff_656!',
+    )
+
+    // Fase 7b: Enquanto backoff estiver ativo, ciclo cron subsequente é pulado
+    pointerUpdated = null
+    await runDfeCycle('cron')
+    console.log(
+      `[TESTE 7b RESULTADO] Durante backoff, status mantido: ${pointerUpdated?.worker_status}`,
+    )
+    if (pointerUpdated?.worker_status !== 'backoff_656') {
+      throw new Error('Falha no Teste 7b: ciclo cron deveria respeitar a janela de backoff')
+    }
+    console.log('[TESTE 7b OK] Backoff respeitado sem novas chamadas à SEFAZ!')
+
+    // Fase 7c: Janela de backoff expira e SEFAZ retorna novos documentos com NSU avançando além de 002
+    setBackoffUntil(Date.now() - 1000) // Simula expiração do backoff
+
+    DfeAdapter.prototype.consultarPorUltNsu = async function (ultNsu) {
+      return {
+        cStat: '138',
+        xMotivo: 'Documentos localizados',
+        ultNSU: '000000000000005',
+        maxNSU: '000000000000005',
+        docs: [
+          {
+            nsu: '000000000000003',
+            schema: 'procNFe_v4.00.xsd',
+            accessKey: '35261000496593000129550010000010011000010011',
+            model: '55',
+            emitterCnpj: '11222333000199',
+            emitterName: 'FORNECEDOR RETOMADA DFE',
+            issueDate: new Date().toISOString(),
+            totalAmount: 1200.0,
+            nfeNumber: '1001',
+            isSummary: false,
+            isFullNfe: true,
+            isEvent: false,
+            rawXml:
+              '<nfeProc versao="4.00"><NFe><infNFe Id="NFe35261000496593000129550010000010011000010011"></infNFe></NFe></nfeProc>',
+          },
+        ],
+      }
+    }
+
+    CrmClient.prototype.ingestXml = async function () {
+      return { success: true, processed: true }
+    }
+    CrmClient.prototype.recordHistory = async function () {
+      return { success: true }
+    }
+
+    await runDfeCycle('cron')
+
+    console.log(
+      `[TESTE 7c RESULTADO] ult_nsu novo: ${pointerUpdated?.ult_nsu} | cstat_last: ${pointerUpdated?.cstat_last} | worker_status: ${pointerUpdated?.worker_status} | backoff zerado: ${getBackoffUntil() === 0}`,
+    )
+    if (
+      pointerUpdated?.ult_nsu !== '000000000000005' ||
+      pointerUpdated?.cstat_last !== '138' ||
+      pointerUpdated?.worker_status !== 'online' ||
+      getBackoffUntil() !== 0
+    ) {
+      throw new Error(
+        `Falha no Teste 7c: avanço do NSU além de 002 pós-backoff falhou (${JSON.stringify(pointerUpdated)})`,
+      )
+    }
+    console.log(
+      '[TESTE 7c OK] Retomada bem-sucedida! NSU avançou de 002 para 005 e backoff foi zerado!',
+    )
+
+    // 8. Teste de Consumo da Fila de Comandos (incluindo busca_por_chave e consultar_agora)
+    console.log('\n[TESTE 8] Testando consumo de comandos pendentes na fila...')
+    CrmClient.prototype.getPendingCommands = async function () {
+      return {
+        commands: [
+          {
+            id: 'cmd_consultar_agora_1',
+            command: 'consultar_agora',
+            params: {},
+          },
+          {
+            id: 'cmd_busca_chave_1',
+            command: 'busca_por_chave',
+            params: {
+              access_key: '35260960625586000101550010000021741659300497',
+              audit_trail: {
+                fileName: 'danfe_35260960625586000101550010000021741659300497.pdf',
+                origin: 'whatsapp',
+              },
+            },
+          },
+        ],
+      }
+    }
+
+    CrmClient.prototype.acknowledgeCommand = async function (id, status, summary) {
+      acknowledgedCommands.push({ id, status, summary })
+      return { success: true, id, status }
+    }
+
+    CrmClient.prototype.reportKeyDownload = async function (data) {
+      reportedKeyDownloads.push(data)
+      return { success: true, access_key: data.access_key }
+    }
+
+    DfeAdapter.prototype.consultarPorChave = async function (chave) {
+      return {
+        cStat: '138',
+        xMotivo: 'Documento localizado por chave',
+        docs: [
+          {
+            accessKey: chave,
+            isFullNfe: true,
+            rawXml: `<nfeProc versao="4.00"><NFe><infNFe Id="NFe${chave}"></infNFe></NFe></nfeProc>`,
+          },
+        ],
+      }
+    }
+
+    await checkCommandQueue()
+
+    console.log(
+      `[TESTE 8 RESULTADO] Comandos ack: ${acknowledgedCommands.length} | Report downloads: ${reportedKeyDownloads.length}`,
+    )
+    const buscaKeyAck = acknowledgedCommands.find(
+      (c) => c.id === 'cmd_busca_chave_1' && c.status === 'concluido',
+    )
+    const consultarAck = acknowledgedCommands.find(
+      (c) => c.id === 'cmd_consultar_agora_1' && c.status === 'concluido',
+    )
+
+    if (!buscaKeyAck || !consultarAck || reportedKeyDownloads.length !== 1) {
+      throw new Error(
+        `Falha no Teste 8: comandos da fila não foram consumidos como esperado (${JSON.stringify(acknowledgedCommands)})`,
+      )
+    }
+    console.log('[TESTE 8 OK] Comandos consultar_agora e busca_por_chave consumidos com sucesso!')
+  } finally {
+    // Restaurar protótipos originais
+    CrmClient.prototype.getStatus = originalGetStatus
+    CrmClient.prototype.updatePointer = originalUpdatePointer
+    CrmClient.prototype.getPendingCommands = originalGetPendingCommands
+    CrmClient.prototype.acknowledgeCommand = originalAcknowledgeCommand
+    CrmClient.prototype.reportKeyDownload = originalReportKeyDownload
+    DfeAdapter.prototype.consultarPorUltNsu = originalConsultarPorUltNsu
+    DfeAdapter.prototype.consultarPorChave = originalConsultarPorChave
+  }
+
   console.log('\n--- TODOS OS TESTES DO WORKER EXECUTADOS COM SUCESSO ---')
 }
 

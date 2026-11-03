@@ -2,9 +2,6 @@ import fs from 'fs'
 import path from 'path'
 import zlib from 'zlib'
 import crypto from 'crypto'
-import { createRequire } from 'module'
-
-const require = createRequire(import.meta.url)
 
 // Gerar icp-brasil-ca.pem a partir dos certs de assinatura (@nfewizard/shared) + SEFAZ/SERPRO SSL
 try {
