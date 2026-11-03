@@ -1,0 +1,95 @@
+{
+  "backup_id": "backup_pre_f4_fornecedor_auto_20261103",
+  "created_at_brasilia": "2026-11-03",
+  "protocol": "BACKUP PRIMEIRO (Fase 4 - Fornecedor automático via XML + Seletor de destino)",
+  "scope": "Estado lógico pré-alteração dos registros que a F4 toca (fornecedores, documentos de CNPJ, guard CFOP). Rollback estrutural: versionamento do projeto (commit_changes); este arquivo é o registro do estado dos dados afetados.",
+  "collections_touched_by_f4": [
+    "customers (novo campo supplier_nature, migration 0118)",
+    "customer_documents (leitura para dedupe raiz de CNPJ no auto-cadastro)",
+    "nfe_processed (auto-cadastro de remetente desconhecido passa a criar fornecedor)"
+  ],
+  "snapshot_customers_fornecedores": [
+    {
+      "id": "ukuwsuetw0d3p2m",
+      "name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "cnpj": "61136701000147",
+      "customer_type": "Fornecedor",
+      "roles": ["fornecedor"],
+      "phone": "1136190000",
+      "email": "contato_jahu@jahu.com.br",
+      "source": "nfe_email_inbox",
+      "notes": "Cadastrado automaticamente via entrada de NF-e por Email.",
+      "updated": "2026-11-01 17:24:47.282Z"
+    },
+    {
+      "id": "bwd7wotwwizccnn",
+      "name": "MEC LAN INDUSTRIA E COMERCIO LTDA EPP",
+      "cnpj": "62538228000197",
+      "customer_type": "Fornecedor",
+      "roles": ["fornecedor"],
+      "phone": "5511940079148",
+      "email": "nfe@meclan.com.br",
+      "pipeline_status": "fornecedores",
+      "updated": "2026-11-03 14:53:21.244Z"
+    },
+    {
+      "id": "klma9h4msc1nsw3",
+      "name": "OXILAPA GASES EQUIPAMENTOS E SOLDAS LTDA",
+      "cnpj": "59417469000173",
+      "customer_type": "Fornecedor",
+      "roles": ["fornecedor"],
+      "phone": "5511992321490",
+      "email": "rpaimportadora@gmail.com",
+      "pipeline_status": "fornecedores",
+      "updated": "2026-11-03 14:53:21.252Z"
+    }
+  ],
+  "snapshot_customer_documents": [
+    {
+      "id": "ztf6a3lp3ggsy14",
+      "customer": "ukuwsuetw0d3p2m",
+      "document_number": "61136701000147",
+      "root_cnpj": "61136701",
+      "is_primary": true,
+      "label": "Matriz/Unidade"
+    },
+    {
+      "id": "5syiyvko43d2px0",
+      "customer": "ukuwsuetw0d3p2m",
+      "document_number": "61136701000372",
+      "root_cnpj": "61136701",
+      "is_primary": false,
+      "label": "Unidade Filial (61.136.701/0003-72)"
+    },
+    {
+      "id": "vw7omc664hnqf63",
+      "customer": "ukuwsuetw0d3p2m",
+      "document_number": "61136701000732",
+      "root_cnpj": "61136701",
+      "is_primary": false,
+      "label": "Unidade Filial (61.136.701/0007-32)"
+    },
+    {
+      "id": "xshd0x8qun0rcly",
+      "customer": "bwd7wotwwizccnn",
+      "document_number": "62538228000197",
+      "root_cnpj": "62538228",
+      "is_primary": true,
+      "label": "Matriz/Unidade"
+    },
+    {
+      "id": "n8fwii4fbwbymos",
+      "customer": "klma9h4msc1nsw3",
+      "document_number": "59417469000173",
+      "root_cnpj": "59417469",
+      "is_primary": true,
+      "label": "Matriz/Unidade"
+    }
+  ],
+  "guard_defaults_pre_f4": {
+    "mechanism": "hardcoded no guard (nfe_pipeline) até 0.0.263",
+    "jahu_borrapas": "revenda",
+    "mec_lan": "revenda",
+    "oxilapa": "insumo"
+  }
+}
