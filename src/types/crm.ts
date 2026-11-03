@@ -449,6 +449,7 @@ export interface NfeProcessed extends RecordModel {
   matched_items_count: number
   pending_items_count: number
   raw_items?: any
+  cfop_entrada_sugerido?: string
   xml_payload?: string
   expand?: {
     supplier?: Customer

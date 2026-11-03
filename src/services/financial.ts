@@ -485,6 +485,29 @@ export async function markSouisStockLaunched(
   })
 }
 
+export async function updateNfeItemDestiny(
+  nfeId: string,
+  itemIndex: number,
+  destinoDeclarado: 'revenda' | 'insumo_producao' | 'insumo_consumo',
+): Promise<{
+  success: boolean
+  message?: string
+  error?: string
+  cfop_entrada?: string
+  destino_declarado?: string
+  payables_updated?: number
+  raw_items?: any[]
+}> {
+  return pb.send('/backend/v1/nfe/update-item-destiny', {
+    method: 'POST',
+    body: {
+      nfe_id: nfeId,
+      item_index: itemIndex,
+      destino_declarado: destinoDeclarado,
+    },
+  })
+}
+
 export async function getNfeProcessedList(): Promise<NfeProcessed[]> {
   try {
     return await pb.collection('nfe_processed').getFullList<NfeProcessed>({

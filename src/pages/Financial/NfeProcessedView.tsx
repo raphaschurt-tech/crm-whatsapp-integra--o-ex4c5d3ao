@@ -35,11 +35,12 @@ import {
   getNfeProcessedList,
   getNfePriceQueue,
   getNfeProductMappings,
-  deleteNfeProductMapping,
   uploadNfeXml,
   reconcileMatchItem,
   applyQueuePrice,
+  deleteNfeProductMapping,
   markSouisStockLaunched,
+  updateNfeItemDestiny,
 } from '@/services/financial'
 import { getProducts } from '@/services/products'
 import { getSettings } from '@/services/settings'
@@ -98,6 +99,11 @@ export function NfeProcessedView({ initialSubTab = 'nfe' }: NfeProcessedViewProp
 
   // Ação de Lançar estoque SOU.IS (F1)
   const [markingNfeId, setMarkingNfeId] = useState<string | null>(null)
+
+  // F4: Modal de Lançamento de Compra (Seletor de Destino por Item + Alerta ST)
+  const [launchModalNfe, setLaunchModalNfe] = useState<NfeProcessed | null>(null)
+  const [itemDestinies, setItemDestinies] = useState<Record<number, string>>({})
+  const [savingDestinies, setSavingDestinies] = useState(false)
 
   const loadData = async () => {
     setLoading(true)
@@ -247,6 +253,100 @@ export function NfeProcessedView({ initialSubTab = 'nfe' }: NfeProcessedViewProp
       })
     } finally {
       setApprovingLoading(false)
+    }
+  }
+
+  // F4: Helper para decodificar raw_items
+  const parseRawItems = (raw: any): any[] => {
+    if (!raw) return []
+    try {
+      if (typeof raw === 'string') {
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) ? parsed : []
+      }
+      if (Array.isArray(raw)) {
+        if (raw.length > 0 && typeof raw[0] === 'number') {
+          // PocketBase Uint8Array serializado como array de inteiros
+          const uint8 = new Uint8Array(raw)
+          const text = new TextDecoder().decode(uint8)
+          const parsed = JSON.parse(text)
+          return Array.isArray(parsed) ? parsed : []
+        }
+        return raw
+      }
+    } catch (e) {
+      console.warn('Erro ao decodificar raw_items:', e)
+    }
+    return []
+  }
+
+  // F4: Abertura do modal de Lançamento de Compra
+  const handleOpenLaunchModal = (nfe: NfeProcessed) => {
+    setLaunchModalNfe(nfe)
+    const items = parseRawItems(nfe.raw_items)
+    const initialMap: Record<number, string> = {}
+
+    // Natureza do fornecedor da nota como default inicial
+    const supNature = nfe.expand?.supplier?.supplier_nature || ''
+    const defaultFromSupplier =
+      supNature === 'revenda'
+        ? 'revenda'
+        : supNature === 'insumo_producao'
+          ? 'insumo_producao'
+          : supNature === 'insumo_consumo'
+            ? 'insumo_consumo'
+            : ''
+
+    items.forEach((it, idx) => {
+      // 1. Destino já declarado previamente tem precedência máxima
+      if (it.destino_declarado) {
+        initialMap[idx] = it.destino_declarado
+      } else if (defaultFromSupplier) {
+        // 2. Default sugerido pela supplier_nature do fornecedor
+        initialMap[idx] = defaultFromSupplier
+      } else {
+        // 3. Fornecedor sem natureza -> seletor em branco
+        initialMap[idx] = ''
+      }
+    })
+
+    setItemDestinies(initialMap)
+  }
+
+  // F4: Gravar destinos declarados dos itens da compra
+  const handleSaveItemDestinies = async () => {
+    if (!launchModalNfe) return
+    setSavingDestinies(true)
+    try {
+      const declarations = Object.entries(itemDestinies).map(([indexStr, destiny]) => ({
+        index: Number(indexStr),
+        destino_declarado: destiny,
+      }))
+
+      const res = await updateNfeItemDestiny(launchModalNfe.id, declarations)
+      if (res.success) {
+        toast({
+          title: 'Lançamento de compra atualizado',
+          description: `Destinos declarados salvos e CFOP de entrada atualizado para ${res.cfop_entrada_sugerido || 'o novo destino'}.`,
+          className: 'bg-emerald-600 text-white',
+        })
+        setLaunchModalNfe(null)
+        loadData()
+      } else {
+        toast({
+          title: 'Erro ao salvar destinos',
+          description: res.error || 'Falha ao salvar lançamento de compra.',
+          variant: 'destructive',
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro inesperado',
+        description: err.message,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingDestinies(false)
     }
   }
 
@@ -703,111 +803,152 @@ export function NfeProcessedView({ initialSubTab = 'nfe' }: NfeProcessedViewProp
                     <th className="py-3 px-4">Fornecedor</th>
                     <th className="py-3 px-4 text-center">Itens Casados</th>
                     <th className="py-3 px-4 text-right">Valor Total</th>
+                    <th className="py-3 px-4 text-center">CFOP Entrada</th>
                     <th className="py-3 px-4 text-center">Entrada SOU.IS (F1)</th>
                     <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-center">Lançamento de Compra (F4)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {loading ? (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-500">
+                      <td colSpan={9} className="py-8 text-center text-slate-500">
                         Carregando notas fiscais...
                       </td>
                     </tr>
                   ) : filteredNfe.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-12 text-center text-slate-500">
+                      <td colSpan={9} className="py-12 text-center text-slate-500">
                         Nenhuma NF-e processada encontrada.
                       </td>
                     </tr>
                   ) : (
-                    filteredNfe.map((item) => (
-                      <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 px-4 whitespace-nowrap text-slate-700">
-                          {item.issue_date
-                            ? new Date(item.issue_date).toLocaleDateString('pt-BR')
-                            : new Date(item.created).toLocaleDateString('pt-BR')}
-                        </td>
+                    filteredNfe.map((item) => {
+                      const parsedItems = parseRawItems(item.raw_items)
+                      const hasSt = parsedItems.some(
+                        (it: any) =>
+                          (it.icms_st_base && Number(it.icms_st_base) > 0) ||
+                          (it.icms_st_val && Number(it.icms_st_val) > 0) ||
+                          ['1403', '2403', '5403', '5405', '6403', '6404'].includes(
+                            String(it.cfop || '').trim(),
+                          ),
+                      )
+                      return (
+                        <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 px-4 whitespace-nowrap text-slate-700">
+                            {item.issue_date
+                              ? new Date(item.issue_date).toLocaleDateString('pt-BR')
+                              : new Date(item.created).toLocaleDateString('pt-BR')}
+                          </td>
 
-                        <td className="py-3 px-4">
-                          <div className="font-bold text-slate-900">
-                            {item.nfe_number ? `NF-e #${item.nfe_number}` : 'Nota Fiscal'}
-                            {item.series ? ` (Série ${item.series})` : ''}
-                          </div>
-                          <div
-                            className="text-[10px] font-mono text-slate-400 truncate max-w-[260px]"
-                            title={item.access_key}
-                          >
-                            {item.access_key}
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-4">
-                          <div className="font-medium text-slate-800">
-                            {item.supplier_name || item.expand?.supplier?.name || '-'}
-                          </div>
-                          {item.supplier_cnpj && (
-                            <div className="text-[10px] text-slate-400 font-mono">
-                              CNPJ: {item.supplier_cnpj}
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-slate-900">
+                              {item.nfe_number ? `NF-e #${item.nfe_number}` : 'Nota Fiscal'}
+                              {item.series ? ` (Série ${item.series})` : ''}
                             </div>
-                          )}
-                        </td>
+                            <div
+                              className="text-[10px] font-mono text-slate-400 truncate max-w-[240px]"
+                              title={item.access_key}
+                            >
+                              {item.access_key}
+                            </div>
+                          </td>
 
-                        <td className="py-3 px-4 text-center">
-                          <div className="inline-flex items-center gap-1 text-xs">
-                            <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded">
-                              {item.matched_items_count || 0} casados
-                            </span>
-                            {(item.pending_items_count || 0) > 0 && (
-                              <span className="text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded">
-                                {item.pending_items_count} pendentes
-                              </span>
+                          <td className="py-3 px-4">
+                            <div className="font-medium text-slate-800">
+                              {item.supplier_name || item.expand?.supplier?.name || '-'}
+                            </div>
+                            {item.supplier_cnpj && (
+                              <div className="text-[10px] text-slate-400 font-mono">
+                                CNPJ: {item.supplier_cnpj}
+                              </div>
                             )}
-                          </div>
-                        </td>
+                          </td>
 
-                        <td className="py-3 px-4 text-right font-black text-slate-900 whitespace-nowrap">
-                          {formatCurrency(item.total_amount || 0)}
-                        </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="inline-flex items-center gap-1 text-xs">
+                              <span className="text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded">
+                                {item.matched_items_count || 0} casados
+                              </span>
+                              {(item.pending_items_count || 0) > 0 && (
+                                <span className="text-amber-700 font-bold bg-amber-50 px-2 py-0.5 rounded">
+                                  {item.pending_items_count} pendentes
+                                </span>
+                              )}
+                            </div>
+                          </td>
 
-                        <td className="py-3 px-4 text-center">
-                          {item.souis_stock_status === 'lancado' ? (
-                            <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px] gap-1">
-                              <Check className="h-3 w-3" /> Lançado
-                            </Badge>
-                          ) : item.souis_stock_status === 'pendente' ? (
+                          <td className="py-3 px-4 text-right font-black text-slate-900 whitespace-nowrap">
+                            {formatCurrency(item.total_amount || 0)}
+                          </td>
+
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                            <div className="flex flex-col items-center gap-1">
+                              <Badge
+                                variant="outline"
+                                className="font-mono text-[11px] font-bold bg-slate-50 text-slate-800 border-slate-300"
+                              >
+                                {item.cfop_entrada_sugerido || '1102'}
+                              </Badge>
+                              {hasSt && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-bold border border-amber-300">
+                                  ST Detectada
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-4 text-center">
+                            {item.souis_stock_status === 'lancado' ? (
+                              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px] gap-1">
+                                <Check className="h-3 w-3" /> Lançado
+                              </Badge>
+                            ) : item.souis_stock_status === 'pendente' ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleMarkSouisStock(item.id)}
+                                disabled={markingNfeId === item.id}
+                                className="text-[10px] h-7 px-2 font-bold text-amber-700 border-amber-300 hover:bg-amber-100"
+                                title="Marcar que a entrada já foi lançada no SOU.IS com o custo da NF"
+                              >
+                                {markingNfeId === item.id ? 'Gravando...' : 'Marcar Lançado'}
+                              </Button>
+                            ) : (
+                              <span className="text-slate-400 text-[10px]">N/A</span>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4 text-center">
+                            {item.status === 'processada' ? (
+                              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px]">
+                                Processada
+                              </Badge>
+                            ) : item.status === 'pendente_reconciliacao' ? (
+                              <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-[10px]">
+                                Reconciliação
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-red-100 text-red-800 border-red-200 text-[10px]">
+                                Exceção / Erro
+                              </Badge>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4 text-center">
                             <Button
                               size="sm"
-                              variant="outline"
-                              onClick={() => handleMarkSouisStock(item.id)}
-                              disabled={markingNfeId === item.id}
-                              className="text-[10px] h-7 px-2 font-bold text-amber-700 border-amber-300 hover:bg-amber-100"
-                              title="Marcar que a entrada já foi lançada no SOU.IS com o custo da NF"
+                              onClick={() => handleOpenLaunchModal(item)}
+                              className="h-7 text-xs px-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold gap-1 shadow-xs"
+                              title="Conferir itens e declarar destino de cada item para CFOP de entrada"
                             >
-                              {markingNfeId === item.id ? 'Gravando...' : 'Marcar Lançado'}
+                              <FileText className="h-3.5 w-3.5" />
+                              <span>Destino dos Itens</span>
                             </Button>
-                          ) : (
-                            <span className="text-slate-400 text-[10px]">N/A</span>
-                          )}
-                        </td>
-
-                        <td className="py-3 px-4 text-center">
-                          {item.status === 'processada' ? (
-                            <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px]">
-                              Processada
-                            </Badge>
-                          ) : item.status === 'pendente_reconciliacao' ? (
-                            <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-[10px]">
-                              Reconciliação
-                            </Badge>
-                          ) : (
-                            <Badge className="bg-red-100 text-red-800 border-red-200 text-[10px]">
-                              Exceção / Erro
-                            </Badge>
-                          )}
-                        </td>
-                      </tr>
-                    ))
+                          </td>
+                        </tr>
+                      )
+                    })
                   )}
                 </tbody>
               </table>
@@ -1556,6 +1697,247 @@ export function NfeProcessedView({ initialSubTab = 'nfe' }: NfeProcessedViewProp
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
             >
               {approvingLoading ? 'Gravando...' : 'Gravar Preço no Produto'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL F4: LANÇAMENTO DE COMPRA — SELETOR DE DESTINO POR ITEM + ALERTA ST */}
+      <Dialog
+        open={Boolean(launchModalNfe)}
+        onOpenChange={(open) => !open && setLaunchModalNfe(null)}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="text-base font-bold flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-blue-600" />
+                <span>
+                  Lançamento de Compra —{' '}
+                  {launchModalNfe?.nfe_number
+                    ? `NF-e #${launchModalNfe.nfe_number}`
+                    : 'Nota Fiscal'}
+                </span>
+              </div>
+              <Badge variant="outline" className="font-mono text-xs text-slate-700">
+                CFOP Atual: {launchModalNfe?.cfop_entrada_sugerido || '1102'}
+              </Badge>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-600">
+              Fornecedor: <strong>{launchModalNfe?.supplier_name || 'Desconhecido'}</strong> (CNPJ:{' '}
+              {launchModalNfe?.supplier_cnpj || '-'}){' · '}
+              Natureza cadastrada:{' '}
+              <strong className="text-blue-700">
+                {launchModalNfe?.expand?.supplier?.supplier_nature === 'revenda'
+                  ? 'Revenda'
+                  : launchModalNfe?.expand?.supplier?.supplier_nature === 'insumo_producao'
+                    ? 'Insumo de produção'
+                    : launchModalNfe?.expand?.supplier?.supplier_nature === 'insumo_consumo'
+                      ? 'Insumo de consumo'
+                      : 'Sem natureza (escolha manual)'}
+              </strong>
+            </DialogDescription>
+          </DialogHeader>
+
+          {launchModalNfe &&
+            (() => {
+              const parsedItems = parseRawItems(launchModalNfe.raw_items)
+              const stItems = parsedItems.filter(
+                (it: any) =>
+                  (it.icms_st_base && Number(it.icms_st_base) > 0) ||
+                  (it.icms_st_val && Number(it.icms_st_val) > 0) ||
+                  ['1403', '2403', '5403', '5405', '6403', '6404'].includes(
+                    String(it.cfop || '').trim(),
+                  ),
+              )
+              const hasAnySt = stItems.length > 0
+
+              return (
+                <div className="space-y-4 py-2 flex-1 overflow-y-auto pr-1">
+                  {/* Alerta de ICMS-ST (Critério 4) */}
+                  {hasAnySt && (
+                    <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-amber-950 text-xs flex items-start gap-2.5">
+                      <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <div className="font-bold text-amber-900 flex items-center gap-2">
+                          <span>Alerta Fiscal: ICMS-ST Detectado na Nota</span>
+                          <Badge className="bg-amber-200 text-amber-900 border-amber-400 text-[10px]">
+                            {stItems.length} item(ns) com ST
+                          </Badge>
+                        </div>
+                        <p className="text-amber-800 leading-relaxed">
+                          Conferir o destaque de ICMS-ST desta nota (base de cálculo com MVA e valor
+                          do imposto retido). Para itens destinados a <strong>Revenda</strong> com
+                          ICMS-ST, o CFOP de entrada derivado será <strong>1403 (interna)</strong>{' '}
+                          ou <strong>2403 (interestadual)</strong>.
+                        </p>
+                        <div className="flex flex-wrap gap-2 pt-1 font-mono text-[11px] text-amber-900">
+                          {stItems.map((stIt: any, idx: number) => (
+                            <span
+                              key={idx}
+                              className="bg-amber-100 px-2 py-0.5 rounded border border-amber-300"
+                            >
+                              Item {stIt.item_number || idx + 1}: Base ST{' '}
+                              {formatCurrency(stIt.icms_st_base || 0)} | Valor Retido{' '}
+                              {formatCurrency(stIt.icms_st_val || 0)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tabela de Itens para Declaração de Destino */}
+                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                    <div className="bg-slate-50 p-2.5 border-b border-slate-200 text-xs font-semibold text-slate-700 flex items-center justify-between">
+                      <span>Itens da Nota Fiscal ({parsedItems.length} itens)</span>
+                      <span className="text-[11px] text-slate-500 font-normal">
+                        O destino declarado por item prevalece sobre o default e recalcula o CFOP de
+                        entrada no contas a pagar
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto max-h-[380px]">
+                      <table className="w-full text-xs text-left border-collapse">
+                        <thead className="bg-slate-100 text-slate-700 sticky top-0 z-10 border-b border-slate-200 font-semibold">
+                          <tr>
+                            <th className="py-2 px-3 w-12 text-center">#</th>
+                            <th className="py-2 px-3">Código / Descrição</th>
+                            <th className="py-2 px-3 text-center">CFOP Origem (SPED)</th>
+                            <th className="py-2 px-3 text-right">Qtd</th>
+                            <th className="py-2 px-3 text-right">Vlr Total</th>
+                            <th className="py-2 px-3">Destaque ICMS-ST</th>
+                            <th className="py-2 px-3 w-56">Destino do Item (F4)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {parsedItems.length === 0 ? (
+                            <tr>
+                              <td colSpan={7} className="py-8 text-center text-slate-400">
+                                Nenhum item discriminado no XML desta nota.
+                              </td>
+                            </tr>
+                          ) : (
+                            parsedItems.map((it: any, idx: number) => {
+                              const isItemSt =
+                                (it.icms_st_base && Number(it.icms_st_base) > 0) ||
+                                (it.icms_st_val && Number(it.icms_st_val) > 0) ||
+                                ['1403', '2403', '5403', '5405', '6403', '6404'].includes(
+                                  String(it.cfop || '').trim(),
+                                )
+                              const currentDestiny = itemDestinies[idx] || ''
+
+                              return (
+                                <tr key={idx} className="hover:bg-slate-50/70 transition-colors">
+                                  <td className="py-2.5 px-3 text-center font-mono text-slate-500">
+                                    {it.item_number || idx + 1}
+                                  </td>
+                                  <td className="py-2.5 px-3 max-w-[240px]">
+                                    <div
+                                      className="font-semibold text-slate-900 truncate"
+                                      title={it.xProd}
+                                    >
+                                      {it.xProd || 'Sem descrição'}
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 font-mono">
+                                      Cód: {it.cProd || '-'} | NCM: {it.ncm || '-'}
+                                    </div>
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center">
+                                    <Badge
+                                      variant="outline"
+                                      className="font-mono text-[10px] text-slate-600 bg-slate-50"
+                                    >
+                                      {it.cfop || '-'}
+                                    </Badge>
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono text-slate-700">
+                                    {it.qCom || it.quantity || 1} {it.uCom || ''}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                                    {formatCurrency(Number(it.vProd || it.total_value || 0))}
+                                  </td>
+                                  <td className="py-2.5 px-3">
+                                    {isItemSt ? (
+                                      <div className="text-[10px] font-mono text-amber-900 bg-amber-50 p-1 rounded border border-amber-200">
+                                        <div>Base ST: {formatCurrency(it.icms_st_base || 0)}</div>
+                                        <div>Retido: {formatCurrency(it.icms_st_val || 0)}</div>
+                                      </div>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400">Sem ST</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2.5 px-3">
+                                    <select
+                                      value={currentDestiny}
+                                      onChange={(e) =>
+                                        setItemDestinies((prev) => ({
+                                          ...prev,
+                                          [idx]: e.target.value,
+                                        }))
+                                      }
+                                      className="w-full text-xs h-8 px-2 rounded-md border border-slate-300 bg-white font-medium text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                                    >
+                                      <option value="">-- Selecione o destino --</option>
+                                      <option value="revenda">
+                                        Revenda ({isItemSt ? 'CFOP 1403/2403 ST' : 'CFOP 1102/2102'}
+                                        )
+                                      </option>
+                                      <option value="insumo_producao">
+                                        Insumo de produção (CFOP 1101/2101)
+                                      </option>
+                                      <option value="insumo_consumo">
+                                        Insumo de consumo (CFOP 1556/2556)
+                                      </option>
+                                    </select>
+                                  </td>
+                                </tr>
+                              )
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-[11px] text-slate-600 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-700">Preservação SPED:</span>
+                      <span>
+                        O CFOP original do emitente continua intacto em cada item para a
+                        escrituração fiscal.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+
+          <DialogFooter className="shrink-0 pt-2 border-t border-slate-200">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setLaunchModalNfe(null)}
+              disabled={savingDestinies}
+            >
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSaveItemDestinies}
+              disabled={savingDestinies}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold gap-1.5"
+            >
+              {savingDestinies ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  <span>Salvando Lançamento...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  <span>Salvar Destinos & Atualizar CFOP</span>
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

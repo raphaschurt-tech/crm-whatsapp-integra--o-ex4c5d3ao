@@ -1136,3 +1136,167 @@ routerAdd('POST', '/backend/v1/nfe/mark-souis-stock-launched', (e) => {
     return e.json(500, { success: false, error: err.message || String(err) })
   }
 })
+
+// F4: Rota POST para atualizar o destino declarado dos itens da NF-e e sincronizar o CFOP de entrada no contas a pagar
+routerAdd('POST', '/backend/v1/nfe/update-item-destiny', (e) => {
+  let reqData = {}
+  try {
+    reqData = e.requestInfo().body || {}
+  } catch (_) {
+    reqData = {}
+  }
+
+  const nfeId = reqData.nfe_id
+  const itemIndex =
+    typeof reqData.item_index === 'number' ? reqData.item_index : parseInt(reqData.item_index, 10)
+  const newDestiny = String(reqData.destino_declarado || '').trim()
+
+  if (!nfeId) {
+    return e.json(400, { success: false, error: 'nfe_id obrigatório.' })
+  }
+
+  const validDestinies = ['revenda', 'insumo_producao', 'insumo_consumo']
+  if (!validDestinies.includes(newDestiny)) {
+    return e.json(400, {
+      success: false,
+      error:
+        'destino_declarado inválido. Valores permitidos: revenda, insumo_producao, insumo_consumo.',
+    })
+  }
+
+  function computeEntryCfop(originCfop, declaredDestiny) {
+    const oCfop = String(originCfop || '').trim()
+    const isInterstate = oCfop.startsWith('6') || oCfop.startsWith('2')
+    const stCfops = ['5401', '5403', '5405', '6401', '6403', '6404']
+    const hasSt = stCfops.includes(oCfop)
+
+    if (declaredDestiny === 'insumo_consumo') {
+      return isInterstate ? '2556' : '1556'
+    }
+    if (declaredDestiny === 'insumo_producao') {
+      return isInterstate ? '2101' : '1101'
+    }
+    if (declaredDestiny === 'revenda') {
+      if (hasSt) {
+        return isInterstate ? '2403' : '1403'
+      }
+      return isInterstate ? '2102' : '1102'
+    }
+    if (hasSt) {
+      return isInterstate ? '2403' : '1403'
+    }
+    return isInterstate ? '2102' : '1102'
+  }
+
+  try {
+    const nfeRec = $app.findRecordById('nfe_processed', nfeId)
+
+    // Decodificar raw_items
+    let rawItems = []
+    try {
+      const rawField = nfeRec.get('raw_items')
+      if (Array.isArray(rawField)) {
+        if (rawField.length > 0 && typeof rawField[0] === 'number') {
+          // Byte array
+          const str = String.fromCharCode.apply(null, rawField)
+          rawItems = JSON.parse(str)
+        } else {
+          rawItems = rawField
+        }
+      } else if (typeof rawField === 'string' && rawField.trim()) {
+        rawItems = JSON.parse(rawField)
+      }
+    } catch (parseErr) {
+      console.log('[UPDATE-ITEM-DESTINY] Erro ao parsear raw_items:', parseErr)
+      rawItems = []
+    }
+
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      return e.json(404, { success: false, error: 'raw_items não encontrado para esta NF-e.' })
+    }
+
+    if (isNaN(itemIndex) || itemIndex < 0 || itemIndex >= rawItems.length) {
+      return e.json(400, {
+        success: false,
+        error: 'item_index fora do intervalo válido de itens da NF-e.',
+      })
+    }
+
+    const targetItem = rawItems[itemIndex]
+    // Preservar cfop_origem (SPED)
+    const originCfop = targetItem.cfop_origem || targetItem.cfop || ''
+    if (!targetItem.cfop_origem) {
+      targetItem.cfop_origem = originCfop
+    }
+
+    const newCfopEntrada = computeEntryCfop(originCfop, newDestiny)
+    targetItem.destino_declarado = newDestiny
+    targetItem.cfop_entrada_sugerido = newCfopEntrada
+
+    // Salvar raw_items atualizado no nfe_processed
+    nfeRec.set('raw_items', JSON.stringify(rawItems))
+
+    // Se for o primeiro item ou se a nota possui CFOP predominante, atualizar também cfop_entrada_sugerido na nota
+    if (itemIndex === 0 || !nfeRec.getString('cfop_entrada_sugerido')) {
+      nfeRec.set('cfop_entrada_sugerido', newCfopEntrada)
+    }
+    $app.save(nfeRec)
+
+    // Atualizar contas a pagar vinculadas a esta NF-e
+    let payablesUpdated = 0
+    try {
+      const payables = $app.findRecordsByFilter(
+        'accounts_payable',
+        'nfe_record = {:id} || nfe_access_key = {:key}',
+        '-created',
+        50,
+        0,
+        { id: nfeId, key: nfeRec.getString('access_key') },
+      )
+
+      for (let p = 0; p < payables.length; p++) {
+        const ap = payables[p]
+        let currentNotes = ap.getString('notes') || ''
+        const cfopTag = ' | CFOP Entrada: ' + newCfopEntrada + ' (' + newDestiny + ')'
+
+        // Substituir ou anexar CFOP Entrada nas notas
+        if (currentNotes.indexOf(' | CFOP Entrada: ') !== -1) {
+          currentNotes = currentNotes.replace(/\s*\|\s*CFOP Entrada:[^|]+/g, cfopTag)
+        } else {
+          currentNotes += cfopTag
+        }
+        ap.set('notes', currentNotes)
+        $app.save(ap)
+        payablesUpdated++
+      }
+    } catch (apErr) {
+      console.log('[UPDATE-ITEM-DESTINY] Aviso ao sincronizar accounts_payable:', apErr)
+    }
+
+    console.log(
+      '[UPDATE-ITEM-DESTINY]',
+      'NF-e ' +
+        nfeRec.getString('nfe_number') +
+        ' item #' +
+        itemIndex +
+        ' destino: ' +
+        newDestiny +
+        ' -> CFOP: ' +
+        newCfopEntrada +
+        ' (' +
+        payablesUpdated +
+        ' contas a pagar sincronizadas)',
+    )
+
+    return e.json(200, {
+      success: true,
+      message: 'Destino do item atualizado com sucesso.',
+      cfop_entrada: newCfopEntrada,
+      destino_declarado: newDestiny,
+      payables_updated: payablesUpdated,
+      raw_items: rawItems,
+    })
+  } catch (err) {
+    return e.json(500, { success: false, error: err.message || String(err) })
+  }
+})
