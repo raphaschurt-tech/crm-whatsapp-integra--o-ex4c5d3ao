@@ -140,7 +140,7 @@ export async function getAccountsPayable(
   const records = await pb.collection('accounts_payable').getFullList<AccountsPayable>({
     filter: filterStr,
     sort: 'due_date,created',
-    expand: 'category,supplier,nfe_record,recurring_template',
+    expand: 'category,supplier,nfe_record,recurring_template,bank_account_id',
   })
 
   // Busca textual livre no front se informada
@@ -175,13 +175,18 @@ export async function markPayableAsPaid(
   id: string,
   paymentMethod: FinancialPaymentMethod,
   paidAtDate?: string,
+  bankAccountId?: string | null,
 ): Promise<AccountsPayable> {
   const paidAt = paidAtDate ? `${paidAtDate.slice(0, 10)} 12:00:00.000Z` : new Date().toISOString()
-  return pb.collection('accounts_payable').update<AccountsPayable>(id, {
+  const payload: Record<string, any> = {
     status: 'pago',
     payment_method: paymentMethod,
     paid_at: paidAt,
-  })
+  }
+  if (bankAccountId !== undefined) {
+    payload.bank_account_id = bankAccountId || null
+  }
+  return pb.collection('accounts_payable').update<AccountsPayable>(id, payload)
 }
 
 export async function reopenPayable(id: string): Promise<AccountsPayable> {
@@ -248,7 +253,7 @@ export async function getAccountsReceivable(
   const records = await pb.collection('accounts_receivable').getFullList<AccountsReceivable>({
     filter: filterStr,
     sort: 'due_date,created',
-    expand: 'category,customer,quote',
+    expand: 'category,customer,quote,bank_account_id',
   })
 
   if (filters?.search && filters.search.trim()) {
@@ -281,13 +286,18 @@ export async function markReceivableAsPaid(
   id: string,
   paymentMethod: FinancialPaymentMethod,
   paidAtDate?: string,
+  bankAccountId?: string | null,
 ): Promise<AccountsReceivable> {
   const paidAt = paidAtDate ? `${paidAtDate.slice(0, 10)} 12:00:00.000Z` : new Date().toISOString()
-  return pb.collection('accounts_receivable').update<AccountsReceivable>(id, {
+  const payload: Record<string, any> = {
     status: 'pago',
     payment_method: paymentMethod,
     paid_at: paidAt,
-  })
+  }
+  if (bankAccountId !== undefined) {
+    payload.bank_account_id = bankAccountId || null
+  }
+  return pb.collection('accounts_receivable').update<AccountsReceivable>(id, payload)
 }
 
 export async function reopenReceivable(id: string): Promise<AccountsReceivable> {

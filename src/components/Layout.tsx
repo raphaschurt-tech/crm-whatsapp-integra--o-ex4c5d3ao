@@ -24,6 +24,7 @@ import {
   ShieldAlert,
   ArrowDownCircle,
   ArrowUpCircle,
+  Landmark,
 } from 'lucide-react'
 import logoImg from '@/assets/logo-rpa-auto-parts-01-definitivo-correto-1d75c.png'
 import { useAuth } from '@/hooks/use-auth'
@@ -163,6 +164,12 @@ export default function Layout() {
                   path: '/financeiro/receber',
                   icon: ArrowUpCircle,
                 },
+                {
+                  id: 'financeiro-contas-bancarias',
+                  label: 'Contas Bancárias',
+                  path: '/financeiro/contas-bancarias',
+                  icon: Landmark,
+                },
               ],
             },
             {
@@ -236,6 +243,7 @@ export default function Layout() {
     if (path.startsWith('/ordens-producao')) return 'Ordens de Produção'
     if (path.startsWith('/financeiro/pagar')) return 'Contas a Pagar'
     if (path.startsWith('/financeiro/receber')) return 'Contas a Receber'
+    if (path.startsWith('/financeiro/contas-bancarias')) return 'Contas Bancárias'
     if (path.startsWith('/financeiro')) return 'Financeiro'
     if (path.startsWith('/nfe/fila-revisao')) return 'NF-e — Fila de Revisão'
     if (path.startsWith('/nfe/notas')) return 'NF-e — Notas Processadas'

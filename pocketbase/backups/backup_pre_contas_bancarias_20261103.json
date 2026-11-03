@@ -1,0 +1,120 @@
+{
+  "backup_id": "backup_pre_contas_bancarias_20261103",
+  "created_at_brasilia": "2026-11-03T20:25:00-03:00",
+  "protocol": "🟡 BACKUP PRIMEIRO — FINANCEIRO — CADASTRO DE CONTAS BANCÁRIAS MULTI-CONTA",
+  "scope": "Estado das coleções accounts_payable, accounts_receivable, customers (entidades/filiais/fornecedores) e customer_documents antes da migração 0120 (bank_accounts e foreign key bank_account_id).",
+  "pre_state": {
+    "accounts_payable_count": 12,
+    "accounts_receivable_count": 0,
+    "bank_accounts_count": 0,
+    "accounts_payable_records": [
+      {
+        "id": "gnq7r00j3ctm48q",
+        "description": "Renovação do Certificado A1 (Anual) - 2026-10 [A CONFERIR]",
+        "amount": 200,
+        "due_date": "2026-12-08 12:00:00.000Z",
+        "status": "pendente",
+        "origin": "recorrente"
+      },
+      {
+        "id": "lzeubfrd4lo4bzj",
+        "description": "NF-e #1195508 - JAHU BORRACHAS E AUTOPECAS LTDA (1/1)",
+        "amount": 158.86,
+        "due_date": "2026-10-26 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35261061136701000147550010011955081731581098"
+      },
+      {
+        "id": "na6y0g7i9uzby4l",
+        "description": "NF-e #1197024 - JAHU BORRACHAS E AUTOPECAS LTDA (1/1)",
+        "amount": 257.66,
+        "due_date": "2026-10-29 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35261061136701000147550010011970241843930987"
+      },
+      {
+        "id": "v727eiyva8hj62y",
+        "description": "NF-e #32943 - OXILAPA GASES EQUIPAMENTOS E SOLDAS LTDA (1/1)",
+        "amount": 200,
+        "due_date": "2026-10-19 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35261059417469000173550010000329431406428669"
+      },
+      {
+        "id": "pk3ddjex64t8ikf",
+        "description": "NF-e #500503 - JAHU BORRACHAS E AUTOPECAS LTDA (1/1)",
+        "amount": 82.48,
+        "due_date": "2026-09-11 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35260961136701000732550010005005031273283880"
+      },
+      {
+        "id": "2fu0pmg9xdb2yf0",
+        "description": "NF-e #501369 - JAHU BORRACHAS E AUTOPECAS LTDA (1/1)",
+        "amount": 83.2,
+        "due_date": "2026-09-15 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35260961136701000732550010005013691913994109"
+      },
+      {
+        "id": "bbip7c92uehpk1e",
+        "description": "NF-e #502498 - JAHU BORRACHAS E AUTOPECAS LTDA (1/1)",
+        "amount": 147.9,
+        "due_date": "2026-09-18 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35260961136701000732550010005024981994937196"
+      },
+      {
+        "id": "lycghr9vehfh109",
+        "description": "NF-e #503935 - JAHU BORRACHAS E AUTOPECAS LTDA (1/1)",
+        "amount": 100.98,
+        "due_date": "2026-09-23 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35260961136701000732550010005039351330899154"
+      },
+      {
+        "id": "galo8hpxwn1hkbr",
+        "description": "NF-e #504820 - JAHU BORRACHAS E AUTOPECAS LTDA (1/1)",
+        "amount": 157.88,
+        "due_date": "2026-09-25 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35260961136701000732550010005048201698057487"
+      },
+      {
+        "id": "90ld4q5d898gytv",
+        "description": "NF-e #506038 - JAHU BORRACHAS E AUTOPECAS LTDA (1/1)",
+        "amount": 114.62,
+        "due_date": "2026-09-30 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35260961136701000732550010005060381548219210"
+      },
+      {
+        "id": "bjwzvwbz7i9r6cx",
+        "description": "NF-e #506904 - JAHU BORRACHAS E AUTOPECAS LTDA (1/1)",
+        "amount": 163.12,
+        "due_date": "2026-10-05 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35261061136701000732550010005069041294114447"
+      },
+      {
+        "id": "sq5cp9e0puw06k1",
+        "description": "NF-e #56184 - MEC LAN INDUSTRIA E COMERCIO LTDA EPP (1/1)",
+        "amount": 1020,
+        "due_date": "2026-10-20 00:00:00.000Z",
+        "status": "pendente",
+        "origin": "nfe",
+        "nfe_access_key": "35261062538228000197550010000561841438996935"
+      }
+    ]
+  }
+}

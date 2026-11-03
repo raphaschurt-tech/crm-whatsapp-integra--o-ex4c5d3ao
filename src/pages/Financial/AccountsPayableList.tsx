@@ -44,7 +44,14 @@ import {
   getBrasiliaToday,
 } from '@/services/financial'
 import { getCustomers } from '@/services/customers'
-import { AccountsPayable, FinancialCategory, Customer, FinancialPaymentMethod } from '@/types/crm'
+import { getActiveBankAccounts } from '@/services/bankAccounts'
+import {
+  AccountsPayable,
+  FinancialCategory,
+  Customer,
+  FinancialPaymentMethod,
+  BankAccount,
+} from '@/types/crm'
 import { useToast } from '@/hooks/use-toast'
 
 export function AccountsPayableList() {
@@ -54,6 +61,7 @@ export function AccountsPayableList() {
   const [items, setItems] = useState<AccountsPayable[]>([])
   const [categories, setCategories] = useState<FinancialCategory[]>([])
   const [suppliers, setSuppliers] = useState<Customer[]>([])
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
   const [loading, setLoading] = useState(true)
 
   // Filtros
@@ -74,12 +82,14 @@ export function AccountsPayableList() {
   const [formAmount, setFormAmount] = useState('')
   const [formDueDate, setFormDueDate] = useState(() => getBrasiliaToday())
   const [formNotes, setFormNotes] = useState('')
+  const [formBankAccountId, setFormBankAccountId] = useState('')
   const [formFile, setFormFile] = useState<File | null>(null)
   const [formSubmitting, setFormSubmitting] = useState(false)
 
   // Modal de Baixa (Marcar como Pago)
   const [isPayModalOpen, setIsPayModalOpen] = useState(false)
   const [itemToPay, setItemToPay] = useState<AccountsPayable | null>(null)
+  const [payBankAccountId, setPayBankAccountId] = useState('')
   const [payMethod, setPayMethod] = useState<FinancialPaymentMethod>('PIX')
   const [payDate, setPayDate] = useState(() => getBrasiliaToday())
   const [paySubmitting, setPaySubmitting] = useState(false)
@@ -91,7 +101,7 @@ export function AccountsPayableList() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [payablesData, catsData, custsData] = await Promise.all([
+      const [payablesData, catsData, custsData, accountsData] = await Promise.all([
         getAccountsPayable({
           status: statusFilter,
           category: categoryFilter,
@@ -101,10 +111,12 @@ export function AccountsPayableList() {
         }),
         getFinancialCategories(),
         getCustomers(),
+        getActiveBankAccounts(),
       ])
 
       setItems(payablesData)
       setCategories(catsData.filter((c) => c.type === 'despesa'))
+      setBankAccounts(accountsData)
       // Fornecedores são clientes com cnpj ou marcados como PJ
       setSuppliers(custsData.filter((c) => !!c.cnpj || c.type === 'PJ'))
     } catch (err: any) {
@@ -133,6 +145,7 @@ export function AccountsPayableList() {
     setFormAmount('')
     setFormDueDate(getBrasiliaToday())
     setFormNotes('')
+    setFormBankAccountId('')
     setFormFile(null)
     setIsFormOpen(true)
   }
@@ -164,6 +177,7 @@ export function AccountsPayableList() {
     setFormAmount(String(item.amount || ''))
     setFormDueDate(item.due_date ? item.due_date.slice(0, 10) : getBrasiliaToday())
     setFormNotes(item.notes || '')
+    setFormBankAccountId(item.bank_account_id || '')
     setFormFile(null)
     setIsFormOpen(true)
   }
@@ -203,6 +217,11 @@ export function AccountsPayableList() {
       formData.append('amount', String(amountNum))
       formData.append('due_date', `${formDueDate} 12:00:00.000Z`)
       formData.append('notes', formNotes.trim())
+      if (formBankAccountId) {
+        formData.append('bank_account_id', formBankAccountId)
+      } else {
+        formData.append('bank_account_id', '')
+      }
       if (formFile) {
         formData.append('attachment', formFile)
       }
@@ -235,6 +254,7 @@ export function AccountsPayableList() {
   const handleOpenPayModal = (item: AccountsPayable) => {
     setItemToPay(item)
     setPayMethod(item.payment_method || 'PIX')
+    setPayBankAccountId(item.bank_account_id || '')
     setPayDate(getBrasiliaToday())
     setIsPayModalOpen(true)
   }
@@ -244,7 +264,12 @@ export function AccountsPayableList() {
     if (!itemToPay) return
     setPaySubmitting(true)
     try {
-      await markPayableAsPaid(itemToPay.id, payMethod, payDate)
+      await markPayableAsPaid(
+        itemToPay.id,
+        payMethod,
+        payDate,
+        payBankAccountId ? payBankAccountId : null,
+      )
       toast({
         title: 'Baixa realizada com sucesso!',
         description: `Lançamento baixado como PAGO via ${payMethod}.`,
@@ -746,6 +771,28 @@ export function AccountsPayableList() {
             </div>
 
             <div>
+              <label className="text-xs font-semibold text-slate-700">
+                Conta Bancária (Opcional)
+              </label>
+              <Select
+                value={formBankAccountId || 'none'}
+                onValueChange={(val) => setFormBankAccountId(val === 'none' ? '' : val)}
+              >
+                <SelectTrigger className="h-8 text-xs mt-1 bg-white">
+                  <SelectValue placeholder="Selecione a conta bancária para débito..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">-- Nenhuma conta vinculada --</SelectItem>
+                  {bankAccounts.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.nickname} ({b.bank_name})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
               <label className="text-xs font-semibold text-slate-700">Observações</label>
               <Input
                 value={formNotes}
@@ -832,6 +879,28 @@ export function AccountsPayableList() {
                   onChange={(e) => setPayDate(e.target.value)}
                   className="h-8 text-xs mt-1"
                 />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700">
+                  Conta Bancária de Saída (Opcional)
+                </label>
+                <Select
+                  value={payBankAccountId || 'none'}
+                  onValueChange={(val) => setPayBankAccountId(val === 'none' ? '' : val)}
+                >
+                  <SelectTrigger className="h-8 text-xs mt-1 bg-white">
+                    <SelectValue placeholder="Selecione a conta para débito..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">-- Nenhuma conta bancária --</SelectItem>
+                    {bankAccounts.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.nickname} ({b.bank_name})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>

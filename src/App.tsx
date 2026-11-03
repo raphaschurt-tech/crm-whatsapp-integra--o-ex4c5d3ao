@@ -26,6 +26,7 @@ import ProductionOrderList from './pages/Stock/ProductionOrderList'
 import FinancialPage from './pages/Financial/FinancialPage'
 import ContasPagarPage from './pages/Financial/ContasPagarPage'
 import ContasReceberPage from './pages/Financial/ContasReceberPage'
+import { BankAccountsPage } from './pages/Financial/BankAccountsPage'
 import NfeFilaRevisaoPage from './pages/Financial/NfeFilaRevisaoPage'
 import NfeNotasPage from './pages/Financial/NfeNotasPage'
 import NotFound from './pages/NotFound'
@@ -89,6 +90,14 @@ export function App() {
                   element={
                     <ProtectedRoute adminOnly>
                       <ContasReceberPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="financeiro/contas-bancarias"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <BankAccountsPage />
                     </ProtectedRoute>
                   }
                 />

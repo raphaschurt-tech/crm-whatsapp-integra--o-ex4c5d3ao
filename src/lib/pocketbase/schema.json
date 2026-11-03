@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03T20:05:51.672Z",
+  "generatedAt": "2026-11-03T20:43:53.871Z",
   "collections": [
     {
       "name": "users",
@@ -2437,6 +2437,13 @@
           "required": false,
           "system": false,
           "selectValues": ["manual", "nfe", "recorrente", "dfe", "email"]
+        },
+        {
+          "name": "bank_account_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "bank_accounts"
         }
       ],
       "indexes": [
@@ -2570,6 +2577,13 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "bank_account_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "bank_accounts"
         }
       ],
       "indexes": [
@@ -3237,6 +3251,108 @@
         "CREATE INDEX idx_cust_docs_number ON customer_documents (document_number)",
         "CREATE INDEX idx_cust_docs_root ON customer_documents (root_cnpj)"
       ]
+    },
+    {
+      "name": "bank_accounts",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "view": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "create": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "update": "@request.auth.id != '' && @request.auth.role = 'admin'",
+        "delete": "@request.auth.id != '' && @request.auth.role = 'admin'"
+      },
+      "fields": [
+        {
+          "name": "nickname",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "bank_code",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "bank_name",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "agency",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "account_number",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "account_type",
+          "type": "select",
+          "required": true,
+          "system": false,
+          "selectValues": ["corrente", "poupanca", "investimento", "caixa"]
+        },
+        {
+          "name": "entity_name",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "customer_entity",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "customers"
+        },
+        {
+          "name": "initial_balance",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "initial_balance_date",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_active",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "notes",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": []
     }
   ]
 }

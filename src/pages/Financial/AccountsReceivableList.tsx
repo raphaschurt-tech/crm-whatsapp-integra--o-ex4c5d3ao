@@ -32,12 +32,14 @@ import {
 } from '@/services/financial'
 import { getCustomers } from '@/services/customers'
 import { getQuotes } from '@/services/quotes'
+import { getActiveBankAccounts } from '@/services/bankAccounts'
 import {
   AccountsReceivable,
   FinancialCategory,
   Customer,
   Quote,
   FinancialPaymentMethod,
+  BankAccount,
 } from '@/types/crm'
 import { useToast } from '@/hooks/use-toast'
 
@@ -49,6 +51,7 @@ export function AccountsReceivableList() {
   const [categories, setCategories] = useState<FinancialCategory[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [quotes, setQuotes] = useState<Quote[]>([])
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
   const [loading, setLoading] = useState(true)
 
   // Filtros
@@ -69,12 +72,14 @@ export function AccountsReceivableList() {
   const [formAmount, setFormAmount] = useState('')
   const [formDueDate, setFormDueDate] = useState(() => getBrasiliaToday())
   const [formNotes, setFormNotes] = useState('')
+  const [formBankAccountId, setFormBankAccountId] = useState('')
   const [formFile, setFormFile] = useState<File | null>(null)
   const [formSubmitting, setFormSubmitting] = useState(false)
 
   // Modal de Baixa (Marcar como Recebido)
   const [isPayModalOpen, setIsPayModalOpen] = useState(false)
   const [itemToPay, setItemToPay] = useState<AccountsReceivable | null>(null)
+  const [payBankAccountId, setPayBankAccountId] = useState('')
   const [payMethod, setPayMethod] = useState<FinancialPaymentMethod>('PIX')
   const [payDate, setPayDate] = useState(() => getBrasiliaToday())
   const [paySubmitting, setPaySubmitting] = useState(false)
@@ -86,7 +91,7 @@ export function AccountsReceivableList() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [receivablesData, catsData, custsData, quotesData] = await Promise.all([
+      const [receivablesData, catsData, custsData, quotesData, accountsData] = await Promise.all([
         getAccountsReceivable({
           status: statusFilter,
           category: categoryFilter,
@@ -96,12 +101,14 @@ export function AccountsReceivableList() {
         getFinancialCategories(),
         getCustomers(),
         getQuotes(),
+        getActiveBankAccounts(),
       ])
 
       setItems(receivablesData)
       setCategories(catsData.filter((c) => c.type === 'receita'))
       setCustomers(custsData)
       setQuotes(quotesData)
+      setBankAccounts(accountsData)
     } catch (err: any) {
       console.error('Erro ao carregar contas a receber:', err)
       toast({
@@ -129,6 +136,7 @@ export function AccountsReceivableList() {
     setFormAmount('')
     setFormDueDate(getBrasiliaToday())
     setFormNotes('')
+    setFormBankAccountId('')
     setFormFile(null)
     setIsFormOpen(true)
   }
@@ -150,6 +158,7 @@ export function AccountsReceivableList() {
     setFormAmount(String(item.amount || ''))
     setFormDueDate(item.due_date ? item.due_date.slice(0, 10) : getBrasiliaToday())
     setFormNotes(item.notes || '')
+    setFormBankAccountId(item.bank_account_id || '')
     setFormFile(null)
     setIsFormOpen(true)
   }
@@ -192,6 +201,11 @@ export function AccountsReceivableList() {
       formData.append('amount', String(amountNum))
       formData.append('due_date', `${formDueDate} 12:00:00.000Z`)
       formData.append('notes', formNotes.trim())
+      if (formBankAccountId) {
+        formData.append('bank_account_id', formBankAccountId)
+      } else {
+        formData.append('bank_account_id', '')
+      }
       if (formFile) {
         formData.append('attachment', formFile)
       }
@@ -223,6 +237,7 @@ export function AccountsReceivableList() {
   const handleOpenPayModal = (item: AccountsReceivable) => {
     setItemToPay(item)
     setPayMethod(item.payment_method || 'PIX')
+    setPayBankAccountId(item.bank_account_id || '')
     setPayDate(getBrasiliaToday())
     setIsPayModalOpen(true)
   }
@@ -231,7 +246,12 @@ export function AccountsReceivableList() {
     if (!itemToPay) return
     setPaySubmitting(true)
     try {
-      await markReceivableAsPaid(itemToPay.id, payMethod, payDate)
+      await markReceivableAsPaid(
+        itemToPay.id,
+        payMethod,
+        payDate,
+        payBankAccountId ? payBankAccountId : null,
+      )
       toast({
         title: 'Recebimento confirmado!',
         description: `Lançamento baixado como RECEBIDO via ${payMethod}.`,
@@ -669,6 +689,28 @@ export function AccountsReceivableList() {
             </div>
 
             <div>
+              <label className="text-xs font-semibold text-slate-700">
+                Conta Bancária de Destino (Opcional)
+              </label>
+              <Select
+                value={formBankAccountId || 'none'}
+                onValueChange={(val) => setFormBankAccountId(val === 'none' ? '' : val)}
+              >
+                <SelectTrigger className="h-8 text-xs mt-1 bg-white">
+                  <SelectValue placeholder="Selecione a conta para crédito..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">-- Nenhuma conta vinculada --</SelectItem>
+                  {bankAccounts.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.nickname} ({b.bank_name})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
               <label className="text-xs font-semibold text-slate-700">Observações</label>
               <Input
                 value={formNotes}
@@ -743,7 +785,6 @@ export function AccountsReceivableList() {
                   </span>
                 </div>
               </div>
-
               <div>
                 <label className="font-semibold text-slate-700">Data do Recebimento *</label>
                 <Input
@@ -753,7 +794,27 @@ export function AccountsReceivableList() {
                   className="h-8 text-xs mt-1"
                 />
               </div>
-
+              <div>
+                <label className="font-semibold text-slate-700">
+                  Conta Bancária de Entrada (Opcional)
+                </label>
+                <Select
+                  value={payBankAccountId || 'none'}
+                  onValueChange={(val) => setPayBankAccountId(val === 'none' ? '' : val)}
+                >
+                  <SelectTrigger className="h-8 text-xs mt-1 bg-white">
+                    <SelectValue placeholder="Selecione a conta para crédito..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">-- Nenhuma conta bancária --</SelectItem>
+                    {bankAccounts.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.nickname} ({b.bank_name})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <label className="font-semibold text-slate-700">Forma de Recebimento *</label>
                 <Select
@@ -765,15 +826,15 @@ export function AccountsReceivableList() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="PIX">PIX</SelectItem>
-                    <SelectItem value="cartao">Cartão de Crédito / Débito</SelectItem>
-                    <SelectItem value="dinheiro">Dinheiro em Espécie</SelectItem>
                     <SelectItem value="boleto">Boleto</SelectItem>
+                    <SelectItem value="cartao">Cartão</SelectItem>
                     <SelectItem value="transferencia">Transferência Bancária</SelectItem>
+                    <SelectItem value="dinheiro">Dinheiro</SelectItem>
                     <SelectItem value="cheque">Cheque</SelectItem>
                     <SelectItem value="outros">Outros</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+              </div>{' '}
             </div>
           )}
 

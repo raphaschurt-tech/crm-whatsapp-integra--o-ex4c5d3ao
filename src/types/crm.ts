@@ -353,6 +353,34 @@ export interface FinancialRecurringTemplate extends RecordModel {
   }
 }
 
+export type BankAccountType = 'corrente' | 'poupanca' | 'investimento' | 'caixa'
+
+export interface BankAccount extends RecordModel {
+  nickname: string
+  bank_code: string
+  bank_name: string
+  agency: string
+  account_number: string
+  account_type: BankAccountType
+  entity_name?: string
+  customer_entity?: string
+  initial_balance?: number
+  initial_balance_date?: string
+  is_active: boolean
+  notes?: string
+  expand?: {
+    customer_entity?: Customer
+    [key: string]: any
+  }
+}
+
+export interface BankAccountWithBalance extends BankAccount {
+  current_balance: number
+  total_paid: number
+  total_received: number
+  settled_entries_count: number
+}
+
 export interface AccountsPayable extends RecordModel {
   description: string
   category?: string
@@ -373,12 +401,14 @@ export interface AccountsPayable extends RecordModel {
   notes?: string
   attachment?: string
   created_by?: string
+  bank_account_id?: string
   expand?: {
     category?: FinancialCategory
     supplier?: Customer
     nfe_record?: NfeProcessed
     recurring_template?: FinancialRecurringTemplate
     created_by?: User
+    bank_account_id?: BankAccount
     [key: string]: any
   }
 }
@@ -398,11 +428,13 @@ export interface AccountsReceivable extends RecordModel {
   notes?: string
   attachment?: string
   created_by?: string
+  bank_account_id?: string
   expand?: {
     category?: FinancialCategory
     customer?: Customer
     quote?: Quote
     created_by?: User
+    bank_account_id?: BankAccount
     [key: string]: any
   }
 }
