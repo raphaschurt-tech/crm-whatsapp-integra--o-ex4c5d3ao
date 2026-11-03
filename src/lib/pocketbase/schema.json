@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-03T18:02:47.822Z",
+  "generatedAt": "2026-11-03T19:49:06.619Z",
   "collections": [
     {
       "name": "users",
@@ -2120,6 +2120,12 @@
           "required": false,
           "system": false,
           "selectValues": ["manual_upload", "whatsapp", "dfe", "email"]
+        },
+        {
+          "name": "cfop_entrada_sugerido",
+          "type": "text",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
