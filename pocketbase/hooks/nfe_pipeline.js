@@ -360,16 +360,86 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
     }
   }
 
-  // Guard 2a — CFOP (só 1102 / 2102)
+  // Guard 2a — CFOP (Regra Contábil Validada)
+  // (1) Nota de fornecedor FABRICANTE com CFOP de venda de produção própria:
+  //     - 5102 (interna) ou 6102 (interestadual)
+  //     - Variantes com ST: 5405, 6403, 6405
+  //     - Aceita como compra direta (junto a 1102 e 2102 históricos).
+  //     O CFOP do emitente é informação de origem e NUNCA é copiado para o CFOP de entrada.
+  // (2) CFOP DE ENTRADA = destino declarado por item:
+  //     - Revenda: 1102 / 2102 (1403 / 2403 se com ST)
+  //     - Insumo de produção: 1101 / 2101
+  //     - Insumo de consumo: 1556 / 2556
+  // (3) DEFAULT TEMPORÁRIO hardcoded por fornecedor:
+  //     NOTA DE ARQUITETURA: F4 substituirá este default por atributo formal de natureza do fornecedor no cadastro.
+  //     - Jahu Borrachas e MEC LAN = revenda
+  //     - Oxilapa = insumo de produção
+  //     Fornecedores sem default ficam como 'classificacao_pendente' para classificação no lançamento.
+  // (4) Tratamento financeiro:
+  //     - Contas a pagar pelo VALOR TOTAL da nota (vNF).
+  //     - Mapeamento SKU fornecedor -> produto NÃO bloqueia o financeiro.
+  //     - Nota com ST -> alerta registrado nas notas da NF e nos lançamentos a pagar para conferir destaque do ICMS-ST.
+  const ACCEPTED_ORIGIN_CFOPS = ['5102', '6102', '5405', '6403', '6405', '1102', '2102']
+  const ST_CFOPS = ['5405', '6403', '6405']
+
+  function resolveSupplierNatureDefault(cnpjDigits, suppName) {
+    const cnpj = String(cnpjDigits || '').replace(/\D/g, '')
+    const name = String(suppName || '').toUpperCase()
+
+    // Jahu Borrachas: CNPJ raiz 61.136.701 (matriz 0001-47, filiais 0007-32 etc.)
+    if (cnpj.startsWith('61136701') || name.includes('JAHU')) {
+      return 'revenda'
+    }
+    // MEC LAN: CNPJ 62.538.228/0001-97
+    if (cnpj.startsWith('62538228') || name.includes('MEC LAN') || name.includes('MECLAN')) {
+      return 'revenda'
+    }
+    // Oxilapa: CNPJ 59.417.469/0001-73
+    if (cnpj.startsWith('59417469') || name.includes('OXILAPA')) {
+      return 'insumo_producao'
+    }
+    return ''
+  }
+
+  function computeSuggestedEntryCfop(originCfop, declaredDestiny) {
+    const oCfop = String(originCfop || '').trim()
+    const isInterstate = oCfop.startsWith('6') || oCfop.startsWith('2')
+    const hasSt = ST_CFOPS.includes(oCfop)
+
+    if (declaredDestiny === 'insumo_consumo') {
+      return isInterstate ? '2556' : '1556'
+    }
+    if (declaredDestiny === 'insumo_producao') {
+      return isInterstate ? '2101' : '1101'
+    }
+    if (declaredDestiny === 'revenda') {
+      if (hasSt) {
+        return isInterstate ? '2403' : '1403'
+      }
+      return isInterstate ? '2102' : '1102'
+    }
+    // Sem default declarado: sugestão preliminar neutra mantendo regra de ST
+    if (hasSt) {
+      return isInterstate ? '2403' : '1403'
+    }
+    return isInterstate ? '2102' : '1102'
+  }
+
+  let hasStAlert = false
+  const supplierNatureDefault = resolveSupplierNatureDefault(parsed.emitCnpj, parsed.emitName)
+
   if (!isException) {
     let hasNonPurchaseCfop = false
     let invalidCfop = ''
     for (let c = 0; c < parsed.items.length; c++) {
       const itCfop = String(parsed.items[c].cfop || '').trim()
-      if (itCfop !== '1102' && itCfop !== '2102') {
+      if (!ACCEPTED_ORIGIN_CFOPS.includes(itCfop)) {
         hasNonPurchaseCfop = true
         invalidCfop = itCfop
         break
+      }
+      if (ST_CFOPS.includes(itCfop)) {
+        hasStAlert = true
       }
     }
     if (hasNonPurchaseCfop) {
@@ -378,6 +448,20 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
         'CFOP não padrão para compra direta (' +
         invalidCfop +
         '). Devolução, ajuste ou transferência requer revisão manual.'
+    }
+  }
+
+  // Enriquecer itens com sugestão de CFOP de entrada e destino
+  if (!isException) {
+    for (let c = 0; c < parsed.items.length; c++) {
+      const it = parsed.items[c]
+      const originCfop = String(it.cfop || '').trim()
+      const itemDestiny = supplierNatureDefault || 'classificacao_pendente'
+      const suggestedEntryCfop = computeSuggestedEntryCfop(originCfop, itemDestiny)
+      it.cfop_origem = originCfop
+      it.cfop_entrada_sugerido = suggestedEntryCfop
+      it.destino_declarado = itemDestiny
+      it.has_st = ST_CFOPS.includes(originCfop)
     }
   }
 
@@ -602,18 +686,21 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
         apRec.set('installment_number', inst.installment_number)
         apRec.set('total_installments', inst.total_installments)
         apRec.set('payment_method', 'boleto')
-        apRec.set(
-          'notes',
+        let apNotes =
           'Gerado automaticamente via ' +
-            originLabel +
-            '. Chave: ' +
-            accessKey +
-            (nsuForAudit ? ' | NSU: ' + nsuForAudit : '') +
-            ' | Emissão: ' +
-            (parsed.dhEmi || 'N/A') +
-            ' | Registro: ' +
-            getBrasiliaIsoDate(),
-        )
+          originLabel +
+          '. Chave: ' +
+          accessKey +
+          (nsuForAudit ? ' | NSU: ' + nsuForAudit : '') +
+          ' | Emissão: ' +
+          (parsed.dhEmi || 'N/A') +
+          ' | Registro: ' +
+          getBrasiliaIsoDate()
+        if (hasStAlert) {
+          apNotes +=
+            ' | ALERTA ICMS-ST: Nota com itens em Substituição Tributária (ST). Conferir destaque do ICMS-ST.'
+        }
+        apRec.set('notes', apNotes)
         $app.save(apRec)
         payablesCreated++
 
@@ -811,6 +898,12 @@ routerAdd('POST', '/backend/v1/nfe/upload', (e) => {
   nfeRec.set('pending_items_count', pendingCount)
   nfeRec.set('status', pendingCount > 0 ? 'pendente_reconciliacao' : 'processada')
   nfeRec.set('souis_stock_status', 'pendente')
+  if (hasStAlert) {
+    const prevNotes = nfeRec.getString('notes') || ''
+    const stWarning =
+      '[ALERTA ICMS-ST] Nota possui itens com CFOP de Substituição Tributária (ST). Conferir destaque do ICMS-ST.'
+    nfeRec.set('notes', prevNotes ? prevNotes + ' | ' + stWarning : stWarning)
+  }
   $app.save(nfeRec)
 
   return e.json(200, {

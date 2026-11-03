@@ -1,0 +1,122 @@
+{
+  "timestamp": "2026-11-03T20:30:00-03:00",
+  "reason": "Âncora 🟡 BACKUP PRIMEIRO antes do ajuste cirúrgico do guard de CFOP no pipeline de NF-e",
+  "task": "Guard de CFOP no pipeline de NF-e (5102, 6102, 5405, 6403, 6405 aceitos; sugestão de entrada revenda/insumo; alerta ST)",
+  "backup_file": "pocketbase/backups/backup_pre_cfop_guard_20261103.json",
+  "settings_summary": {
+    "id": "ks86suaa4vn5xd4",
+    "company_cnpj": "00496593000129",
+    "dfe_enabled": true,
+    "dfe_auto_launch": true,
+    "nfe_email_auto_launch": true
+  },
+  "nfe_processed_error_sample_count": 11,
+  "nfe_processed_total_retidas_revisao_cfop": [
+    {
+      "id": "oe60tma8ci7w3x9",
+      "access_key": "35261061136701000147550010011970241843930987",
+      "nfe_number": "1197024",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "supplier_cnpj": "61136701000147",
+      "status": "erro",
+      "cfop_origin": "5102",
+      "exception_reason": "CFOP não padrão para compra direta (5102). Devolução, ajuste ou transferência requer revisão manual."
+    },
+    {
+      "id": "wd1094eexnm3485",
+      "access_key": "35261061136701000147550010011955081731581098",
+      "nfe_number": "1195508",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "supplier_cnpj": "61136701000147",
+      "status": "erro",
+      "cfop_origin": "5102"
+    },
+    {
+      "id": "rtapx3ebecxhy2q",
+      "access_key": "35260961136701000732550010005005031273283880",
+      "nfe_number": "500503",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "supplier_cnpj": "61136701000732",
+      "status": "erro",
+      "cfop_origin": "5102"
+    },
+    {
+      "id": "tlt49yectg75vz8",
+      "access_key": "35260961136701000732550010005013691913994109",
+      "nfe_number": "501369",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "supplier_cnpj": "61136701000732",
+      "status": "erro",
+      "cfop_origin": "5102"
+    },
+    {
+      "id": "ov287alofj9ur8w",
+      "access_key": "35260961136701000732550010005024981994937196",
+      "nfe_number": "502498",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "supplier_cnpj": "61136701000732",
+      "status": "erro",
+      "cfop_origin": "5102"
+    },
+    {
+      "id": "rz48lfeb8bxu6df",
+      "access_key": "35260961136701000732550010005039351330899154",
+      "nfe_number": "503935",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "supplier_cnpj": "61136701000732",
+      "status": "erro",
+      "cfop_origin": "5102"
+    },
+    {
+      "id": "ln006j8iz9ckfsi",
+      "access_key": "35260961136701000732550010005048201698057487",
+      "nfe_number": "504820",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "supplier_cnpj": "61136701000732",
+      "status": "erro",
+      "cfop_origin": "5102"
+    },
+    {
+      "id": "x0b7ra2qcjnvkao",
+      "access_key": "35260961136701000732550010005060381548219210",
+      "nfe_number": "506038",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "supplier_cnpj": "61136701000732",
+      "status": "erro",
+      "cfop_origin": "5102"
+    },
+    {
+      "id": "8msde32i4ikvc7s",
+      "access_key": "35261061136701000732550010005069041294114447",
+      "nfe_number": "506904",
+      "supplier_name": "JAHU BORRACHAS E AUTOPECAS LTDA",
+      "supplier_cnpj": "61136701000732",
+      "status": "erro",
+      "cfop_origin": "5102"
+    },
+    {
+      "id": "ew5zra4irx76j2s",
+      "access_key": "35261062538228000197550010000561841438996935",
+      "nfe_number": "56184",
+      "supplier_name": "MEC LAN INDUSTRIA E COMERCIO LTDA EPP",
+      "supplier_cnpj": "62538228000197",
+      "status": "erro",
+      "cfop_origin": "5102"
+    },
+    {
+      "id": "qadkg9bsflizk9t",
+      "access_key": "35261059417469000173550010000329431406428669",
+      "nfe_number": "32943",
+      "supplier_name": "OXILAPA GASES EQUIPAMENTOS E SOLDAS LTDA",
+      "supplier_cnpj": "59417469000173",
+      "status": "erro",
+      "cfop_origin": "5102"
+    }
+  ],
+  "dfe_pointer_state": {
+    "ult_nsu": "000000000000002",
+    "max_nsu": "000000000000002",
+    "cstat_last": "656",
+    "worker_status": "online"
+  }
+}

@@ -442,10 +442,58 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       )
     }
 
-    // 4. CFOP de compra direta (1102 ou 2102)
+    // 4. CFOP de compra direta (Regra Contábil Validada)
+    // 5102, 6102, 5405, 6403, 6405 aceitos junto a 1102/2102
+    const ACCEPTED_ORIGIN_CFOPS = ['5102', '6102', '5405', '6403', '6405', '1102', '2102']
+    const ST_CFOPS = ['5405', '6403', '6405']
+
+    function resolveSupplierNatureDefault(cnpjDigits, suppName) {
+      const cnpj = String(cnpjDigits || '').replace(/\D/g, '')
+      const name = String(suppName || '').toUpperCase()
+      // Jahu Borrachas: CNPJ raiz 61.136.701 (matriz 0001-47, filiais 0007-32 etc.)
+      if (cnpj.startsWith('61136701') || name.includes('JAHU')) {
+        return 'revenda'
+      }
+      // MEC LAN: CNPJ 62.538.228/0001-97
+      if (cnpj.startsWith('62538228') || name.includes('MEC LAN') || name.includes('MECLAN')) {
+        return 'revenda'
+      }
+      // Oxilapa: CNPJ 59.417.469/0001-73
+      if (cnpj.startsWith('59417469') || name.includes('OXILAPA')) {
+        return 'insumo_producao'
+      }
+      return ''
+    }
+
+    function computeSuggestedEntryCfop(originCfop, declaredDestiny) {
+      const oCfop = String(originCfop || '').trim()
+      const isInterstate = oCfop.startsWith('6') || oCfop.startsWith('2')
+      const hasSt = ST_CFOPS.includes(oCfop)
+
+      if (declaredDestiny === 'insumo_consumo') {
+        return isInterstate ? '2556' : '1556'
+      }
+      if (declaredDestiny === 'insumo_producao') {
+        return isInterstate ? '2101' : '1101'
+      }
+      if (declaredDestiny === 'revenda') {
+        if (hasSt) {
+          return isInterstate ? '2403' : '1403'
+        }
+        return isInterstate ? '2102' : '1102'
+      }
+      if (hasSt) {
+        return isInterstate ? '2403' : '1403'
+      }
+      return isInterstate ? '2102' : '1102'
+    }
+
+    let hasStAlert = false
+    const supplierNatureDefault = resolveSupplierNatureDefault(parsed.emitCnpj, parsed.emitName)
+
     for (let c = 0; c < parsed.items.length; c++) {
       const itCfop = String(parsed.items[c].cfop || '').trim()
-      if (itCfop !== '1102' && itCfop !== '2102') {
+      if (!ACCEPTED_ORIGIN_CFOPS.includes(itCfop)) {
         guardReasons.push(
           'CFOP não padrão para compra direta (' +
             itCfop +
@@ -453,6 +501,20 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         )
         break
       }
+      if (ST_CFOPS.includes(itCfop)) {
+        hasStAlert = true
+      }
+    }
+
+    for (let c = 0; c < parsed.items.length; c++) {
+      const it = parsed.items[c]
+      const originCfop = String(it.cfop || '').trim()
+      const itemDestiny = supplierNatureDefault || 'classificacao_pendente'
+      const suggestedEntryCfop = computeSuggestedEntryCfop(originCfop, itemDestiny)
+      it.cfop_origem = originCfop
+      it.cfop_entrada_sugerido = suggestedEntryCfop
+      it.destino_declarado = itemDestiny
+      it.has_st = ST_CFOPS.includes(originCfop)
     }
 
     // 5. Totais batendo
@@ -610,21 +672,24 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         apRec.set('installment_number', inst.installment_number)
         apRec.set('total_installments', inst.total_installments)
         apRec.set('payment_method', 'boleto')
-        apRec.set(
-          'notes',
+        let apEmailNotes =
           'Gerado automaticamente via NF-e recebida por email. Chave: ' +
-            accessKey +
-            ' | Remetente: ' +
-            (senderEmail || senderName || 'Desconhecido') +
-            ' | Assunto: ' +
-            (subject || 'Sem assunto') +
-            ' | Data do email: ' +
-            (emailDate || brasiliaNow) +
-            ' | Emissão NF: ' +
-            (parsed.dhEmi || 'N/A') +
-            ' | Registro: ' +
-            brasiliaNow,
-        )
+          accessKey +
+          ' | Remetente: ' +
+          (senderEmail || senderName || 'Desconhecido') +
+          ' | Assunto: ' +
+          (subject || 'Sem assunto') +
+          ' | Data do email: ' +
+          (emailDate || brasiliaNow) +
+          ' | Emissão NF: ' +
+          (parsed.dhEmi || 'N/A') +
+          ' | Registro: ' +
+          brasiliaNow
+        if (hasStAlert) {
+          apEmailNotes +=
+            ' | ALERTA ICMS-ST: Nota com itens em Substituição Tributária (ST). Conferir destaque do ICMS-ST.'
+        }
+        apRec.set('notes', apEmailNotes)
         $app.save(apRec)
         payablesCreated++
 
@@ -774,6 +839,12 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
     nfeRec.set('pending_items_count', pendingCount)
     nfeRec.set('status', pendingCount > 0 ? 'pendente_reconciliacao' : 'processada')
     nfeRec.set('souis_stock_status', 'pendente')
+    if (hasStAlert) {
+      const prevNotes = nfeRec.getString('notes') || ''
+      const stWarning =
+        '[ALERTA ICMS-ST] Nota possui itens com CFOP de Substituição Tributária (ST). Conferir destaque do ICMS-ST.'
+      nfeRec.set('notes', prevNotes ? prevNotes + ' | ' + stWarning : stWarning)
+    }
     $app.save(nfeRec)
 
     console.log(
@@ -2350,10 +2421,54 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       )
     }
 
-    // 4. CFOP compra direta
+    // 4. CFOP compra direta (Regra Contábil Validada)
+    const ACCEPTED_ORIGIN_CFOPS = ['5102', '6102', '5405', '6403', '6405', '1102', '2102']
+    const ST_CFOPS = ['5405', '6403', '6405']
+
+    function resolveSupplierNatureDefault(cnpjDigits, suppName) {
+      const cnpj = String(cnpjDigits || '').replace(/\D/g, '')
+      const name = String(suppName || '').toUpperCase()
+      if (cnpj.startsWith('61136701') || name.includes('JAHU')) {
+        return 'revenda'
+      }
+      if (cnpj.startsWith('62538228') || name.includes('MEC LAN') || name.includes('MECLAN')) {
+        return 'revenda'
+      }
+      if (cnpj.startsWith('59417469') || name.includes('OXILAPA')) {
+        return 'insumo_producao'
+      }
+      return ''
+    }
+
+    function computeSuggestedEntryCfop(originCfop, declaredDestiny) {
+      const oCfop = String(originCfop || '').trim()
+      const isInterstate = oCfop.startsWith('6') || oCfop.startsWith('2')
+      const hasSt = ST_CFOPS.includes(oCfop)
+
+      if (declaredDestiny === 'insumo_consumo') {
+        return isInterstate ? '2556' : '1556'
+      }
+      if (declaredDestiny === 'insumo_producao') {
+        return isInterstate ? '2101' : '1101'
+      }
+      if (declaredDestiny === 'revenda') {
+        if (hasSt) {
+          return isInterstate ? '2403' : '1403'
+        }
+        return isInterstate ? '2102' : '1102'
+      }
+      if (hasSt) {
+        return isInterstate ? '2403' : '1403'
+      }
+      return isInterstate ? '2102' : '1102'
+    }
+
+    let hasStAlert = false
+    const supplierNatureDefault = resolveSupplierNatureDefault(parsed.emitCnpj, parsed.emitName)
+
     for (let c = 0; c < parsed.items.length; c++) {
       const itCfop = String(parsed.items[c].cfop || '').trim()
-      if (itCfop !== '1102' && itCfop !== '2102') {
+      if (!ACCEPTED_ORIGIN_CFOPS.includes(itCfop)) {
         guardReasons.push(
           'CFOP não padrão para compra direta (' +
             itCfop +
@@ -2361,6 +2476,20 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
         )
         break
       }
+      if (ST_CFOPS.includes(itCfop)) {
+        hasStAlert = true
+      }
+    }
+
+    for (let c = 0; c < parsed.items.length; c++) {
+      const it = parsed.items[c]
+      const originCfop = String(it.cfop || '').trim()
+      const itemDestiny = supplierNatureDefault || 'classificacao_pendente'
+      const suggestedEntryCfop = computeSuggestedEntryCfop(originCfop, itemDestiny)
+      it.cfop_origem = originCfop
+      it.cfop_entrada_sugerido = suggestedEntryCfop
+      it.destino_declarado = itemDestiny
+      it.has_st = ST_CFOPS.includes(originCfop)
     }
 
     // 5. Totais batendo
@@ -2513,21 +2642,24 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
         apRec.set('installment_number', inst.installment_number)
         apRec.set('total_installments', inst.total_installments)
         apRec.set('payment_method', 'boleto')
-        apRec.set(
-          'notes',
+        let apEmailNotesSync =
           'Gerado automaticamente via NF-e recebida por email. Chave: ' +
-            accessKey +
-            ' | Remetente: ' +
-            (senderEmail || senderName || 'Desconhecido') +
-            ' | Assunto: ' +
-            (subject || 'Sem assunto') +
-            ' | Data do email: ' +
-            (emailDate || brasiliaNow) +
-            ' | Emissão NF: ' +
-            (parsed.dhEmi || 'N/A') +
-            ' | Registro: ' +
-            brasiliaNow,
-        )
+          accessKey +
+          ' | Remetente: ' +
+          (senderEmail || senderName || 'Desconhecido') +
+          ' | Assunto: ' +
+          (subject || 'Sem assunto') +
+          ' | Data do email: ' +
+          (emailDate || brasiliaNow) +
+          ' | Emissão NF: ' +
+          (parsed.dhEmi || 'N/A') +
+          ' | Registro: ' +
+          brasiliaNow
+        if (hasStAlert) {
+          apEmailNotesSync +=
+            ' | ALERTA ICMS-ST: Nota com itens em Substituição Tributária (ST). Conferir destaque do ICMS-ST.'
+        }
+        apRec.set('notes', apEmailNotesSync)
         $app.save(apRec)
         payablesCreated++
 
@@ -2674,6 +2806,12 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
     nfeRec.set('pending_items_count', pendingCount)
     nfeRec.set('status', pendingCount > 0 ? 'pendente_reconciliacao' : 'processada')
     nfeRec.set('souis_stock_status', 'pendente')
+    if (hasStAlert) {
+      const prevNotesSync = nfeRec.getString('notes') || ''
+      const stWarningSync =
+        '[ALERTA ICMS-ST] Nota possui itens com CFOP de Substituição Tributária (ST). Conferir destaque do ICMS-ST.'
+      nfeRec.set('notes', prevNotesSync ? prevNotesSync + ' | ' + stWarningSync : stWarningSync)
+    }
     $app.save(nfeRec)
 
     console.log(
