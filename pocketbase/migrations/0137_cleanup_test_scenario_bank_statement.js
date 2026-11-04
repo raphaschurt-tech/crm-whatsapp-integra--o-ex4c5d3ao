@@ -6,7 +6,7 @@ migrate((app) => {
     'bank_statement_lines',
     'notes ~ "[TESTE-RODADA-B]"',
     '-created',
-    100
+    100,
   )
 
   for (const line of lines) {

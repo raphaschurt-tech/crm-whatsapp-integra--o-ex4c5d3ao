@@ -686,3 +686,84 @@ export async function saveBankReconciliationClosing(data: {
     return await pb.collection('bank_reconciliations').create<BankReconciliation>(payload)
   }
 }
+
+export interface PluggyStatusResult {
+  success: boolean
+  has_credentials: boolean
+  can_sync_now: boolean
+  cooldown_remaining_seconds: number
+  last_sync_at: string | null
+  last_sync_status: string | null
+  last_sync_message: string | null
+  configured_account_id?: string | null
+  configured_item_id?: string | null
+  error?: string
+}
+
+export interface PluggySyncResult {
+  success: boolean
+  message: string
+  imported_count: number
+  duplicated_count: number
+  error_count: number
+  total_retrieved: number
+  bank_account_id: string
+  bank_account_name: string
+  sync_at: string
+  code?: string
+}
+
+/**
+ * Consulta o status da integração Pluggy (credenciais, última sync, cooldown)
+ */
+export async function getPluggyStatus(): Promise<PluggyStatusResult> {
+  try {
+    return await pb.send<PluggyStatusResult>('/backend/v1/financial/pluggy/status', {
+      method: 'GET',
+    })
+  } catch (err: any) {
+    const data = err?.data || err?.response?.data || {}
+    return {
+      success: false,
+      has_credentials: false,
+      can_sync_now: false,
+      cooldown_remaining_seconds: 0,
+      last_sync_at: null,
+      last_sync_status: 'error',
+      last_sync_message:
+        data?.message || data?.error || err.message || 'Falha ao consultar status da Pluggy',
+      error: data?.message || data?.error || err.message,
+    }
+  }
+}
+
+/**
+ * Dispara a sincronização do extrato via API Pluggy
+ */
+export async function syncPluggyStatement(params?: {
+  bankAccountId?: string
+  force?: boolean
+}): Promise<PluggySyncResult> {
+  try {
+    return await pb.send<PluggySyncResult>('/backend/v1/financial/pluggy/sync', {
+      method: 'POST',
+      body: {
+        bank_account_id: params?.bankAccountId,
+        force: params?.force,
+      },
+    })
+  } catch (err: any) {
+    const data = err?.data || err?.response?.data || {}
+    const msg =
+      data?.message ||
+      data?.error ||
+      err.message ||
+      'Erro desconhecido ao sincronizar com a Pluggy.'
+    const code = data?.code || (err.status === 400 ? 'BAD_REQUEST' : 'ERROR')
+
+    const errorObj = new Error(msg) as any
+    errorObj.code = code
+    errorObj.data = data
+    throw errorObj
+  }
+}

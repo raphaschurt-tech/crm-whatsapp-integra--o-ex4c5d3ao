@@ -70,6 +70,9 @@ import {
   undoReconciliation,
   calculateAccountCompetenceClosing,
   saveBankReconciliationClosing,
+  getPluggyStatus,
+  syncPluggyStatement,
+  PluggyStatusResult,
 } from '@/services/bankReconciliation'
 
 export function BankReconciliationView() {
@@ -98,6 +101,12 @@ export function BankReconciliationView() {
   )
   const [typeFilter, setTypeFilter] = useState<'todos' | 'debito' | 'credito'>('todos')
   const [searchTerm, setSearchTerm] = useState('')
+
+  // Estado e Controle Sincronização Pluggy (Open Finance)
+  const [pluggyStatus, setPluggyStatus] = useState<PluggyStatusResult | null>(null)
+  const [syncingPluggy, setSyncingPluggy] = useState(false)
+  const [pluggyModalOpen, setPluggyModalOpen] = useState(false)
+  const [pluggyErrorMessage, setPluggyErrorMessage] = useState<string | null>(null)
 
   // Modal de Importação de Arquivo
   const [importModalOpen, setImportModalOpen] = useState(false)
@@ -146,9 +155,14 @@ export function BankReconciliationView() {
   const loadInitialData = async () => {
     setLoading(true)
     try {
-      const [accs, cats] = await Promise.all([getActiveBankAccounts(), getFinancialCategories()])
+      const [accs, cats, pStatus] = await Promise.all([
+        getActiveBankAccounts(),
+        getFinancialCategories(),
+        getPluggyStatus(),
+      ])
       setBankAccounts(accs)
       setCategories(cats)
+      setPluggyStatus(pStatus)
 
       if (accs.length > 0) {
         // Pré-seleciona a conta Itaú se existir, ou a primeira ativa
@@ -265,6 +279,59 @@ export function BankReconciliationView() {
       })
     } finally {
       setFileParsing(false)
+    }
+  }
+
+  // Ação de Sincronização Pluggy (Extrato Automático)
+  const handleSyncPluggy = async (force: boolean = false) => {
+    if (!selectedAccountId) {
+      toast({
+        title: 'Selecione uma conta bancária',
+        description: 'É necessário selecionar uma conta bancária para sincronizar o extrato.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setSyncingPluggy(true)
+    setPluggyErrorMessage(null)
+
+    try {
+      const res = await syncPluggyStatement({
+        bankAccountId: selectedAccountId,
+        force,
+      })
+
+      toast({
+        title: 'Extrato sincronizado com sucesso!',
+        description: `${res.imported_count} novas transações importadas (${res.duplicated_count} já existentes ignoradas).`,
+      })
+
+      // Atualiza status e casamentos
+      const updatedStatus = await getPluggyStatus()
+      setPluggyStatus(updatedStatus)
+      await loadReconciliationData(selectedAccountId)
+    } catch (err: any) {
+      const msg = err.message || 'Erro ao sincronizar com a Pluggy.'
+      setPluggyErrorMessage(msg)
+
+      // Se for ausência de credenciais ou consentimento expirado, abre modal explicativo
+      if (
+        err.code === 'MISSING_CREDENTIALS' ||
+        err.code === 'USER_AUTHORIZATION_EXPIRED' ||
+        msg.toLowerCase().includes('credenciais pluggy') ||
+        msg.toLowerCase().includes('meu.pluggy.ai')
+      ) {
+        setPluggyModalOpen(true)
+      } else {
+        toast({
+          title: 'Aviso na sincronização',
+          description: msg,
+          variant: err.code === 'RATE_LIMIT_COOLDOWN' ? 'default' : 'destructive',
+        })
+      }
+    } finally {
+      setSyncingPluggy(false)
     }
   }
 
@@ -511,7 +578,24 @@ export function BankReconciliationView() {
 
           <Button
             size="sm"
-            className="bg-primary text-white"
+            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            onClick={() => handleSyncPluggy(false)}
+            disabled={syncingPluggy || !selectedAccountId}
+            title={
+              pluggyStatus && !pluggyStatus.has_credentials
+                ? 'Credenciais Pluggy não configuradas'
+                : pluggyStatus && !pluggyStatus.can_sync_now
+                  ? 'Aguarde o intervalo Open Finance'
+                  : 'Sincronizar extrato bancário automaticamente via Meu Pluggy'
+            }
+          >
+            <RefreshCw className={`h-4 w-4 mr-1.5 ${syncingPluggy ? 'animate-spin' : ''}`} />
+            Sincronizar extrato
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => setImportModalOpen(true)}
             disabled={!selectedAccountId}
           >
@@ -1348,6 +1432,116 @@ export function BankReconciliationView() {
               className={closingData?.isReconciled ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
             >
               {savingClosing ? 'Salvando...' : 'Salvar Fechamento'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Informativo: Conexão Meu Pluggy / Credenciais */}
+      <Dialog open={pluggyModalOpen} onOpenChange={setPluggyModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <RefreshCw className="h-5 w-5 text-emerald-600" />
+              Sincronização Meu Pluggy
+            </DialogTitle>
+            <DialogDescription>
+              Integração de extrato bancário automático via Open Finance.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-sm text-slate-700">
+            {pluggyErrorMessage?.toLowerCase().includes('credenciais pluggy') ||
+            (pluggyStatus && !pluggyStatus.has_credentials) ? (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                <div className="flex items-center gap-2 font-semibold text-amber-900">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                  Credenciais Pluggy não configuradas
+                </div>
+                <p className="text-xs text-amber-800">
+                  Para utilizar a sincronização automática, configure as seguintes variáveis de
+                  ambiente no backend do CRM:
+                </p>
+                <div className="bg-amber-100/60 p-2 rounded text-xs font-mono text-amber-950 space-y-1">
+                  <div>PLUGGY_CLIENT_ID</div>
+                  <div>PLUGGY_CLIENT_SECRET</div>
+                </div>
+                <p className="text-[11px] text-amber-700">
+                  Obtenha suas credenciais gratuitamente em{' '}
+                  <a
+                    href="https://meu.pluggy.ai/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline font-semibold"
+                  >
+                    meu.pluggy.ai
+                  </a>
+                  . Enquanto isso, você pode continuar importando extratos normalmente pelo botão{' '}
+                  <strong>Importar Extrato (OFX/CSV)</strong>.
+                </p>
+              </div>
+            ) : pluggyErrorMessage?.toLowerCase().includes('meu.pluggy.ai') ||
+              pluggyErrorMessage?.toLowerCase().includes('consentimento') ? (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg space-y-2">
+                <div className="flex items-center gap-2 font-semibold text-rose-900">
+                  <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                  Conexão bancária expirada ou pendente
+                </div>
+                <p className="text-xs text-rose-800">
+                  O consentimento de acesso à sua conta Itaú expirou ou requer nova autorização no
+                  Open Finance.
+                </p>
+                <p className="text-xs text-rose-800 font-medium">
+                  Acesse o painel do{' '}
+                  <a
+                    href="https://meu.pluggy.ai/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline text-rose-900 font-bold"
+                  >
+                    meu.pluggy.ai
+                  </a>{' '}
+                  para reconectar/renovar o consentimento da sua conta e depois clique em
+                  Sincronizar novamente.
+                </p>
+              </div>
+            ) : (
+              <div className="p-3 bg-slate-50 border rounded-lg space-y-2">
+                <div className="font-semibold text-slate-800">Detalhes da sincronização:</div>
+                <p className="text-xs text-slate-600">{pluggyErrorMessage}</p>
+              </div>
+            )}
+
+            {pluggyStatus?.last_sync_at && (
+              <div className="text-xs text-slate-500 border-t pt-2 space-y-1">
+                <div>
+                  <strong>Última sincronização:</strong>{' '}
+                  {new Date(pluggyStatus.last_sync_at).toLocaleString('pt-BR')}
+                </div>
+                {pluggyStatus.last_sync_message && (
+                  <div className="text-[11px] text-slate-400">{pluggyStatus.last_sync_message}</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="flex justify-between items-center sm:justify-between">
+            {pluggyStatus?.has_credentials && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setPluggyModalOpen(false)
+                  handleSyncPluggy(true)
+                }}
+                disabled={syncingPluggy}
+                className="text-xs"
+              >
+                Forçar Sincronização
+              </Button>
+            )}
+            <Button size="sm" onClick={() => setPluggyModalOpen(false)} className="ml-auto">
+              Entendido
             </Button>
           </DialogFooter>
         </DialogContent>
