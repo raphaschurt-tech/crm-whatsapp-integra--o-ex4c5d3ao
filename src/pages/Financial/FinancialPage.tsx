@@ -9,12 +9,14 @@ import {
   Tags,
   ShieldCheck,
   Landmark,
+  Scale,
 } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { FinancialDashboard } from './FinancialDashboard'
 import { AccountsPayableList } from './AccountsPayableList'
 import { AccountsReceivableList } from './AccountsReceivableList'
 import { BankAccountsView } from './BankAccountsView'
+import { BankReconciliationView } from './BankReconciliationView'
 import { RecurringTemplatesList } from './RecurringTemplatesList'
 import { NfeProcessedView } from './NfeProcessedView'
 import { FinancialCategoriesView } from './FinancialCategoriesView'
@@ -71,7 +73,7 @@ export function FinancialPage() {
 
       {/* Navegação por Sub-módulos */}
       <Tabs value={currentTab} onValueChange={handleTabChange} className="space-y-6">
-        <TabsList className="bg-slate-100/90 p-1 border border-slate-200 rounded-xl grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 h-auto gap-1">
+        <TabsList className="bg-slate-100/90 p-1 border border-slate-200 rounded-xl grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 h-auto gap-1">
           <TabsTrigger
             value="resumo"
             className="flex items-center gap-2 py-2 text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-xs"
@@ -102,6 +104,14 @@ export function FinancialPage() {
           >
             <Landmark className="h-4 w-4 text-blue-600" />
             <span>Contas Bancárias</span>
+          </TabsTrigger>
+
+          <TabsTrigger
+            value="conciliacao"
+            className="flex items-center gap-2 py-2 text-xs font-semibold data-[state=active]:bg-white data-[state=active]:text-primary data-[state=active]:shadow-xs"
+          >
+            <Scale className="h-4 w-4 text-primary" />
+            <span>Conciliação</span>
           </TabsTrigger>
 
           <TabsTrigger
@@ -143,6 +153,10 @@ export function FinancialPage() {
 
         <TabsContent value="contas_bancarias" className="outline-hidden m-0">
           <BankAccountsView />
+        </TabsContent>
+
+        <TabsContent value="conciliacao" className="outline-hidden m-0">
+          <BankReconciliationView />
         </TabsContent>
 
         <TabsContent value="recorrentes" className="outline-hidden m-0">

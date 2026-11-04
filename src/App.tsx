@@ -27,6 +27,7 @@ import FinancialPage from './pages/Financial/FinancialPage'
 import ContasPagarPage from './pages/Financial/ContasPagarPage'
 import ContasReceberPage from './pages/Financial/ContasReceberPage'
 import { BankAccountsPage } from './pages/Financial/BankAccountsPage'
+import { BankReconciliationPage } from './pages/Financial/BankReconciliationPage'
 import NfeFilaRevisaoPage from './pages/Financial/NfeFilaRevisaoPage'
 import NfeNotasPage from './pages/Financial/NfeNotasPage'
 import NotFound from './pages/NotFound'
@@ -98,6 +99,14 @@ export function App() {
                   element={
                     <ProtectedRoute adminOnly>
                       <BankAccountsPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="financeiro/conciliacao"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <BankReconciliationPage />
                     </ProtectedRoute>
                   }
                 />

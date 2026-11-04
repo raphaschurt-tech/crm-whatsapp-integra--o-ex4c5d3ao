@@ -170,6 +170,12 @@ export default function Layout() {
                   path: '/financeiro/contas-bancarias',
                   icon: Landmark,
                 },
+                {
+                  id: 'financeiro-conciliacao',
+                  label: 'Conciliação Bancária',
+                  path: '/financeiro/conciliacao',
+                  icon: Landmark,
+                },
               ],
             },
             {

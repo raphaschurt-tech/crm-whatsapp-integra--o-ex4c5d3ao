@@ -381,6 +381,87 @@ export interface BankAccountWithBalance extends BankAccount {
   settled_entries_count: number
 }
 
+export type BankStatementLineStatus = 'pendente' | 'conciliado' | 'ignorado'
+export type BankStatementLineType = 'credito' | 'debito'
+export type BankStatementMatchedType =
+  | 'payable'
+  | 'receivable'
+  | 'avulso_despesa'
+  | 'avulso_receita'
+  | 'ignorado'
+
+export interface BankStatementLine extends RecordModel {
+  bank_account: string
+  date: string
+  amount: number
+  type: BankStatementLineType
+  description: string
+  fitid?: string
+  check_number?: string
+  memo?: string
+  dedupe_hash: string
+  status: BankStatementLineStatus
+  matched_type?: BankStatementMatchedType
+  matched_payable?: string
+  matched_receivable?: string
+  reconciled_at?: string
+  reconciled_by?: string
+  notes?: string
+  import_batch_id?: string
+  source_file_name?: string
+  expand?: {
+    bank_account?: BankAccount
+    matched_payable?: AccountsPayable
+    matched_receivable?: AccountsReceivable
+    reconciled_by?: User
+    [key: string]: any
+  }
+}
+
+export type BankReconciliationStatus = 'conciliado' | 'divergente' | 'em_aberto'
+
+export interface BankReconciliation extends RecordModel {
+  bank_account: string
+  competence: string // YYYY-MM
+  statement_closing_balance: number
+  statement_closing_date?: string
+  crm_calculated_balance: number
+  difference_amount: number
+  status: BankReconciliationStatus
+  pending_lines_count: number
+  closed_at?: string
+  closed_by?: string
+  notes?: string
+  expand?: {
+    bank_account?: BankAccount
+    closed_by?: User
+    [key: string]: any
+  }
+}
+
+export type MatchSuggestionConfidence = 'provavel' | 'dubia' | 'sem_correspondencia'
+
+export interface MatchCandidate {
+  id: string
+  kind: 'payable' | 'receivable'
+  description: string
+  amount: number
+  due_date: string
+  status: string
+  origin?: string
+  entity_name?: string
+  nfe_number?: string
+  score: number
+  reasons: string[]
+}
+
+export interface StatementLineWithMatch {
+  line: BankStatementLine
+  confidence: MatchSuggestionConfidence
+  bestMatch?: MatchCandidate
+  candidates: MatchCandidate[]
+}
+
 export interface AccountsPayable extends RecordModel {
   description: string
   category?: string
