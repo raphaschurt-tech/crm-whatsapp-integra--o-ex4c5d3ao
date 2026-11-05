@@ -2,9 +2,46 @@
  * worker-dfe/crmClient.js
  * Cliente HTTP para comunicação com as rotas customizadas do CRM (CF-1b, CF-1c, CF-2d)
  * O worker SÓ faz chamadas de saída ao CRM através destas rotas autenticadas por Token DFe dedicado.
+ *
+ * FIX HEAP-OOM (ingest com retry):
+ * O timeout do ingest sobe para 90s (timeout de processamento do CRM). Em [CRM-INGEST-ERR]
+ * de TIMEOUT (ECONNABORTED / ECONNRESET) o erro é RETRYABLE: até 2 novas tentativas com
+ * espera de 30s entre elas. O documento NUNCA é descartado por timeout — se todas as
+ * tentativas falharem, o erro é relançado e o ciclo encerra; o ponteiro não avança e o
+ * documento é reprocessado no PRÓXIMO ciclo (dedupe por chave de acesso no CRM evita
+ * duplicação).
  */
 
-const axios = require('axios')
+const RETRYABLE_AXIOS_ERROR_CODES = new Set(['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT'])
+
+function isRetryableError(err) {
+  if (!err) return false
+  if (RETRYABLE_AXIOS_ERROR_CODES.has(err.code)) return true
+  // Erros reempacotados como [CRM-XXX-ERR undefined] preservam o código original
+  // no JSON embutido na mensagem — detectar timeout de request
+  const msg = String(err.message || '')
+  return /ECONNABORTED|ECONNRESET|ETIMEDOUT|timeout/i.test(msg) && /CRM-.*-ERR/i.test(msg)
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// FIX HEAP-OOM (item 4): ingest com timeout de 90s (era 30s) + 2 tentativas
+// adicionais com espera de 30s entre elas em caso de TIMEOUT do CRM.
+const INGEST_TIMEOUT_MS = 90000
+const INGEST_MAX_RETRIES = 2
+const INGEST_RETRY_WAIT_MS = 30000
+
+// Ganchos de teste: permitem acelerar a espera entre tentativas e interceptar o
+// axios nos testes sem tocar nos tempos reais de produção (padrão = sem efeito).
+CrmClient.INGEST_TIMEOUT_MS = INGEST_TIMEOUT_MS
+CrmClient.INGEST_MAX_RETRIES = INGEST_MAX_RETRIES
+CrmClient.INGEST_RETRY_WAIT_MS = INGEST_RETRY_WAIT_MS
+CrmClient.__sleep = sleep
+CrmClient.__setSleepImpl = function (fn) {
+  CrmClient.__sleep = fn || sleep
+}
 
 class CrmClient {
   constructor(baseUrl, token) {
@@ -130,19 +167,67 @@ class CrmClient {
   }
 
   async ingestXml(xmlString, nsu = '') {
-    try {
-      const res = await axios.post(
-        this.buildUrl('/backend/v1/dfe/ingest'),
-        { xml: xmlString, nsu: nsu },
-        { headers: this.getHeaders(), timeout: 30000 },
-      )
-      return res.data
-    } catch (err) {
-      const status = err.response ? err.response.status : null
-      const resData = err.response ? err.response.data : null
-      throw new Error(`[CRM-INGEST-ERR ${status}] ${JSON.stringify(resData || err.message)}`)
+    const attemptOnce = async (attemptNo) => {
+      try {
+        const res = await axios.post(
+          this.buildUrl('/backend/v1/dfe/ingest'),
+          { xml: xmlString, nsu: nsu },
+          { headers: this.getHeaders(), timeout: INGEST_TIMEOUT_MS },
+        )
+        return res.data
+      } catch (err) {
+        const status = err.response ? err.response.status : null
+        const resData = err.response ? err.response.data : null
+        const wrapped = new Error(
+          `[CRM-INGEST-ERR ${status}]${attemptNo > 1 ? ` (tentativa ${attemptNo}/${INGEST_MAX_RETRIES + 1})` : ''} ${JSON.stringify(resData || err.message)}`,
+        )
+        // Preservar o código original do erro (ex.: ECONNABORTED) para classificação de retry
+        if (err.code && !wrapped.code) wrapped.code = err.code
+        throw wrapped
+      }
     }
+
+    try {
+      return await attemptOnce(1)
+    } catch (firstErr) {
+      // Erro não-retryable (resposta HTTP do CRM, ex.: 4xx/5xx sem timeout): relança direto
+      if (!isRetryableError(firstErr)) throw firstErr
+      console.warn(
+        `[CRM-INGEST-RETRY] TIMEOUT no ingest do CRM (CRM-INGEST-ERR) — documento NÃO é descartado. Serão feitas até ${INGEST_MAX_RETRIES} novas tentativas com ${INGEST_RETRY_WAIT_MS / 1000}s de espera.`,
+      )
+    }
+
+    let lastErr = null
+    for (let attempt = 2; attempt <= INGEST_MAX_RETRIES + 1; attempt++) {
+      // __sleep é o gancho de teste (test-oom-restart acelera a espera de 30s);
+      // em produção é sempre o sleep padrão de 30s.
+      await (CrmClient.__sleep || sleep)(INGEST_RETRY_WAIT_MS)
+      try {
+        return await attemptOnce(attempt)
+      } catch (retryErr) {
+        lastErr = retryErr
+        if (!isRetryableError(retryErr)) throw retryErr
+      }
+    }
+
+    // Esgotadas as tentativas: o documento NÃO é descartado — o erro é relançado,
+    // o ponteiro não avança e o documento é reprocessado no PRÓXIMO ciclo
+    // (dedupe por chave de acesso no CRM evita duplicação).
+    console.error(
+      `[CRM-INGEST-ERR-TIMEOUT] Ingest falhou por timeout após ${INGEST_MAX_RETRIES + 1} tentativa(s). Documento NÃO descartado: será reprocessado no próximo ciclo.`,
+    )
+    throw lastErr
   }
 }
 
 module.exports = CrmClient
+module.exports.__setSleepImpl = function (fn) {
+  CrmClient.__sleep = fn || sleep
+}
+module.exports.__getAxios = function () {
+  return axios
+}
+module.exports.__setAxios = function (ax) {
+  axios = ax
+}
+module.exports.__isRetryableError = isRetryableError

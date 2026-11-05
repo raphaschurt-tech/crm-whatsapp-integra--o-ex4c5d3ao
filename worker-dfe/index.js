@@ -15,6 +15,19 @@
  * CF-1b — O WORKER É O CHAMADOR: Poll na fila de comandos para "consultar agora".
  * CF-1c — TOKEN DEDICADO DFe: Autenticação via header X-DFe-Token.
  * CF-1d — OBSERVABILIDADE: Relatório de status e última consulta com sucesso para evitar silenciamento.
+ *
+ * FIX HEAP-OOM + NSU PERSISTENTE (base 0.0.272, guards D1–D10/CF-1b–1d intocadas):
+ * 1 — DOCUMENTOS UM POR VEZ: processamento SEQUENCIAL doc a doc; cada referência é
+ *     descartada após o ingest no CRM (sem acumular array de docs processados em memória).
+ * 2 — LOTE LIMITADO: no máximo MAX_DOCS_PER_CYCLE (= 10) documentos por ciclo; o resto
+ *     do backlog é retomado no ciclo seguinte (SEFAZ permite retomada pelo NSU incremental).
+ * 3 — PONTEIRO PERSISTENTE LOCAL: state.json (ao lado do config.json) gravado após cada
+ *     ciclo bem-sucedido e lido no boot; nunca volta ao NSU-START após restart/crash.
+ *     Sem arquivo de estado, usa o valor do config como fallback e LOGA isso.
+ * 4 — RETRY NO INGEST: timeout 30s → 90s + 2 tentativas com espera de 30s (crmClient).
+ *     CRM-INGEST-ERR timeout NÃO descarta documento: ciclo encerra, ponteiro não avança,
+ *     documento reprocessado no próximo ciclo (dedupe por chave de acesso no CRM).
+ * 5 — OBSERVABILIDADE DE MEMÓRIA: process.memoryUsage().heapUsed logado a cada ciclo.
  */
 
 const fs = require('fs')
@@ -29,7 +42,34 @@ try {
 const CrmClient = require('./crmClient')
 const DfeAdapter = require('./dfeAdapter')
 const { readCertInfo } = require('./certUtils')
-const { applyIcpBrasilTlsTrust, appendPemToBundle } = require('./dfeAdapter')
+const {
+  applyIcpBrasilTlsTrust,
+  appendPemToBundle,
+  loadPersistedPointer,
+  persistPointer,
+  describeStateHistory,
+} = (() => {
+  // stateStore carregado com tolerância: ausência dele não derruba o worker
+  try {
+    return {
+      applyIcpBrasilTlsTrust: require('./dfeAdapter').applyIcpBrasilTlsTrust,
+      appendPemToBundle: require('./dfeAdapter').appendPemToBundle,
+      ...require('./stateStore'),
+    }
+  } catch (e) {
+    console.warn(`[STATE-STORE-WARN] stateStore indisponível: ${e.message}`)
+    return {
+      applyIcpBrasilTlsTrust: require('./dfeAdapter').applyIcpBrasilTlsTrust,
+      appendPemToBundle: require('./dfeAdapter').appendPemToBundle,
+    }
+  }
+})()
+
+// FIX HEAP-OOM (item 2): lote máximo de documentos processados por ciclo.
+const MAX_DOCS_PER_CYCLE = 10
+// FIX HEAP-OOM (item 4): limite de tempo de processamento de UM documento no ingest.
+const SINGLE_DOC_TIMEOUT_MS = 90000
+const MAX_BACKLOG_PAGES_PER_CYCLE = 25 // Guard de segurança anti-loop infinito de paginação
 
 /**
  * Requisito 3: Mascarar senhaCertificado em QUALQUER saída de log do worker.
@@ -170,6 +210,35 @@ function getBrasiliaTimestamp() {
   return d.toISOString().replace('Z', '-03:00')
 }
 
+// FIX HEAP-OOM (item 5): log de memória do processo a cada ciclo
+function logMemoryUsage(stage) {
+  try {
+    const mem = process.memoryUsage()
+    const toMb = (bytes) => (bytes / 1024 / 1024).toFixed(1)
+    console.log(
+      `[DFE-MEM] ${stage} | heapUsed: ${toMb(mem.heapUsed)} MB | heapTotal: ${toMb(mem.heapTotal)} MB | rss: ${toMb(mem.rss)} MB | external: ${toMb(mem.external)} MB`,
+    )
+  } catch (_) {}
+}
+
+// FIX HEAP-OOM (item 1): liberação de referências para o GC, doc processado e descartado
+function releaseDocReferences(obj) {
+  try {
+    if (obj && typeof obj === 'object') {
+      for (const key of Object.keys(obj)) {
+        try {
+          obj[key] = null
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+  try {
+    if (global.gc && typeof global.gc === 'function') {
+      global.gc()
+    }
+  } catch (_) {}
+}
+
 // Carregar configurações
 let config = {}
 const configPath = path.resolve(__dirname, 'config.json')
@@ -218,6 +287,37 @@ let backoffUntil = 0 // Timestamp ms em que o backoff expira
 const BACKOFF_DURATION_MS = 60 * 60 * 1000 // 60 minutos regulamentares da SEFAZ NT 2014.002
 let activePollIntervalHours = 1 // Último intervalo válido conhecido (mínimo 1h, D10)
 let scheduledCronJob = null // Referência ao job cron ativo para reagendamento dinâmico
+
+// FIX HEAP-OOM (item 3): ponteiro NSU persistido localmente (state.json)
+// Fix HEAP-OOM 05/11: em falha de leitura do status no boot ou no ciclo, o último
+// ponteiro válido conhecido (local) é preservado — nunca voltar ao NSU-START.
+let currentPersistedUltNsu = null // Último NSU conhecido localmente (state.json ou config)
+let currentPersistedInitialized = null // is_initialized local (null = desconhecido)
+
+function loadPersistedPointerAtBoot() {
+  try {
+    const persisted = loadPersistedPointer(__dirname, config.ULT_NSU || '')
+    currentPersistedUltNsu = persisted.ultNsu
+    currentPersistedInitialized = persisted.isInitialized
+    const historyPreview = describeStateHistory(__dirname, 3)
+    console.log(
+      `[DFE-STATE-BOOT] Ponteiro local carregado | origem: ${persisted.source} | ultNSU: ${persisted.ultNsu}` +
+        `${persisted.savedAt ? ` | gravado em: ${persisted.savedAt}` : ''}` +
+        `${historyPreview.length ? ` | histórico recente: ${historyPreview.map((h) => h.ult_nsu).join(' -> ')}` : ''}`,
+    )
+    if (persisted.source === 'state_file') {
+      console.log(
+        `[DFE-STATE-BOOT] Retomada garantida do ultNSU PERSISTIDO (${persisted.ultNsu}) — NÃO retorna ao NSU-START após restart/crash.`,
+      )
+    }
+    return persisted
+  } catch (err) {
+    console.warn(
+      `[DFE-STATE-BOOT-WARN] Falha ao ler ponteiro persistido: ${err.message}. Usando ponteiro do CRM no ciclo.`,
+    )
+    return null
+  }
+}
 
 /**
  * PROBE TLS DE BOOT (Item 3 do FIX):
@@ -442,7 +542,135 @@ function validateCert(companyCnpjFromCrm) {
 }
 
 /**
+ * FIX HEAP-OOM (item 3): persiste o ponteiro localmente (state.json) após ciclo bem-sucedido.
+ * Falha de persistência NUNCA derruba o ciclo — o ponteiro local continua em memória.
+ */
+function persistLocalPointer(pointerData) {
+  try {
+    const ok = persistPointer(__dirname, pointerData)
+    if (ok) {
+      currentPersistedUltNsu = String(pointerData.ult_nsu || '').trim()
+      currentPersistedInitialized = Boolean(pointerData.is_initialized)
+    }
+    return ok
+  } catch (err) {
+    console.warn(
+      `[DFE-STATE-WARN] Falha ao persistir ponteiro local: ${err.message}. Ponteiro mantido em memória.`,
+    )
+    return false
+  }
+}
+
+/**
+ * Processa UM documento por vez (FIX HEAP-OOM, item 1): ingest, histórico e descarte
+ * de referências antes do próximo doc — nenhum XML de doc processado permanece vivo.
+ * Retorna um resumo mínimo: { kind: 'processed'|'duplicate'|'event'|'summary'|'ignored'|'error', error? }
+ */
+async function processSingleDoc(doc) {
+  let summary = { kind: 'ignored' }
+  try {
+    // D4: SÓ MOD 55
+    if (doc.model && doc.model !== '55') {
+      console.log(
+        `[DFE-MOD-IGNORE] Documento modelo ${doc.model} ignorado para compras (D4). Apenas mod 55 processado.`,
+      )
+      summary = { kind: 'ignored' }
+      return summary
+    }
+
+    // D5: EVENTOS (Cancelamento, CC-e)
+    if (doc.isEvent) {
+      console.log(
+        `[DFE-EVENT] Evento SEFAZ recebido (tipo: ${doc.eventType}, chave: ${doc.accessKey}). Encaminhando para tratamento (D5)...`,
+      )
+      const evRes = await crm.recordEvent({
+        access_key: doc.accessKey,
+        nsu: doc.nsu,
+        event_type: doc.eventType,
+        event_desc: doc.eventType === '110111' ? 'Cancelamento de NF-e' : 'Carta de Correção',
+        protocol: doc.protocol,
+        justification: doc.justification,
+        raw_xml: doc.rawXml,
+      })
+      console.log(`[DFE-EVENT-RESULT] ${JSON.stringify(evRes)}`)
+      summary = { kind: 'event' }
+      return summary
+    }
+
+    // D6: XML COMPLETO vs RESUMO
+    if (doc.isSummary && !doc.isFullNfe) {
+      console.log(
+        `[DFE-SUMMARY] Resumo de NF-e recebido (chave: ${doc.accessKey}). Registrando no histórico DFe (D6 - sem itens, não processa contas).`,
+      )
+      await crm.recordHistory({
+        access_key: doc.accessKey,
+        nsu: doc.nsu && String(doc.nsu).trim() ? String(doc.nsu).trim() : '0',
+        schema: doc.schema,
+        model: doc.model,
+        emitter_cnpj: doc.emitterCnpj,
+        emitter_name: doc.emitterName,
+        issue_date: doc.issueDate,
+        total_amount: doc.totalAmount,
+        nfe_number: doc.nfeNumber,
+        document_type: 'resumo',
+        is_backlog: false,
+        raw_xml: doc.rawXml,
+      })
+      summary = { kind: 'summary' }
+      return summary
+    }
+
+    // NF-e COMPLETA: Ingestão no pipeline oficial (D1, CF-3b)
+    if (doc.isFullNfe && doc.rawXml) {
+      console.log(
+        `[DFE-INGEST] Enviando NF-e completa para pipeline oficial CRM (Chave: ${doc.accessKey}, NSU: ${doc.nsu})...`,
+      )
+      const ingestRes = await crm.ingestXml(doc.rawXml, doc.nsu)
+      if (ingestRes.duplicate) {
+        console.log(
+          `[DFE-DEDUPE] Chave ${doc.accessKey} já existia no CRM (deduplicada entre canais - D1).`,
+        )
+        summary = { kind: 'duplicate' }
+      } else {
+        console.log(
+          `[DFE-PROCESSED] NF-e ${doc.accessKey} processada com sucesso no CRM: ${JSON.stringify(ingestRes)}`,
+        )
+        summary = { kind: 'processed' }
+      }
+
+      // Registrar no histórico DFe como importada
+      await crm.recordHistory({
+        access_key: doc.accessKey,
+        nsu: doc.nsu && String(doc.nsu).trim() ? String(doc.nsu).trim() : '0',
+        schema: doc.schema,
+        model: doc.model,
+        emitter_cnpj: doc.emitterCnpj,
+        emitter_name: doc.emitterName,
+        issue_date: doc.issueDate,
+        total_amount: doc.totalAmount,
+        nfe_number: doc.nfeNumber,
+        document_type: 'nfe_completa',
+        is_backlog: false,
+        raw_xml: doc.rawXml,
+      })
+    }
+  } catch (docErr) {
+    console.error(
+      `[DFE-DOC-ERR] Falha ao processar documento (Chave: ${doc.accessKey || 'N/A'}, NSU: ${doc.nsu || 'N/A'}): ${docErr.message}`,
+    )
+    summary = { kind: 'error', error: docErr.message }
+    throw docErr
+  } finally {
+    // FIX HEAP-OOM (item 1): liberar as referências do doc — o XML não fica vivo na memória
+    releaseDocReferences(doc)
+    summary = null
+  }
+}
+
+/**
  * Executa o ciclo principal de captura DFe (Guards D1, D2, D3, CF-2, CF-2c, CF-3)
+ * FIX HEAP-OOM: processamento sequencial doc a doc + lote limitado a MAX_DOCS_PER_CYCLE
+ * + ponteiro local persistido (state.json) + log de heapUsed a cada ciclo.
  */
 async function runDfeCycle(trigger = 'cron') {
   if (isCycleRunning) {
@@ -455,12 +683,20 @@ async function runDfeCycle(trigger = 'cron') {
   isCycleRunning = true
   console.log(`\n======================================================`)
   console.log(`[DFE-POLL-START] Início do ciclo (${trigger}) em ${getBrasiliaTimestamp()}`)
+  logMemoryUsage('inicio-do-ciclo')
 
   let crmStatus = null
   try {
     crmStatus = await crm.getStatus()
   } catch (err) {
     console.error(`[DFE-POLL-ERR] Falha ao comunicar com CRM (CF-2d): ${err.message}`)
+    // FIX HEAP-OOM: em falha do status, preservar último ponteiro local válido
+    if (currentPersistedUltNsu) {
+      console.warn(
+        `[DFE-POLL-ERR] Preservando último ponteiro local válido: ultNSU=${currentPersistedUltNsu} (não volta ao NSU-START).`,
+      )
+    }
+    logMemoryUsage('fim-do-ciclo-falha')
     isCycleRunning = false
     return
   }
@@ -520,22 +756,62 @@ async function runDfeCycle(trigger = 'cron') {
   }
 
   const cert = certValidation.certInfo
-  let currentUltNsu = pointer && pointer.ult_nsu ? pointer.ult_nsu : '0'
+  // FIX HEAP-OOM (item 3): ponteiro de partida = CRM, com validação cruzada contra o estado local.
+  // O local (state.json) é a memória do worker; o CRM pode ter sido resetado após um crash.
+  let currentUltNsu = pointer && pointer.ult_nsu ? String(pointer.ult_nsu).trim() : '0'
   let isInitialized = pointer ? Boolean(pointer.is_initialized) : false
 
+  if (currentPersistedUltNsu) {
+    const persistedNum = parseInt(currentPersistedUltNsu, 10)
+    const crmNum = parseInt(currentUltNsu, 10)
+    if (!isNaN(persistedNum) && !isNaN(crmNum) && persistedNum > crmNum) {
+      console.warn(
+        `[DFE-STATE-GUARD] Ponteiro local (${currentPersistedUltNsu}) À FRENTE do ponteiro do CRM (${currentUltNsu}). ` +
+          `Usando o ponteiro LOCAL para evitar revarrimento do backlog (loop OOM).`,
+      )
+      currentUltNsu = currentPersistedUltNsu
+      if (currentPersistedInitialized !== null) {
+        isInitialized = currentPersistedInitialized || isInitialized
+      }
+    } else if (!isNaN(persistedNum) && !isNaN(crmNum) && persistedNum === crmNum) {
+      // Coerentes — reforça is_initialized local se conhecido
+      if (currentPersistedInitialized === true) isInitialized = true
+    }
+    // Se o CRM está à frente do local (ex.: outro worker avançou), o CRM prevalece (safe).
+  }
+
+  let isBacklogResume = false
+  if (currentPersistedUltNsu && currentPersistedUltNsu !== '0') {
+    const persistedNum = parseInt(currentPersistedUltNsu, 10)
+    const crmNum = parseInt(currentUltNsu, 10)
+    if (!isNaN(persistedNum) && !isNaN(crmNum) && persistedNum === crmNum && crmNum > 2) {
+      isBacklogResume = true
+    }
+  }
+
   console.log(
-    `[DFE-POLL-STATE] ultNSU atual: ${currentUltNsu} | Inicializado (NSU-START): ${isInitialized}`,
+    `[DFE-POLL-STATE] ultNSU atual: ${currentUltNsu} | Inicializado (NSU-START): ${isInitialized}` +
+      `${isBacklogResume ? ' | RETOMADA de backlog: ponteiro local e CRM coerentes — processando incrementamente (max ' + MAX_DOCS_PER_CYCLE + ' docs/ciclo)' : ''}`,
   )
 
-  // Loop de paginação da SEFAZ (CF-2: 50 por consulta, loop até ultNSU == maxNSU)
+  // Loop de paginação da SEFAZ (CF-2: 50 por consulta) — LOTE LIMITADO a MAX_DOCS_PER_CYCLE
   let keepPaging = true
   let totalDocsReceived = 0
   let totalProcessed = 0
   let totalDuplicates = 0
   let totalEvents = 0
+  let totalPagesFetched = 0 // Guard anti-loop: max páginas por ciclo
 
   try {
     while (keepPaging) {
+      totalPagesFetched++
+      if (totalPagesFetched > MAX_BACKLOG_PAGES_PER_CYCLE) {
+        console.warn(
+          `[DFE-BACKLOG-GUARD] Limite de páginas por ciclo atingido (${MAX_BACKLOG_PAGES_PER_CYCLE}). Retomando no próximo ciclo a partir de ultNSU=${currentUltNsu}.`,
+        )
+        break
+      }
+
       let sefazRes = null
       try {
         sefazRes = await dfeAdapter.consultarPorUltNsu(currentUltNsu)
@@ -562,6 +838,10 @@ async function runDfeCycle(trigger = 'cron') {
         throw pollErr
       }
 
+      // FIX HEAP-OOM (item 2): a resposta da SEFAZ traz até 50 docs por página.
+      // Para limitar o LOTE a MAX_DOCS_PER_CYCLE sem processar a página inteira,
+      // o ciclo processa só a fatia necessária e REFAZ a consulta no próximo ciclo
+      // a partir do último NSU processado (SEFAZ permite retomada pelo NSU incremental).
       const { cStat, xMotivo, ultNSU, maxNSU, docs } = sefazRes
 
       console.log(
@@ -607,17 +887,46 @@ async function runDfeCycle(trigger = 'cron') {
           cert_valid_until: cert.notAfter,
           cert_days_remaining: cert.daysRemaining,
         })
+        persistLocalPointer({
+          ult_nsu: ultNSU || currentUltNsu,
+          max_nsu: maxNSU || currentUltNsu,
+          is_initialized: true,
+          cstat_last: cStat,
+          worker_mode: dfeAdapter.getMode().mode,
+        })
         break
       }
 
-      totalDocsReceived += docs.length
+      // FIX HEAP-OOM (item 2): fatia do lote — no máximo MAX_DOCS_PER_CYCLE docs por ciclo
+      const pageNsuList = docs
+        .map((d) => parseInt(String(d.nsu || '0'), 10))
+        .filter((n) => !isNaN(n))
+        .sort((a, b) => a - b)
+      const batchLimit = MAX_DOCS_PER_CYCLE - totalDocsReceived
+      const alreadyCovered =
+        pageNsuList.length > 0 &&
+        currentUltNsu &&
+        pageNsuList[pageNsuList.length - 1] <= parseInt(currentUltNsu, 10)
+
+      if (batchLimit <= 0 || alreadyCovered) {
+        console.log(
+          `[DFE-BATCH-LIMIT] Lote do ciclo esgotado (${totalDocsReceived}/${MAX_DOCS_PER_CYCLE} docs). Retomando o restante no próximo ciclo a partir de ultNSU=${currentUltNsu}.`,
+        )
+        break
+      }
+
+      const docsBatch = docs.slice(0, batchLimit)
+      totalDocsReceived += docsBatch.length
+      console.log(
+        `[DFE-BATCH] Lote deste ciclo: ${docsBatch.length}/${MAX_DOCS_PER_CYCLE} (docs na página: ${docs.length}) — processamento SEQUENCIAL um por vez.`,
+      )
 
       // D2 / CF-2c: Se AINDA NÃO INICIALIZADO (1ª consulta / NSU-START zero-impacto)
       if (!isInitialized) {
         console.log(
-          `[DFE-NSU-START] ATIVAÇÃO ZERO-IMPACTO (D2/CF-2c): Gravando ${docs.length} documento(s) apenas no histórico/backlog. NENHUM lançamento, pauta ou conta criada!`,
+          `[DFE-NSU-START] ATIVAÇÃO ZERO-IMPACTO (D2/CF-2c): Gravando documento(s) apenas no histórico/backlog. NENHUM lançamento, pauta ou conta criada!`,
         )
-        for (const doc of docs) {
+        for (const doc of docsBatch) {
           await crm.recordHistory({
             access_key: doc.accessKey,
             nsu: doc.nsu && String(doc.nsu).trim() ? String(doc.nsu).trim() : '0',
@@ -638,6 +947,7 @@ async function runDfeCycle(trigger = 'cron') {
             is_backlog: true,
             raw_xml: doc.rawXml,
           })
+          releaseDocReferences(doc) // FIX HEAP-OOM: descarta referência após ingest
         }
 
         // Ponteiro avança página a página no CRM (CF-2c)
@@ -654,6 +964,13 @@ async function runDfeCycle(trigger = 'cron') {
         })
 
         currentUltNsu = ultNSU
+        persistLocalPointer({
+          ult_nsu: ultNSU,
+          max_nsu: maxNSU,
+          is_initialized: ultNSU >= maxNSU,
+          cstat_last: cStat,
+          worker_mode: dfeAdapter.getMode().mode,
+        })
         if (ultNSU >= maxNSU) {
           isInitialized = true
           keepPaging = false
@@ -662,97 +979,69 @@ async function runDfeCycle(trigger = 'cron') {
           )
         }
       } else {
-        // FLUXO NORMAL (D1 — Captura em regime)
-        for (const doc of docs) {
-          // D4: SÓ MOD 55
-          if (doc.model && doc.model !== '55') {
-            console.log(
-              `[DFE-MOD-IGNORE] Documento modelo ${doc.model} ignorado para compras (D4). Apenas mod 55 processado.`,
+        // FLUXO NORMAL (D1 — Captura em regime) — UM DOC POR VEZ (FIX HEAP-OOM, item 1)
+        let cycleAborted = false
+        for (const doc of docsBatch) {
+          try {
+            const res = await processSingleDoc(doc)
+            if (res && res.kind === 'processed') totalProcessed++
+            else if (res && res.kind === 'duplicate') totalDuplicates++
+            else if (res && res.kind === 'event') totalEvents++
+          } catch (docErr) {
+            // FIX HEAP-OOM (item 4): CRM-INGEST-ERR NÃO descarta documento.
+            // Ponteiro NÃO avança para o NSU do doc falho — o documento é
+            // reprocessado no PRÓXIMO ciclo a partir de currentUltNsu.
+            console.warn(
+              `[DFE-BATCH-STOP] Processamento interrompido neste ponto. Ponteiro permanece em ultNSU=${currentUltNsu} — documento será reprocessado no próximo ciclo (dedupe por chave de acesso no CRM).`,
             )
-            continue
+            cycleAborted = true
+            break
           }
-
-          // D5: EVENTOS (Cancelamento, CC-e)
-          if (doc.isEvent) {
-            console.log(
-              `[DFE-EVENT] Evento SEFAZ recebido (tipo: ${doc.eventType}, chave: ${doc.accessKey}). Encaminhando para tratamento (D5)...`,
-            )
-            const evRes = await crm.recordEvent({
-              access_key: doc.accessKey,
-              nsu: doc.nsu,
-              event_type: doc.eventType,
-              event_desc: doc.eventType === '110111' ? 'Cancelamento de NF-e' : 'Carta de Correção',
-              protocol: doc.protocol,
-              justification: doc.justification,
-              raw_xml: doc.rawXml,
-            })
-            totalEvents++
-            console.log(`[DFE-EVENT-RESULT] ${JSON.stringify(evRes)}`)
-            continue
-          }
-
-          // D6: XML COMPLETO vs RESUMO
-          if (doc.isSummary && !doc.isFullNfe) {
-            console.log(
-              `[DFE-SUMMARY] Resumo de NF-e recebido (chave: ${doc.accessKey}). Registrando no histórico DFe (D6 - sem itens, não processa contas).`,
-            )
-            await crm.recordHistory({
-              access_key: doc.accessKey,
-              nsu: doc.nsu && String(doc.nsu).trim() ? String(doc.nsu).trim() : '0',
-              schema: doc.schema,
-              model: doc.model,
-              emitter_cnpj: doc.emitterCnpj,
-              emitter_name: doc.emitterName,
-              issue_date: doc.issueDate,
-              total_amount: doc.totalAmount,
-              nfe_number: doc.nfeNumber,
-              document_type: 'resumo',
-              is_backlog: false,
-              raw_xml: doc.rawXml,
-            })
-            continue
-          }
-
-          // NF-e COMPLETA: Ingestão no pipeline oficial (D1, CF-3b)
-          if (doc.isFullNfe && doc.rawXml) {
-            console.log(
-              `[DFE-INGEST] Enviando NF-e completa para pipeline oficial CRM (Chave: ${doc.accessKey}, NSU: ${doc.nsu})...`,
-            )
-            const ingestRes = await crm.ingestXml(doc.rawXml, doc.nsu)
-            if (ingestRes.duplicate) {
-              totalDuplicates++
-              console.log(
-                `[DFE-DEDUPE] Chave ${doc.accessKey} já existia no CRM (deduplicada entre canais - D1).`,
-              )
-            } else {
-              totalProcessed++
-              console.log(
-                `[DFE-PROCESSED] NF-e ${doc.accessKey} processada com sucesso no CRM: ${JSON.stringify(ingestRes)}`,
-              )
-            }
-
-            // Registrar no histórico DFe como importada
-            await crm.recordHistory({
-              access_key: doc.accessKey,
-              nsu: doc.nsu && String(doc.nsu).trim() ? String(doc.nsu).trim() : '0',
-              schema: doc.schema,
-              model: doc.model,
-              emitter_cnpj: doc.emitterCnpj,
-              emitter_name: doc.emitterName,
-              issue_date: doc.issueDate,
-              total_amount: doc.totalAmount,
-              nfe_number: doc.nfeNumber,
-              document_type: 'nfe_completa',
-              is_backlog: false,
-              raw_xml: doc.rawXml,
-            })
-          }
+          releaseDocReferences(doc) // FIX HEAP-OOM: descarta referência após ingest
         }
+
+        logMemoryUsage('pos-lote-de-docs')
+
+        if (cycleAborted) {
+          // Persiste o ponteiro ANTERIOR (seguro) e encerra o ciclo.
+          try {
+            await crm.updatePointer({
+              success: true,
+              ult_nsu: currentUltNsu,
+              max_nsu: maxNSU || currentUltNsu,
+              is_initialized: true,
+              cstat_last: cStat === '138' ? '138' : cStat,
+              worker_mode: dfeAdapter.getMode().mode,
+              worker_status: 'batch_interrompido',
+              cert_cnpj: cert.extractedCnpj,
+              cert_valid_until: cert.notAfter,
+              cert_days_remaining: cert.daysRemaining,
+            })
+          } catch (_) {}
+          persistLocalPointer({
+            ult_nsu: currentUltNsu,
+            max_nsu: maxNSU || currentUltNsu,
+            is_initialized: true,
+            cstat_last: cStat === '138' ? '138' : cStat,
+            worker_mode: dfeAdapter.getMode().mode,
+          })
+          keepPaging = false
+          break
+        }
+
+        // FIX HEAP-OOM (item 2): se ainda há docs na página, o ciclo termina com o lote
+        // e retoma no próximo ciclo a partir do NSU do ÚLTIMO doc processado deste lote
+        // (SEFAZ permite retomada pelo NSU incremental). O ponteiro avança doc a doc.
+        const batchLastNsu = String(docsBatch[docsBatch.length - 1].nsu || '').trim()
+        const reachedPageEnd =
+          docsBatch.length === docs.length && String(ultNSU).trim() === String(maxNSU).trim()
+        const effectiveUltNsu =
+          batchLastNsu && /^\d+$/.test(batchLastNsu) && batchLastNsu !== '0' ? batchLastNsu : ultNSU
 
         // D3: PONTEIRO SÓ AVANÇA APÓS LOTE CONFIRMADO E PERSISTIDO
         await crm.updatePointer({
           success: true,
-          ult_nsu: ultNSU,
+          ult_nsu: effectiveUltNsu,
           max_nsu: maxNSU,
           is_initialized: true,
           cstat_last: cStat,
@@ -761,9 +1050,26 @@ async function runDfeCycle(trigger = 'cron') {
           cert_valid_until: cert.notAfter,
           cert_days_remaining: cert.daysRemaining,
         })
+        persistLocalPointer({
+          ult_nsu: effectiveUltNsu,
+          max_nsu: maxNSU,
+          is_initialized: true,
+          cstat_last: cStat,
+          worker_mode: dfeAdapter.getMode().mode,
+        })
 
-        currentUltNsu = ultNSU
-        if (ultNSU >= maxNSU) {
+        currentUltNsu = effectiveUltNsu
+
+        if (batchLastNsu && batchLastNsu !== ultNSU && totalDocsReceived < MAX_DOCS_PER_CYCLE) {
+          // Ainda há docs nesta página para o próximo ciclo — encerra este ciclo
+          console.log(
+            `[DFE-BATCH-RESUME] Página tinha ${docs.length} docs; lote limitado a ${totalDocsReceived} neste ciclo. Retomada no próximo ciclo a partir de ultNSU=${currentUltNsu}.`,
+          )
+          keepPaging = false
+          break
+        }
+
+        if (reachedPageEnd) {
           keepPaging = false
         }
       }
@@ -773,6 +1079,8 @@ async function runDfeCycle(trigger = 'cron') {
     console.log(
       `[DFE-POLL-SUMMARY] Recebidos: ${totalDocsReceived} | Processados: ${totalProcessed} | Duplicados: ${totalDuplicates} | Eventos: ${totalEvents} | ultNSU: ${currentUltNsu}`,
     )
+    logMemoryUsage('fim-do-ciclo-sucesso')
+    releaseDocReferences(null) // GC hint pós-ciclo
   } catch (cycleErr) {
     console.error(`[DFE-POLL-FAIL] Erro durante o ciclo DFe: ${cycleErr.message}`)
     // D3: Não avança o ponteiro em falha!
@@ -783,6 +1091,13 @@ async function runDfeCycle(trigger = 'cron') {
         cstat_last: 'FALHA',
       })
     } catch (_) {}
+    // FIX HEAP-OOM (item 3): em falha, preserva o último ponteiro local válido
+    if (currentPersistedUltNsu) {
+      console.warn(
+        `[DFE-POLL-FAIL] Ponteiro local PRESERVADO: ultNSU=${currentPersistedUltNsu} — retomada incremental no próximo ciclo (não volta ao NSU-START).`,
+      )
+    }
+    logMemoryUsage('fim-do-ciclo-falha')
   } finally {
     isCycleRunning = false
   }
@@ -903,6 +1218,10 @@ function startWorker() {
   console.log(`  CRM URL: ${CRM_URL}`)
   console.log(`======================================================\n`)
 
+  // FIX HEAP-OOM (item 3): leitura do state.json no boot — retomada do ponteiro persistido
+  loadPersistedPointerAtBoot()
+  logMemoryUsage('boot')
+
   // 1. Iniciar poll curto da fila de comandos (CF-1b - cada 30 segundos)
   setInterval(checkCommandQueue, COMMAND_POLL_INTERVAL_SEC * 1000)
   console.log(
@@ -1013,6 +1332,17 @@ module.exports = {
   getCronExpressionForHours,
   scheduleDfeCron,
   applyConfiguredPollInterval,
+  // FIX HEAP-OOM: exports para testes/observabilidade
+  MAX_DOCS_PER_CYCLE,
+  loadPersistedPointerAtBoot,
+  getCurrentPersistedUltNsu: () => currentPersistedUltNsu,
+  setCurrentPersistedUltNsu: (val) => {
+    currentPersistedUltNsu = val
+  },
+  getCurrentPersistedInitialized: () => currentPersistedInitialized,
+  setCurrentPersistedInitialized: (val) => {
+    currentPersistedInitialized = val
+  },
   getActivePollIntervalHours: () => activePollIntervalHours,
   setActivePollIntervalHours: (val) => {
     activePollIntervalHours = val

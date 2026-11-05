@@ -225,6 +225,8 @@ const allowedFiles = [
   'package.json',
   'README.md',
   'sefaz-ssl-ca.pem',
+  'stateStore.js',
+  'test-oom-restart.js',
   'test-simulation.js',
 ]
 
