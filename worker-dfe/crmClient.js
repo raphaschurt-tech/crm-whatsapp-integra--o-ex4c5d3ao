@@ -10,7 +10,19 @@
  * tentativas falharem, o erro é relançado e o ciclo encerra; o ponteiro não avança e o
  * documento é reprocessado no PRÓXIMO ciclo (dedupe por chave de acesso no CRM evita
  * duplicação).
+ *
+ * FIX BUG 0.0.276 (build quebrado): as atribuições dos ganchos de teste
+ * (CrmClient.INGEST_TIMEOUT_MS etc.) estavam ANTES da declaração da classe — TDZ
+ * "Cannot access 'CrmClient' before initialization" em crmClient.js linha 38.
+ * Agora TODOS os ganchos são atribuídos DEPOIS do bloco `class CrmClient { ... }`
+ * (ver bloco "Ganchos de teste" no fim do arquivo) — nada executa antes da
+ * declaração da classe.
  */
+
+let axios = null
+try {
+  axios = require('axios')
+} catch (_) {}
 
 const RETRYABLE_AXIOS_ERROR_CODES = new Set(['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT'])
 
@@ -32,16 +44,6 @@ function sleep(ms) {
 const INGEST_TIMEOUT_MS = 90000
 const INGEST_MAX_RETRIES = 2
 const INGEST_RETRY_WAIT_MS = 30000
-
-// Ganchos de teste: permitem acelerar a espera entre tentativas e interceptar o
-// axios nos testes sem tocar nos tempos reais de produção (padrão = sem efeito).
-CrmClient.INGEST_TIMEOUT_MS = INGEST_TIMEOUT_MS
-CrmClient.INGEST_MAX_RETRIES = INGEST_MAX_RETRIES
-CrmClient.INGEST_RETRY_WAIT_MS = INGEST_RETRY_WAIT_MS
-CrmClient.__sleep = sleep
-CrmClient.__setSleepImpl = function (fn) {
-  CrmClient.__sleep = fn || sleep
-}
 
 class CrmClient {
   constructor(baseUrl, token) {
@@ -220,10 +222,19 @@ class CrmClient {
   }
 }
 
-module.exports = CrmClient
-module.exports.__setSleepImpl = function (fn) {
+// Ganchos de teste: permitem acelerar a espera entre tentativas e interceptar o
+// axios nos testes sem tocar nos tempos reais de produção (padrão = sem efeito).
+// Atribuídos APÓS a declaração da classe (FIX BUG 0.0.276 — antes estavam ANTES
+// da declaração e causavam TDZ "Cannot access 'CrmClient' before initialization").
+CrmClient.INGEST_TIMEOUT_MS = INGEST_TIMEOUT_MS
+CrmClient.INGEST_MAX_RETRIES = INGEST_MAX_RETRIES
+CrmClient.INGEST_RETRY_WAIT_MS = INGEST_RETRY_WAIT_MS
+CrmClient.__sleep = sleep
+CrmClient.__setSleepImpl = function (fn) {
   CrmClient.__sleep = fn || sleep
 }
+
+module.exports = CrmClient
 module.exports.__getAxios = function () {
   return axios
 }

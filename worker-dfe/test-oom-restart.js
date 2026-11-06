@@ -21,7 +21,13 @@
  *   sucesso. O documento NÃO é descartado.
  *
  * Execução: node test-oom-restart.js (sem dependência de rede/SEFAZ/CRM real).
+ *
+ * FIX 0.0.277: o shim de axios DEVE vir antes de require('./index') — o index.js
+ * exige axios no boot (applyIcpBrasilTlsTrust / DfeAdapter); o shim resolve o
+ * módulo 'axios' antes e evita probe de rede no teste.
  */
+// SHIM DE AXIOS: instalar ANTES de qualquer require('./index') / crmClient.
+require('./axios-shim')
 
 const fs = require('fs')
 const path = require('path')
