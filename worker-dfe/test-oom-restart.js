@@ -430,6 +430,113 @@ async function runProva1() {
   console.log('[PROVA 3 OK] Retry de ingest comprovado (timeout não descarta documento).\n')
 
   // -------------------------------------------------------------------------
+  // PROVA 4 — Observador de Comandos: 100 polls sem vazamento de memória (<150 MB)
+  // -------------------------------------------------------------------------
+  console.log(
+    '[PROVA 4] Observador de comandos: simulação de 100 polls seguidos com heap estável (<150 MB)',
+  )
+  const crmClientForPoll = new CrmClient('http://127.0.0.1:8090', 'test-poll-token')
+  check(
+    crmClientForPoll.httpAgent === CrmClient.crmHttpAgent,
+    'crmClient: reutiliza crmHttpAgent singleton em vez de recriar agente por request',
+  )
+  check(
+    crmClientForPoll.httpsAgent === CrmClient.crmHttpsAgent,
+    'crmClient: reutiliza crmHttpsAgent singleton em vez de recriar agente por request',
+  )
+
+  // Mede heap inicial antes de 100 polls
+  if (global.gc) global.gc()
+  const heapBeforePollsMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+
+  // Mock de getPendingCommands via axios do shim retornando comandos vazios
+  for (let poll = 1; poll <= 100; poll++) {
+    await crmClientForPoll.getPendingCommands()
+  }
+
+  if (global.gc) global.gc()
+  const heapAfterPollsMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+  console.log(
+    `[PROVA 4 RESULTADO] 100 polls concluídos | heap inicial: ${heapBeforePollsMb} MB | heap final: ${heapAfterPollsMb} MB`,
+  )
+  check(
+    heapAfterPollsMb < 150,
+    `heap após 100 polls permanece estável e abaixo de 150 MB (${heapAfterPollsMb} MB < 150 MB)`,
+  )
+  check(
+    heapAfterPollsMb - heapBeforePollsMb < 30,
+    `crescimento de heap em 100 polls é desprezível (${heapAfterPollsMb - heapBeforePollsMb} MB < 30 MB)`,
+  )
+  console.log('[PROVA 4 OK] 100 polls executados sem vazamento no caminho ocioso.\n')
+
+  // -------------------------------------------------------------------------
+  // PROVA 5 — Backoff 656 persistido: boot com backoff ativo PULA consulta à SEFAZ
+  // -------------------------------------------------------------------------
+  console.log(
+    '[PROVA 5] Backoff 656 persistido: boot com backoff ativo em state.json PULA consulta à SEFAZ',
+  )
+  // 5a: Unidade stateStore - persistBackoff grava e loadPersistedPointer lê
+  const futureBackoffMs = Date.now() + 45 * 60 * 1000 // 45 min no futuro
+  const backoffWritten = stateStore.persistBackoff(TEST_DIR, futureBackoffMs, 'cstat_656')
+  check(backoffWritten === true, 'persistBackoff gravou state.json com sucesso')
+
+  const loadedBackoff = stateStore.loadPersistedPointer(TEST_DIR, '000000000000002')
+  check(
+    loadedBackoff.backoffUntil === futureBackoffMs,
+    `loadPersistedPointer leu backoffUntil ativo corretamente (${loadedBackoff.backoffUntil})`,
+  )
+
+  // 5b: Simulação de boot com backoff ativo
+  // Mock para verificar se SEFAZ foi consultada durante ciclo de startup
+  let sefazCalledInStartup = false
+  const prevConsultar = DfeAdapter.prototype.consultarPorUltNsu
+  DfeAdapter.prototype.consultarPorUltNsu = async function (...args) {
+    sefazCalledInStartup = true
+    return prevConsultar.apply(this, args)
+  }
+
+  // Grava state.json no diretório do index para o boot real
+  const statePathWorker = stateStore.getStateFilePath(__dirname)
+  let backupWorkerState = null
+  if (fs.existsSync(statePathWorker)) {
+    backupWorkerState = fs.readFileSync(statePathWorker, 'utf8')
+  }
+
+  try {
+    stateStore.persistBackoff(__dirname, futureBackoffMs, 'cstat_656')
+    indexMod.loadPersistedPointerAtBoot()
+
+    // Dispara ciclo com trigger 'startup' (o mesmo executado no boot do worker)
+    logBuf = []
+    sefazCalledInStartup = false
+    await indexMod.runDfeCycle('startup')
+
+    const backoffLog = logBuf.find((l) => l.includes('[DFE-RATE-LIMIT]'))
+    check(
+      !sefazCalledInStartup,
+      'startup com backoff 656 ativo NÃO consultou a SEFAZ (janela fechada preservada)',
+    )
+    check(
+      !!backoffLog,
+      'startup registrou log de rate limit avisando que pulou ciclo ([DFE-RATE-LIMIT])',
+    )
+
+    // Limpa backoff para testar retorno normal
+    stateStore.persistBackoff(__dirname, 0, '')
+    indexMod.loadPersistedPointerAtBoot()
+  } finally {
+    DfeAdapter.prototype.consultarPorUltNsu = prevConsultar
+    if (backupWorkerState !== null) {
+      fs.writeFileSync(statePathWorker, backupWorkerState, 'utf8')
+    } else if (fs.existsSync(statePathWorker)) {
+      try {
+        fs.unlinkSync(statePathWorker)
+      } catch (_) {}
+    }
+  }
+  console.log('[PROVA 5 OK] Boot com backoff ativo pula consulta à SEFAZ.\n')
+
+  // -------------------------------------------------------------------------
   console.log('======================================================')
   if (failures === 0) {
     console.log(` TODAS AS PROVAS PASSARAM ✔ (${totalChecks} verificações, 0 falhas, exit code 0)`)

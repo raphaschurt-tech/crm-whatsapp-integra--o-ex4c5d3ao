@@ -19,10 +19,29 @@
  * declaração da classe.
  */
 
+const http = require('http')
+const https = require('https')
+
 let axios = null
 try {
   axios = require('axios')
 } catch (_) {}
+
+// Agentes HTTP/HTTPS dedicados e REUTILIZADOS por todo o ciclo de vida do CrmClient.
+// maxSockets limitado e keepAlive ativo para evitar vazamento de sockets e reconexões TLS desnecessárias.
+const crmHttpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 10,
+  maxFreeSockets: 5,
+  timeout: 60000,
+})
+
+const crmHttpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 10,
+  maxFreeSockets: 5,
+  timeout: 60000,
+})
 
 const RETRYABLE_AXIOS_ERROR_CODES = new Set(['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT'])
 
@@ -49,6 +68,19 @@ class CrmClient {
   constructor(baseUrl, token) {
     this.baseUrl = (baseUrl || 'http://127.0.0.1:8090').replace(/\/$/, '')
     this.token = token || ''
+    this.httpAgent = crmHttpAgent
+    this.httpsAgent = crmHttpsAgent
+
+    // Instância única de axios por CrmClient com agentes fixos reutilizados
+    if (axios && typeof axios.create === 'function') {
+      this.client = axios.create({
+        baseURL: this.baseUrl,
+        httpAgent: this.httpAgent,
+        httpsAgent: this.httpsAgent,
+      })
+    } else {
+      this.client = null
+    }
   }
 
   getHeaders() {
@@ -65,11 +97,18 @@ class CrmClient {
     return `${this.baseUrl}${cleanEndpoint}${query}`
   }
 
+  getHttp() {
+    return this.client || axios
+  }
+
   async getStatus() {
     try {
-      const res = await axios.get(this.buildUrl('/backend/v1/dfe/status'), {
+      const httpCaller = this.getHttp()
+      const res = await httpCaller.get(this.buildUrl('/backend/v1/dfe/status'), {
         headers: this.getHeaders(),
         timeout: 10000,
+        httpAgent: this.httpAgent,
+        httpsAgent: this.httpsAgent,
       })
       return res.data
     } catch (err) {
@@ -81,9 +120,12 @@ class CrmClient {
 
   async updatePointer(data) {
     try {
-      const res = await axios.post(this.buildUrl('/backend/v1/dfe/pointer'), data, {
+      const httpCaller = this.getHttp()
+      const res = await httpCaller.post(this.buildUrl('/backend/v1/dfe/pointer'), data, {
         headers: this.getHeaders(),
         timeout: 10000,
+        httpAgent: this.httpAgent,
+        httpsAgent: this.httpsAgent,
       })
       return res.data
     } catch (err) {
@@ -95,9 +137,12 @@ class CrmClient {
 
   async getPendingCommands() {
     try {
-      const res = await axios.get(this.buildUrl('/backend/v1/dfe/commands'), {
+      const httpCaller = this.getHttp()
+      const res = await httpCaller.get(this.buildUrl('/backend/v1/dfe/commands'), {
         headers: this.getHeaders(),
         timeout: 10000,
+        httpAgent: this.httpAgent,
+        httpsAgent: this.httpsAgent,
       })
       return res.data
     } catch (err) {
@@ -109,10 +154,16 @@ class CrmClient {
 
   async acknowledgeCommand(cmdId, status, summary) {
     try {
-      const res = await axios.post(
+      const httpCaller = this.getHttp()
+      const res = await httpCaller.post(
         this.buildUrl(`/backend/v1/dfe/commands/${cmdId}/ack`),
         { status, result_summary: summary },
-        { headers: this.getHeaders(), timeout: 10000 },
+        {
+          headers: this.getHeaders(),
+          timeout: 10000,
+          httpAgent: this.httpAgent,
+          httpsAgent: this.httpsAgent,
+        },
       )
       return res.data
     } catch (err) {
@@ -124,9 +175,12 @@ class CrmClient {
 
   async reportKeyDownload(data) {
     try {
-      const res = await axios.post(this.buildUrl('/backend/v1/dfe/key-download'), data, {
+      const httpCaller = this.getHttp()
+      const res = await httpCaller.post(this.buildUrl('/backend/v1/dfe/key-download'), data, {
         headers: this.getHeaders(),
         timeout: 30000,
+        httpAgent: this.httpAgent,
+        httpsAgent: this.httpsAgent,
       })
       return res.data
     } catch (err) {
@@ -142,9 +196,12 @@ class CrmClient {
       if (payload.nsu === undefined || payload.nsu === null || String(payload.nsu).trim() === '') {
         payload.nsu = '0'
       }
-      const res = await axios.post(this.buildUrl('/backend/v1/dfe/history'), payload, {
+      const httpCaller = this.getHttp()
+      const res = await httpCaller.post(this.buildUrl('/backend/v1/dfe/history'), payload, {
         headers: this.getHeaders(),
         timeout: 15000,
+        httpAgent: this.httpAgent,
+        httpsAgent: this.httpsAgent,
       })
       return res.data
     } catch (err) {
@@ -156,9 +213,12 @@ class CrmClient {
 
   async recordEvent(data) {
     try {
-      const res = await axios.post(this.buildUrl('/backend/v1/dfe/event'), data, {
+      const httpCaller = this.getHttp()
+      const res = await httpCaller.post(this.buildUrl('/backend/v1/dfe/event'), data, {
         headers: this.getHeaders(),
         timeout: 15000,
+        httpAgent: this.httpAgent,
+        httpsAgent: this.httpsAgent,
       })
       return res.data
     } catch (err) {
@@ -171,10 +231,16 @@ class CrmClient {
   async ingestXml(xmlString, nsu = '') {
     const attemptOnce = async (attemptNo) => {
       try {
-        const res = await axios.post(
+        const httpCaller = this.getHttp()
+        const res = await httpCaller.post(
           this.buildUrl('/backend/v1/dfe/ingest'),
           { xml: xmlString, nsu: nsu },
-          { headers: this.getHeaders(), timeout: INGEST_TIMEOUT_MS },
+          {
+            headers: this.getHeaders(),
+            timeout: INGEST_TIMEOUT_MS,
+            httpAgent: this.httpAgent,
+            httpsAgent: this.httpsAgent,
+          },
         )
         return res.data
       } catch (err) {
@@ -242,3 +308,5 @@ module.exports.__setAxios = function (ax) {
   axios = ax
 }
 module.exports.__isRetryableError = isRetryableError
+CrmClient.crmHttpAgent = crmHttpAgent
+CrmClient.crmHttpsAgent = crmHttpsAgent

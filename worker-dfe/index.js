@@ -47,6 +47,7 @@ const {
   appendPemToBundle,
   loadPersistedPointer,
   persistPointer,
+  persistBackoff,
   describeStateHistory,
 } = (() => {
   // stateStore carregado com tolerância: ausência dele não derruba o worker
@@ -287,6 +288,7 @@ let backoffUntil = 0 // Timestamp ms em que o backoff expira
 const BACKOFF_DURATION_MS = 60 * 60 * 1000 // 60 minutos regulamentares da SEFAZ NT 2014.002
 let activePollIntervalHours = 1 // Último intervalo válido conhecido (mínimo 1h, D10)
 let scheduledCronJob = null // Referência ao job cron ativo para reagendamento dinâmico
+let commandPollCount = 0 // Contador de polls de comandos para log periódico de memória
 
 // FIX HEAP-OOM (item 3): ponteiro NSU persistido localmente (state.json)
 // Fix HEAP-OOM 05/11: em falha de leitura do status no boot ou no ciclo, o último
@@ -299,6 +301,14 @@ function loadPersistedPointerAtBoot() {
     const persisted = loadPersistedPointer(__dirname, config.ULT_NSU || '')
     currentPersistedUltNsu = persisted.ultNsu
     currentPersistedInitialized = persisted.isInitialized
+    if (persisted.backoffUntil && persisted.backoffUntil > Date.now()) {
+      backoffUntil = persisted.backoffUntil
+      const remMin = Math.ceil((backoffUntil - Date.now()) / 60000)
+      console.warn(
+        `[DFE-STATE-BOOT] Backoff cStat 656 PERSISTIDO ativo no boot (${remMin} min restantes até ${new Date(backoffUntil).toISOString()}). ` +
+          `A consulta à SEFAZ no boot/startup será PULADA para proteger a janela de consumo indevido.`,
+      )
+    }
     const historyPreview = describeStateHistory(__dirname, 3)
     console.log(
       `[DFE-STATE-BOOT] Ponteiro local carregado | origem: ${persisted.source} | ultNSU: ${persisted.ultNsu}` +
@@ -720,10 +730,10 @@ async function runDfeCycle(trigger = 'cron') {
 
   // Verificação de Janela de Backoff ativa (cStat 656)
   const now = Date.now()
-  if (backoffUntil > now && trigger === 'cron') {
+  if (backoffUntil > now && (trigger === 'cron' || trigger === 'startup')) {
     const minutesRemaining = Math.ceil((backoffUntil - now) / 60000)
     console.warn(
-      `[DFE-RATE-LIMIT] Janela de backoff cStat 656 ainda ativa (${minutesRemaining} min restantes). Pulando ciclo cron programado para evitar consumo indevido na SEFAZ.`,
+      `[DFE-RATE-LIMIT] Janela de backoff cStat 656 ainda ativa (${minutesRemaining} min restantes). Pulando ciclo ${trigger} para evitar consumo indevido na SEFAZ pós-crash/restart.`,
     )
     try {
       await crm.updatePointer({
@@ -856,6 +866,10 @@ async function runDfeCycle(trigger = 'cron') {
         console.warn(
           `[DFE-RATE-LIMIT] Aguardando janela SEFAZ (1h) | cStat ${cStat} (${xMotivo || 'Consumo Indevido'}). Backoff ativo até ${new Date(backoffUntil).toISOString()}. Ciclo encerrado em repouso programado.`,
         )
+        // Persistir deadline em state.json para sobreviver a crash/restart
+        if (typeof persistBackoff === 'function') {
+          persistBackoff(__dirname, backoffUntil, `cstat_${cStat || '656'}`)
+        }
         await crm.updatePointer({
           success: true,
           cstat_last: cStat || '656',
@@ -869,8 +883,13 @@ async function runDfeCycle(trigger = 'cron') {
         break
       }
 
-      // Ao obter retorno com sucesso (137 ou 138), zerar a janela de backoff
-      backoffUntil = 0
+      // Ao obter retorno com sucesso (137 ou 138), zerar a janela de backoff (memória e disco)
+      if (backoffUntil > 0) {
+        backoffUntil = 0
+        if (typeof persistBackoff === 'function') {
+          persistBackoff(__dirname, 0, '')
+        }
+      }
 
       // cStat 137: Nenhum documento localizado
       if (cStat === '137' || docs.length === 0) {
@@ -1107,6 +1126,11 @@ async function runDfeCycle(trigger = 'cron') {
  * Fila de comandos do CRM (CF-1b) - Verificação em intervalo curto (<= 30s)
  */
 async function checkCommandQueue() {
+  commandPollCount++
+  if (commandPollCount % 10 === 0) {
+    logMemoryUsage(`observador-comandos-poll-${commandPollCount}`)
+  }
+
   try {
     const res = await crm.getPendingCommands()
     if (res && res.commands && res.commands.length > 0) {
@@ -1119,12 +1143,18 @@ async function checkCommandQueue() {
         if (cmd.command === 'consultar_agora') {
           // Comando manual bypassa temporariamente backoff de cron se o operador solicitar
           backoffUntil = 0
+          if (typeof persistBackoff === 'function') {
+            persistBackoff(__dirname, 0, '')
+          }
           await runDfeCycle('comando_manual')
           await crm.acknowledgeCommand(cmd.id, 'concluido', 'Consulta manual executada com sucesso')
         } else if (cmd.command === 'importacao_retroativa') {
           // Importação retroativa com janela configurável (D2)
           console.log(`[DFE-COMMAND-RETRO] Executando importação retroativa...`)
           backoffUntil = 0
+          if (typeof persistBackoff === 'function') {
+            persistBackoff(__dirname, 0, '')
+          }
           await runDfeCycle('importacao_retroativa')
           await crm.acknowledgeCommand(cmd.id, 'concluido', 'Importação retroativa finalizada')
         } else if (cmd.command === 'busca_por_chave') {

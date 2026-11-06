@@ -65,6 +65,15 @@ function readState(workerDir) {
 function loadPersistedPointer(workerDir, configFallbackNsu) {
   const state = readState(workerDir)
 
+  // Extrair backoff persistido se ainda estiver ativo
+  let backoffUntil = 0
+  if (state && state.backoff && typeof state.backoff.until_timestamp_ms === 'number') {
+    const until = state.backoff.until_timestamp_ms
+    if (until > Date.now()) {
+      backoffUntil = until
+    }
+  }
+
   if (state && state.pointer && normalizeNsu(state.pointer.ult_nsu)) {
     return {
       ultNsu: normalizeNsu(state.pointer.ult_nsu),
@@ -73,6 +82,8 @@ function loadPersistedPointer(workerDir, configFallbackNsu) {
       source: 'state_file',
       savedAt: state.pointer.saved_at_brasilia || '',
       historySize: Array.isArray(state.history) ? state.history.length : 0,
+      backoffUntil,
+      backoffReason: state.backoff ? state.backoff.reason || '' : '',
     }
   }
 
@@ -95,6 +106,8 @@ function loadPersistedPointer(workerDir, configFallbackNsu) {
     source: 'config_fallback',
     savedAt: '',
     historySize: 0,
+    backoffUntil,
+    backoffReason: state && state.backoff ? state.backoff.reason || '' : '',
   }
 }
 
@@ -137,6 +150,7 @@ function persistPointer(workerDir, pointerData) {
       saved_at_brasilia: entry.saved_at_brasilia,
       saved_at_iso: entry.saved_at_iso,
     },
+    backoff: previous.backoff || null,
     history,
   }
 
@@ -148,6 +162,51 @@ function persistPointer(workerDir, pointerData) {
   } catch (err) {
     console.warn(
       `[STATE-WRITE-WARN] Falha ao persistir ponteiro em ${STATE_FILE_NAME}: ${err.message}. O worker continuará com o ponteiro em memória.`,
+    )
+    return false
+  }
+}
+
+/**
+ * Persiste ou limpa o deadline de backoff 656 em state.json.
+ * Se untilTimestampMs <= Date.now() ou 0, limpa o backoff.
+ */
+function persistBackoff(workerDir, untilTimestampMs, reason = 'cstat_656') {
+  const statePath = getStateFilePath(workerDir)
+  const previous = readState(workerDir) || {}
+  const now = Date.now()
+
+  let backoffData = null
+  if (untilTimestampMs && untilTimestampMs > now) {
+    backoffData = {
+      until_timestamp_ms: untilTimestampMs,
+      until_iso: new Date(untilTimestampMs).toISOString(),
+      until_brasilia: new Date(untilTimestampMs - 3 * 3600 * 1000)
+        .toISOString()
+        .replace('Z', '-03:00'),
+      reason: String(reason || 'cstat_656'),
+      recorded_at_brasilia: getBrasiliaTimestamp(),
+    }
+  }
+
+  const nextState = {
+    schema_version: 1,
+    pointer: previous.pointer || {
+      ult_nsu: '0',
+      is_initialized: false,
+    },
+    backoff: backoffData,
+    history: previous.history || [],
+  }
+
+  try {
+    const tmpPath = statePath + '.tmp'
+    fs.writeFileSync(tmpPath, JSON.stringify(nextState, null, 2), 'utf8')
+    fs.renameSync(tmpPath, statePath)
+    return true
+  } catch (err) {
+    console.warn(
+      `[STATE-WRITE-WARN] Falha ao persistir backoff em ${STATE_FILE_NAME}: ${err.message}`,
     )
     return false
   }
@@ -174,6 +233,7 @@ module.exports = {
   readState,
   loadPersistedPointer,
   persistPointer,
+  persistBackoff,
   describeStateHistory,
   normalizeNsu,
 }
