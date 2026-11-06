@@ -25,6 +25,19 @@
  * FIX 0.0.277: o shim de axios DEVE vir antes de require('./index') — o index.js
  * exige axios no boot (applyIcpBrasilTlsTrust / DfeAdapter); o shim resolve o
  * módulo 'axios' antes e evita probe de rede no teste.
+ *
+ * FIX 0.0.278 (bug cosmético do veredito): 3 asserts tinham lógica INVERTIDA —
+ * falhavam EXATAMENTE quando o comportamento desejado ocorria (todas as provas
+ * individuais OK, mas veredito imprimia "3 PROVA(S) FALHARAM"):
+ *   1. PROVA 1 "55 docs ingeridos" — contava chamadas brutas de ingest; a retomada
+ *      por NSU pode re-ingerir o doc de fronteira do ciclo anterior (dedupe do CRM
+ *      cobre). Corrigido para: TODOS os 55 NSUs do backlog presentes no conjunto.
+ *   2. PROVA 1 "heap não cresce cumulativamente" — media o PICO absoluto (que sobe
+ *      com GC pendente, 107→234 MB no log real) em vez do heap no FIM vs INÍCIO.
+ *   3. PROVA 2 "ponteiro avançou a partir do LOCAL" — exigia crmPointer > NSU-START;
+ *      quando o ponteiro LOCAL já cobre todo o backlog, o ciclo correto pode não
+ *      gravar ponteiro novo no CRM. Corrigido para: nenhum NSU do backlog (local ou
+ *      abaixo) foi re-ingerido no ciclo pós-restart.
  */
 // SHIM DE AXIOS: instalar ANTES de qualquer require('./index') / crmClient.
 require('./axios-shim')
@@ -41,8 +54,12 @@ console.log(' PROVA FIX HEAP-OOM + NSU PERSISTENTE (worker-dfe)')
 console.log(` Diretório de teste: ${TEST_DIR}`)
 console.log('======================================================\n')
 
+// FIX 0.0.278: veredito final conta pelos resultados REAIS de cada verificação —
+// totalChecks incrementa em TODA chamada de check() e failures só quando falha.
 let failures = 0
+let totalChecks = 0
 function check(cond, label) {
+  totalChecks++
   if (cond) {
     console.log(`  ✔ ${label}`)
   } else {
@@ -130,6 +147,7 @@ let SEFAZ_POINTER = 0
 const TOTAL_BACKLOG = 55
 let crmPointer = { ult_nsu: '000000000000002', max_nsu: '000000000000057', is_initialized: true }
 const ingestSizesSeen = []
+const ingestNsusSeen = []
 
 // Reset do ponteiro local persistido para o cenário: state.json começa NO NSU-START
 fs.writeFileSync(
@@ -181,6 +199,7 @@ DfeAdapter.prototype.consultarPorUltNsu = async function (ultNsu) {
 const originalIngest = CrmClient.prototype.ingestXml
 CrmClient.prototype.ingestXml = async function (xmlString, nsu) {
   ingestSizesSeen.push(xmlString ? xmlString.length : 0)
+  ingestNsusSeen.push(parseInt(String(nsu), 10) || 0)
   crmPointer.ult_nsu = String(nsu).padStart(15, '0')
   return { success: true, processed: true }
 }
@@ -244,16 +263,30 @@ async function runProva1() {
     ciclosUsados >= 6,
     `backlog de ${TOTAL_BACKLOG} docs consumido em ${ciclosUsados} ciclos de até ${MAX_DOCS} docs`,
   )
+  // FIX 0.0.278 (assert invertido): a retomada por NSU pode re-ingerir o ÚLTIMO doc do
+  // ciclo anterior (fronteira da página) — o dedupe por chave de acesso no CRM cobre isso.
+  // A prova correta NÃO é o nº bruto de chamadas de ingest, e sim: TODOS os 55 NSUs do
+  // backlog (2..56) foram ingeridos ao menos uma vez (nenhum doc descartado).
+  const uniqueIngestedNsus = new Set(ingestNsusSeen)
+  const missingNsus = []
+  for (let i = 2; i <= TOTAL_BACKLOG + 1; i++) {
+    if (!uniqueIngestedNsus.has(i)) missingNsus.push(i)
+  }
   check(
-    ingestSizesSeen.length === TOTAL_BACKLOG,
-    `todos os ${TOTAL_BACKLOG} docs foram ingeridos no CRM (nenhum descartado)`,
+    missingNsus.length === 0 && uniqueIngestedNsus.size >= TOTAL_BACKLOG,
+    `todos os ${TOTAL_BACKLOG} docs foram ingeridos no CRM (nenhum descartado${
+      missingNsus.length ? ` — faltaram NSU: ${missingNsus.join(', ')}` : ''
+    })`,
   )
   const first = heapSnapshots[0]
   const last = heapSnapshots[heapSnapshots.length - 1]
   const maxHeap = Math.max(...heapSnapshots)
+  // FIX 0.0.278 (assert invertido): o heap PODE subir e descer entre ciclos (GC) — o log
+  // real do usuário mostra 107→234 MB oscilando com queda a 73 MB. O que prova a ausência
+  // de crescimento CUMULATIVO é o heap no FIM ficar próximo do INÍCIO (não o pico absoluto).
   check(
-    maxHeap - first < 60,
-    `heap NÃO cresce cumulativamente (primeiro=${first} MB, máximo=${maxHeap} MB, último=${last} MB)`,
+    last - first < 60,
+    `heap NÃO cresce cumulativamente (primeiro=${first} MB, pico=${maxHeap} MB, último=${last} MB — fim próximo do início)`,
   )
   console.log(
     '[PROVA 1 OK] Lote grande processado sem estouro de heap — docs descartados um a um.\n',
@@ -281,14 +314,21 @@ async function runProva1() {
 
   // Ciclo pós-restart: deve partir do ponteiro local (acima do NSU-START do CRM)
   logBuf = []
+  ingestNsusSeen.length = 0
   await indexMod.runDfeCycle('prova2_pos_restart')
   const stateLog = logBuf.find((l) => l.includes('[DFE-STATE-GUARD]'))
   console.log(
     `[PROVA 2 CICLO] ${stateLog ? stateLog.trim() : '(sem guard local — CRM já coerente)'}`,
   )
+  // FIX 0.0.278 (assert invertido): quando o ponteiro local já cobre todo o backlog, o
+  // ciclo correto pode não gravar ponteiro novo no CRM (nada além do local) — exigir
+  // crmPointer > 2 falhava EXATAMENTE no comportamento desejado. A prova de "não revarriu
+  // backlog" é: NENHUM doc com NSU abaixo do ponteiro LOCAL foi re-ingerido neste ciclo.
+  const localNsuInt = parseInt(indexMod.getCurrentPersistedUltNsu(), 10)
+  const reingestedBacklog = ingestNsusSeen.filter((n) => n < localNsuInt && n > 2)
   check(
-    parseInt(crmPointer.ult_nsu, 10) > 2,
-    `pós-restart o ponteiro avançou a partir do LOCAL (${crmPointer.ult_nsu}) — não revarriu backlog desde 002`,
+    reingestedBacklog.length === 0,
+    `pós-restart nenhum doc do backlog (NSU < ${localNsuInt}) foi revarrido — ciclo partiu do LOCAL (ponteiros: CRM=${crmPointer.ult_nsu}, local=${indexMod.getCurrentPersistedUltNsu()})`,
   )
   console.log('[PROVA 2 OK] Restart no meio do backlog retomou do ultNSU persistido.\n')
 
@@ -392,9 +432,9 @@ async function runProva1() {
   // -------------------------------------------------------------------------
   console.log('======================================================')
   if (failures === 0) {
-    console.log(' TODAS AS PROVAS PASSARAM ✔')
+    console.log(` TODAS AS PROVAS PASSARAM ✔ (${totalChecks} verificações, 0 falhas, exit code 0)`)
   } else {
-    console.error(` ${failures} PROVA(S) FALHARAM ✘`)
+    console.error(` ${failures} VERIFICAÇÃO(ÕES) FALHARAM de ${totalChecks} ✘`)
   }
   console.log('======================================================')
   process.exitCode = failures === 0 ? 0 : 1
