@@ -54,10 +54,12 @@ console.log(' PROVA FIX HEAP-OOM + NSU PERSISTENTE (worker-dfe)')
 console.log(` Diretório de teste: ${TEST_DIR}`)
 console.log('======================================================\n')
 
-// FIX 0.0.278: veredito final conta pelos resultados REAIS de cada verificação —
+// FIX 0.0.278 / FIX 0.0.281: veredito final conta pelos resultados REAIS de cada verificação —
 // totalChecks incrementa em TODA chamada de check() e failures só quando falha.
+// Provas ou sub-verificações puladas por infraestrutura do mock incrementam skippedChecks.
 let failures = 0
 let totalChecks = 0
+let skippedChecks = 0
 function check(cond, label) {
   totalChecks++
   if (cond) {
@@ -66,6 +68,11 @@ function check(cond, label) {
     failures++
     console.error(`  ✘ FALHA: ${label}`)
   }
+}
+
+function skip(label) {
+  skippedChecks++
+  console.warn(`  ⚠ PULADO: ${label}`)
 }
 
 // ---------------------------------------------------------------------------
@@ -333,11 +340,105 @@ async function runProva1() {
   console.log('[PROVA 2 OK] Restart no meio do backlog retomou do ultNSU persistido.\n')
 
   // -------------------------------------------------------------------------
+  // INFRAESTRUTURA DE MOCK HTTP DO CRM (para Provas 3 e 4)
+  // -------------------------------------------------------------------------
+  // Inicia um servidor HTTP local simulando o endpoint do CRM para as chamadas que
+  // atravessam a camada de rede HTTP real do axios/node (quando axios nativo estiver
+  // instalado ou quando axios-shim despachar via HTTP).
+  //
+  // Requisitos da Tarefa:
+  // 1. Aguardar evento "listening" antes de qualquer conexão.
+  // 2. Retry de bind (3 tentativas) e porta alternativa se 8090 estiver ocupada.
+  //    Tenta 8090, 8091, 8092, e se todas ocupadas, porta efêmera (0).
+  // 3. Passar a porta escolhida dinamicamente para os CrmClients do teste.
+  // 4. ECONNREFUSED ao conectar no mock → mensagem clara "MOCK INDISPONÍVEL — prova pulada (infra do teste)",
+  //    marcando a prova como pulada via skip(), sem crash fatal.
+  const http = require('http')
+
+  async function startMockCrmServer() {
+    const candidatePorts = [8090, 8091, 8092, 0]
+    for (let i = 0; i < candidatePorts.length; i++) {
+      const port = candidatePorts[i]
+      const server = http.createServer((req, res) => {
+        // Rotas simuladas do CRM
+        if (req.url && req.url.includes('/dfe/commands')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ commands: [] }))
+          return
+        }
+        if (req.url && req.url.includes('/dfe/ingest')) {
+          let body = ''
+          req.on('data', (chunk) => {
+            body += chunk
+          })
+          req.on('end', () => {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ success: true, processed: true }))
+          })
+          return
+        }
+        if (req.url && req.url.includes('/dfe/status')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              dfe_enabled: true,
+              company_cnpj: '00496593000129',
+              pointer: { ...crmPointer },
+              poll_interval_hours: 1,
+            }),
+          )
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: true }))
+      })
+
+      const started = await new Promise((resolve) => {
+        server.once('error', (err) => {
+          server.close(() => {})
+          resolve({ ok: false, err })
+        })
+        server.listen(port, '127.0.0.1', () => {
+          const addr = server.address()
+          const boundPort = typeof addr === 'object' && addr ? addr.port : port
+          resolve({ ok: true, server, port: boundPort })
+        })
+      })
+
+      if (started.ok) {
+        return started
+      }
+      console.warn(
+        `[MOCK-CRM] Tentativa ${i + 1}/3: porta ${port} indisponível (${started.err ? started.err.code || started.err.message : 'desconhecido'}). Tentando próxima...`,
+      )
+    }
+    return { ok: false, server: null, port: null }
+  }
+
+  const mockCrm = await startMockCrmServer()
+  let mockBaseUrl = mockCrm.ok ? `http://127.0.0.1:${mockCrm.port}` : 'http://127.0.0.1:8090'
+  if (mockCrm.ok) {
+    console.log(`[MOCK-CRM] Servidor mock escutando com sucesso em ${mockBaseUrl}`)
+  } else {
+    console.warn(
+      '[MOCK-CRM] AVISO: Não foi possível vincular o servidor mock em nenhuma porta local.',
+    )
+  }
+
+  function isEconnRefused(err) {
+    if (!err) return false
+    if (err.code === 'ECONNREFUSED') return true
+    const msg = String(err.message || '')
+    return /ECONNREFUSED|connect ECONNREFUSED/i.test(msg)
+  }
+
+  // -------------------------------------------------------------------------
   // PROVA 3 — Retry do ingest: timeout 90s + 2 tentativas, documento não descartado
   // -------------------------------------------------------------------------
   console.log(
     '[PROVA 3] Ingest com timeout → 2 tentativas extras (espera 30s), documento não descartado',
   )
+  let prova3Failed = false
 
   // Acelera a espera entre tentativas para o teste (30s reais → 50ms)
   const crmSrc = fs.readFileSync(path.resolve(__dirname, 'crmClient.js'), 'utf8')
@@ -354,11 +455,8 @@ async function runProva1() {
   // Teste funcional do retry com waits encurtados via injeção de sleep
   const originalAxiosPost = require('axios').post
   let attemptCount = 0
-  let sleptMs = []
-  const realSleep = CrmClient.prototype.constructor === CrmClient ? null : null
 
-  // Intercepta sleep do módulo via patch temporário do arquivo em memória não é possível —
-  // em vez disso, mocka axios.post com timeout simulado na 1ª tentativa
+  // Mock de axios.post com timeout simulado na 1ª tentativa
   let ingestedXml = null
   require('axios').post = async function (url, body, cfg) {
     if (!url.includes('/dfe/ingest')) return originalAxiosPost(url, body, cfg)
@@ -373,14 +471,13 @@ async function runProva1() {
   }
 
   // Encurta a espera de 30s: patch do sleep interno via variável de teste
-  // (o crmClient expõe constantes; para o teste, sobrescrevemos Date-based wait via timer rápido)
   const origSetTimeout = global.setTimeout
   global.setTimeout = function (fn, ms, ...rest) {
     return origSetTimeout(fn, Math.min(ms, 50), ...rest)
   }
 
   try {
-    const client = new CrmClient('http://127.0.0.1:8090', 'test-token')
+    const client = new CrmClient(mockBaseUrl, 'test-token')
     const res = await client.ingestXml('<nfeProc>PROVA-3-RETRY</nfeProc>', '000000000000100')
     check(
       attemptCount === 2,
@@ -392,7 +489,12 @@ async function runProva1() {
       'documento NÃO foi descartado após timeout',
     )
   } catch (e) {
-    check(false, `retry do ingest falhou inesperadamente: ${e.message}`)
+    if (isEconnRefused(e)) {
+      skip(`MOCK INDISPONÍVEL — prova pulada (infra do teste): ingest retry (${e.message})`)
+    } else {
+      prova3Failed = true
+      check(false, `retry do ingest falhou inesperadamente: ${e.message}`)
+    }
   } finally {
     global.setTimeout = origSetTimeout
     require('axios').post = originalAxiosPost
@@ -411,23 +513,34 @@ async function runProva1() {
     return origSetTimeout(fn, Math.min(ms, 20), ...rest)
   }
   try {
-    const client = new CrmClient('http://127.0.0.1:8090', 'test-token')
+    const client = new CrmClient(mockBaseUrl, 'test-token')
     await client.ingestXml('<nfeProc>PROVA-3B</nfeProc>', '000000000000101')
+    prova3Failed = true
     check(false, '3b: deveria ter lançado erro após esgotar tentativas')
   } catch (e) {
-    check(
-      attemptCount === 3,
-      `timeout persistente: ${attemptCount} tentativas totais (1 + 2 extras) antes de encerrar ciclo`,
-    )
-    check(
-      /CRM-INGEST-ERR/.test(e.message),
-      'erro relançado é CRM-INGEST-ERR (ciclo encerra, ponteiro não avança, doc reprocessado no próximo ciclo)',
-    )
+    if (isEconnRefused(e)) {
+      skip(`MOCK INDISPONÍVEL — prova pulada (infra do teste): timeout persistente (${e.message})`)
+    } else {
+      check(
+        attemptCount === 3,
+        `timeout persistente: ${attemptCount} tentativas totais (1 + 2 extras) antes de encerrar ciclo`,
+      )
+      check(
+        /CRM-INGEST-ERR/.test(e.message),
+        'erro relançado é CRM-INGEST-ERR (ciclo encerra, ponteiro não avança, doc reprocessado no próximo ciclo)',
+      )
+    }
   } finally {
     global.setTimeout = origSetTimeout
     require('axios').post = originalAxiosPost
   }
-  console.log('[PROVA 3 OK] Retry de ingest comprovado (timeout não descarta documento).\n')
+
+  // Só marca [PROVA 3 OK] se nenhuma verificação da Prova 3 falhou
+  if (!prova3Failed) {
+    console.log('[PROVA 3 OK] Retry de ingest comprovado (timeout não descarta documento).\n')
+  } else {
+    console.error('[PROVA 3 FALHOU] Uma ou mais verificações falharam na Prova 3.\n')
+  }
 
   // -------------------------------------------------------------------------
   // PROVA 4 — Observador de Comandos: 100 polls sem vazamento de memória (<150 MB)
@@ -435,39 +548,66 @@ async function runProva1() {
   console.log(
     '[PROVA 4] Observador de comandos: simulação de 100 polls seguidos com heap estável (<150 MB)',
   )
-  const crmClientForPoll = new CrmClient('http://127.0.0.1:8090', 'test-poll-token')
-  check(
-    crmClientForPoll.httpAgent === CrmClient.crmHttpAgent,
-    'crmClient: reutiliza crmHttpAgent singleton em vez de recriar agente por request',
-  )
-  check(
-    crmClientForPoll.httpsAgent === CrmClient.crmHttpsAgent,
-    'crmClient: reutiliza crmHttpsAgent singleton em vez de recriar agente por request',
-  )
+  let prova4Failed = false
+  let prova4Skipped = false
 
-  // Mede heap inicial antes de 100 polls
-  if (global.gc) global.gc()
-  const heapBeforePollsMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+  try {
+    const crmClientForPoll = new CrmClient(mockBaseUrl, 'test-poll-token')
+    check(
+      crmClientForPoll.httpAgent === CrmClient.crmHttpAgent,
+      'crmClient: reutiliza crmHttpAgent singleton em vez de recriar agente por request',
+    )
+    check(
+      crmClientForPoll.httpsAgent === CrmClient.crmHttpsAgent,
+      'crmClient: reutiliza crmHttpsAgent singleton em vez de recriar agente por request',
+    )
 
-  // Mock de getPendingCommands via axios do shim retornando comandos vazios
-  for (let poll = 1; poll <= 100; poll++) {
-    await crmClientForPoll.getPendingCommands()
+    // Mede heap inicial antes de 100 polls
+    if (global.gc) global.gc()
+    const heapBeforePollsMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+
+    // Polls contra o mock CrmClient
+    for (let poll = 1; poll <= 100; poll++) {
+      await crmClientForPoll.getPendingCommands()
+    }
+
+    if (global.gc) global.gc()
+    const heapAfterPollsMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+    console.log(
+      `[PROVA 4 RESULTADO] 100 polls concluídos | heap inicial: ${heapBeforePollsMb} MB | heap final: ${heapAfterPollsMb} MB`,
+    )
+    check(
+      heapAfterPollsMb < 150,
+      `heap após 100 polls permanece estável e abaixo de 150 MB (${heapAfterPollsMb} MB < 150 MB)`,
+    )
+    check(
+      heapAfterPollsMb - heapBeforePollsMb < 30,
+      `crescimento de heap em 100 polls é desprezível (${heapAfterPollsMb - heapBeforePollsMb} MB < 30 MB)`,
+    )
+  } catch (err) {
+    if (isEconnRefused(err)) {
+      prova4Skipped = true
+      skip(`MOCK INDISPONÍVEL — prova pulada (infra do teste): 100 polls falharam (${err.message})`)
+    } else {
+      prova4Failed = true
+      check(false, `Prova 4 falhou inesperadamente: ${err.message}`)
+    }
   }
 
-  if (global.gc) global.gc()
-  const heapAfterPollsMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
-  console.log(
-    `[PROVA 4 RESULTADO] 100 polls concluídos | heap inicial: ${heapBeforePollsMb} MB | heap final: ${heapAfterPollsMb} MB`,
-  )
-  check(
-    heapAfterPollsMb < 150,
-    `heap após 100 polls permanece estável e abaixo de 150 MB (${heapAfterPollsMb} MB < 150 MB)`,
-  )
-  check(
-    heapAfterPollsMb - heapBeforePollsMb < 30,
-    `crescimento de heap em 100 polls é desprezível (${heapAfterPollsMb - heapBeforePollsMb} MB < 30 MB)`,
-  )
-  console.log('[PROVA 4 OK] 100 polls executados sem vazamento no caminho ocioso.\n')
+  if (prova4Skipped) {
+    console.log('[PROVA 4 PULADA] Mock indisponível, prova marcada como pulada.\n')
+  } else if (!prova4Failed) {
+    console.log('[PROVA 4 OK] 100 polls executados sem vazamento no caminho ocioso.\n')
+  } else {
+    console.error('[PROVA 4 FALHOU] Uma ou mais verificações falharam na Prova 4.\n')
+  }
+
+  // Encerra o servidor mock do CRM se foi iniciado neste teste
+  if (mockCrm.server && typeof mockCrm.server.close === 'function') {
+    try {
+      mockCrm.server.close()
+    } catch (_) {}
+  }
 
   // -------------------------------------------------------------------------
   // PROVA 5 — Backoff 656 persistido: boot com backoff ativo PULA consulta à SEFAZ
@@ -539,14 +679,23 @@ async function runProva1() {
   // -------------------------------------------------------------------------
   console.log('======================================================')
   if (failures === 0) {
-    console.log(` TODAS AS PROVAS PASSARAM ✔ (${totalChecks} verificações, 0 falhas, exit code 0)`)
+    const skipNotice = skippedChecks > 0 ? `, ${skippedChecks} pulada(s)` : ''
+    console.log(
+      ` TODAS AS PROVAS PASSARAM ✔ (${totalChecks} verificações bem-sucedidas, 0 falhas${skipNotice}, exit code 0)`,
+    )
   } else {
-    console.error(` ${failures} VERIFICAÇÃO(ÕES) FALHARAM de ${totalChecks} ✘`)
+    const skipNotice = skippedChecks > 0 ? `, ${skippedChecks} pulada(s)` : ''
+    console.error(
+      ` ${failures} VERIFICAÇÃO(ÕES) FALHARAM de ${totalChecks + failures} ✘${skipNotice}`,
+    )
   }
   console.log('======================================================')
   process.exitCode = failures === 0 ? 0 : 1
 })().catch((e) => {
   console.error('[ERRO FATAL NAS PROVAS]', e)
+  console.log('======================================================')
+  console.error(` VEREDITO: PROVAS INTERROMPIDAS POR EXCEÇÃO FATAL (${failures + 1} falhas) ✘`)
+  console.log('======================================================')
   process.exitCode = 1
 })
 
