@@ -216,6 +216,7 @@ const zipOutPath = path.join(publicDir, 'worker-dfe.zip')
 
 // Lista explícita dos arquivos do pacote worker-dfe (nunca node_modules ou config.json real)
 const allowedFiles = [
+  'axios-shim.js',
   'certUtils.js',
   'config.example.json',
   'crmClient.js',
