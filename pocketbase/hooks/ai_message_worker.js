@@ -2402,21 +2402,29 @@ onRecordAfterCreateSuccess((e) => {
         // NOTIFICAÇÃO ADICIONAL DE ESCALADA VIA WHATSAPP (11947518805)
         // Dispara para qualquer motivo de transferência humana na Camada 3 (reclamacao, nota, cobranca, aplicacao, etc.)
         // Tolerante a erro: nunca bloqueia nem atrasa a escalada
-        if (
-          globalThis.__aiEscalationNotifier &&
-          typeof globalThis.__aiEscalationNotifier.notifyEscalation === 'function'
-        ) {
-          try {
-            globalThis.__aiEscalationNotifier.notifyEscalation({
+        try {
+          const fn =
+            (typeof notifyEscalation === 'function' && notifyEscalation) ||
+            (typeof globalThis !== 'undefined' &&
+              globalThis.__aiEscalationNotifier &&
+              typeof globalThis.__aiEscalationNotifier.notifyEscalation === 'function' &&
+              globalThis.__aiEscalationNotifier.notifyEscalation) ||
+            (typeof globalThis !== 'undefined' &&
+              typeof globalThis.notifyEscalation === 'function' &&
+              globalThis.notifyEscalation) ||
+            null
+
+          if (fn) {
+            fn({
               $app: $app,
               phone: normalizedSenderPhone || phone,
               reason: transferReason,
               incomingText: incomingText,
               aiReply: aiReply,
             })
-          } catch (notifErr) {
-            console.log('[ESCALATION-NOTIF-HOOK-ERR]', notifErr.message || String(notifErr))
           }
+        } catch (notifErr) {
+          console.log('[ESCALATION-NOTIF-HOOK-ERR]', notifErr.message || String(notifErr))
         }
       } catch (transferSaveErr) {
         console.log(

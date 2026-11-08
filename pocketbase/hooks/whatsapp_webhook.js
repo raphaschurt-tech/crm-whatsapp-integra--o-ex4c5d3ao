@@ -1913,21 +1913,29 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
           // NOTIFICAÇÃO ADICIONAL DE ESCALADA VIA WHATSAPP (11947518805)
           // Dispara quando o cliente digita o comando /atendente
           // Tolerante a erro: nunca bloqueia nem atrasa a escalada
-          if (
-            globalThis.__aiEscalationNotifier &&
-            typeof globalThis.__aiEscalationNotifier.notifyEscalation === 'function'
-          ) {
-            try {
-              globalThis.__aiEscalationNotifier.notifyEscalation({
+          try {
+            const fn =
+              (typeof notifyEscalation === 'function' && notifyEscalation) ||
+              (typeof globalThis !== 'undefined' &&
+                globalThis.__aiEscalationNotifier &&
+                typeof globalThis.__aiEscalationNotifier.notifyEscalation === 'function' &&
+                globalThis.__aiEscalationNotifier.notifyEscalation) ||
+              (typeof globalThis !== 'undefined' &&
+                typeof globalThis.notifyEscalation === 'function' &&
+                globalThis.notifyEscalation) ||
+              null
+
+            if (fn) {
+              fn({
                 $app: $app,
                 phone: normalizedPhone,
                 reason: 'comando_atendente',
                 incomingText: rawCmdText,
                 aiReply: '',
               })
-            } catch (notifErr) {
-              console.log('[ESCALATION-NOTIF-HOOK-ERR]', notifErr.message || String(notifErr))
             }
+          } catch (notifErr) {
+            console.log('[ESCALATION-NOTIF-HOOK-ERR]', notifErr.message || String(notifErr))
           }
         } catch (ctrlErr) {
           console.log('[CHAT-CONTROL-SAVE-ERR]', ctrlErr.message || String(ctrlErr))
