@@ -1,408 +1,402 @@
-// ai_status_tools.js — Fase 7 Rodada 1: 3 tools novas de function calling (somente leitura).
-// (a) status_pedido — orçamentos e pedidos pelo telefone canônico do cliente;
-// (b) status_nfe — NF-e processadas e contas a pagar por documento/telefone do cliente;
-// (c) segunda_via_danfe — localiza a chave de 44 dígitos e grava comando busca_por_chave
-//     na fila do worker DF-e (coleção dfe_command_queue, rota existente respeitada).
-// Regra permanente: resposta SÓ com dado lido — nada inventado. Sem dados, retorna
-// vazio/escalavel_humano e a IA escala ao atendente.
-//
-// Cada executor recebe um objeto ctx com o que precisa:
-//   ctx.phone           — telefone canônico do remetente (message_processing)
-//   ctx.maskedPhone     — telefone mascarado para logs
-//   ctx.enqueueDfeCommand — função(command, params, createdByTag) que grava na fila do worker DF-e
-// Os executores NUNCA lançam exceção: sempre devolvem objeto (com `erro` quando falham).
-
-const BRASILIA_OFFSET_MS = -3 * 3600 * 1000
-
-const nowBrasiliaIso = () => {
-  try {
-    return new Date(Date.now() + BRASILIA_OFFSET_MS).toISOString().replace('Z', '-03:00')
-  } catch (_) {
-    return new Date().toISOString()
+// ============================================
+// TOOLS DE STATUS — Fase 7 · Rodada 1
+// 3 tools novas para a IA do atendimento com dado REAL lido do banco:
+//   status_pedido      → último orçamento + pedido do cliente (quotes + orders)
+//   status_nfe         → última NF-e do CNPJ (nfe_processed), com aviso de cancelada
+//   segunda_via_danfe  → enfileira comando busca_por_chave na dfe_command_queue
+// Regras permanentes respeitadas:
+//   - resposta SOMENTE com dado lido — nada inventado;
+//   - segunda_via_danfe NUNCA inventa chave de 44 dígitos — sem chave → escala ao humano;
+//   - horários em Brasília (UTC-3);
+//   - aplicações de peça NUNCA são confirmadas pela IA (só humano).
+// Pendurado em globalThis para o ai_message_worker chamar via globalThis.__aiStatusTools.
+// ============================================
+;(function () {
+  // Telefone canônico: mesma regra de chat_summaries (sem @lid, sem DDI 55, 8+ dígitos)
+  const canonicalPhoneOf = (p) => {
+    if (!p) return ''
+    const str = String(p).trim()
+    if (str.toLowerCase().includes('@lid')) return ''
+    const digits = str.replace(/\D/g, '')
+    if (!digits || digits.length >= 14) return ''
+    if ((digits.length === 12 || digits.length === 13) && digits.startsWith('55')) {
+      return digits.slice(2)
+    }
+    return digits
   }
-}
 
-const cleanDigits = (v) => String(v || '').replace(/\D/g, '')
+  const onlyDigits = (s) => String(s || '').replace(/\D/g, '')
 
-// Telefone canônico: sem DDI 55 (padrão usado em chat_summaries/contatos unificados)
-const canonicalPhoneOf = (p) => {
-  const d = cleanDigits(p)
-  if (!d) return ''
-  if (d.startsWith('55') && d.length >= 12) return d.slice(2)
-  return d
-}
-
-const formatBRL = (v) => {
-  const n = Number(v) || 0
-  return 'R$ ' + n.toFixed(2).replace('.', ',')
-}
-
-const formatDateTimeBR = (iso) => {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (isNaN(d.getTime())) return String(iso)
-  const b = new Date(d.getTime() + BRASILIA_OFFSET_MS)
-  const pad = (x) => String(x).padStart(2, '0')
-  return (
-    pad(b.getUTCDate()) +
-    '/' +
-    pad(b.getUTCMonth() + 1) +
-    '/' +
-    b.getUTCFullYear() +
-    ' ' +
-    pad(b.getUTCHours()) +
-    ':' +
-    pad(b.getUTCMinutes())
-  )
-}
-
-// Localiza o cliente por telefone canônico (contatos unificados: variantes com/sem DDI)
-const findCustomerByPhone = (phone) => {
-  const canonical = canonicalPhoneOf(phone)
-  if (!canonical) return null
-  const variants = [canonical]
-  if (canonical.length >= 10 && canonical.length <= 11) {
-    variants.push('55' + canonical)
+  // Formata valor em reais — dado lido, nunca formatado a partir de estimativa
+  const formatBRL = (v) => {
+    const n = Number(v)
+    if (!isFinite(n)) return ''
+    return 'R$ ' + n.toFixed(2).replace('.', ',')
   }
-  // Match por sufixo: cobre phones gravados com DDI ou com máscara
-  const suffix = canonical.length > 8 ? canonical.slice(-8) : canonical
-  for (let i = 0; i < variants.length; i++) {
+
+  // Data em Brasília (UTC-3) a partir de timestamp/ISO do banco
+  const formatBrasilia = (raw) => {
+    if (!raw) return ''
     try {
-      const found = $app.findRecordsByFilter('customers', 'phone ~ {:v}', '-created', 10, 0, {
-        v: variants[i],
-      })
-      // Confirma pelo sufixo canônico para evitar falso positivo do ~
-      for (let j = 0; j < found.length; j++) {
-        const custPhone = cleanDigits(found[j].getString('phone'))
-        if (custPhone.endsWith(suffix)) return found[j]
-      }
-    } catch (_) {}
-  }
-  return null
-}
-
-// ============================================================
-// (a) status_pedido — últimos orçamentos e pedidos do cliente
-// ============================================================
-const executeStatusPedido = (ctx) => {
-  try {
-    const customer = findCustomerByPhone(ctx.phone)
-    if (!customer) {
-      return {
-        cliente_encontrado: false,
-        orcamentos: [],
-        pedidos: [],
-        mensagem:
-          'Cliente não localizado pelo telefone. Pergunte o nome/empresa e escale ao humano se não resolver.',
-      }
-    }
-
-    const custId = customer.id
-    const custName = String(customer.getString('name') || '')
-    const custDoc = cleanDigits(customer.getString('document') || '')
-
-    // --- Orçamentos (quotes) — relation direta ao cliente
-    const orcamentos = []
-    try {
-      const quotes = $app.findRecordsByFilter('quotes', 'customer = {:cid}', '-created', 5, 0, {
-        cid: custId,
-      })
-      for (let i = 0; i < quotes.length; i++) {
-        const q = quotes[i]
-        let total = 0
-        try {
-          total = Number(q.get('total')) || 0
-        } catch (_) {}
-        orcamentos.push({
-          numero: String(q.getString('quote_number') || q.id),
-          status: String(q.getString('status') || ''),
-          valor: total,
-          valor_fmt: total > 0 ? formatBRL(total) : 'Sob consulta',
-          data: formatDateTimeBR(q.getString('created') || q.created),
-        })
-      }
-    } catch (qErr) {
-      console.log('[TOOL-STATUS-PEDIDO-QUOTES-ERR]', String(qErr))
-    }
-
-    // --- Pedidos (orders) — via quotes do cliente (orders carrega quote relation)
-    const pedidos = []
-    const quoteIds = {}
-    for (let i = 0; i < orcamentosRaw.length; i++) quoteIds[orcamentosRaw[i].id] = true
-    try {
-      const orders = $app.findRecordsByFilter('orders', 'quote = {:qid}', '-created', 10, 0, {
-        qid: custId,
-      })
-      for (let i = 0; i < orders.length; i++) {
-        const o = orders[i]
-        pedidos.push({
-          codigo: String(o.getString('order_number') || o.id),
-          status_comercial: String(o.getString('commercial_status') || ''),
-          status_financeiro: String(o.getString('financial_status') || ''),
-          valor: Number(o.get('total')) || 0,
-          valor_fmt: formatBRL(Number(o.get('total')) || 0),
-          data: formatDateTimeBR(o.getString('created') || o.created),
-        })
-      }
-    } catch (oErr) {
-      console.log('[TOOL-STATUS-PEDIDO-ORDERS-ERR]', String(oErr))
-    }
-
-    console.log(
-      '[TOOL-STATUS-PEDIDO-EXECUTED]',
-      JSON.stringify({
-        horarioBrasilia: nowBrasiliaIso(),
-        phone: ctx.maskedPhone,
-        customerId: custId,
-        orcamentos: orcamentos.length,
-        pedidos: pedidos.length,
-      }),
-    )
-
-    return {
-      cliente_encontrado: true,
-      cliente: custName,
-      orcamentos: orcamentos,
-      pedidos: pedidos,
-    }
-  } catch (err) {
-    console.log('[TOOL-STATUS-PEDIDO-ERROR]', String(err))
-    return { cliente_encontrado: false, orcamentos: [], pedidos: [], erro: String(err) }
-  }
-}
-
-// ============================================================
-// (b) status_nfe — NF-e recebidas do cliente + contas a pagar
-// ============================================================
-const executeStatusNfe = (ctx) => {
-  try {
-    const customer = findCustomerByPhone(ctx.phone)
-    if (!customer) {
-      return {
-        cliente_encontrado: false,
-        notas: [],
-        mensagem:
-          'Cliente não localizado pelo telefone. Pergunte o CNPJ ou número da NF e escale ao humano se não resolver.',
-      }
-    }
-
-    const custDoc = cleanDigits(customer.getString('document') || '')
-    const custName = String(customer.getString('name') || '')
-
-    // --- NF-e processadas (nfe_processed), por documento do emitente/destinatário
-    const notas = []
-    try {
-      let nfeFilter = ''
-      const bind = {}
-      if (custDoc.length >= 11) {
-        nfeFilter = 'supplier_document ~ {:doc} || customer_document ~ {:doc}'
-        bind = { doc: custDoc }
-      } else {
-        // Sem documento: procura pelas chaves registradas nas notas com o nome do cliente
-        nfeFilter = 'supplier_name ~ {:name} || customer_name ~ {:name}'
-        bind = { name: custName }
-      }
-      const nfes = $app.findRecordsByFilter('nfe_processed', nfeFilter, '-created', 10, 0, bind)
-      for (let i = 0; i < nfes.length; i++) {
-        const n = nfes[i]
-        const status = String(n.getString('status') || '')
-        notas.push({
-          numero: String(n.getString('nfe_number') || n.id),
-          chave: String(n.getString('nfe_key') || '').trim(),
-          status: status,
-          emitente: String(n.getString('supplier_name') || ''),
-          valor: Number(n.get('total_value')) || 0,
-          valor_fmt: formatBRL(Number(n.get('total_value')) || 0),
-          data: formatDateTimeBR(n.getString('created') || n.created),
-        })
-      }
-    } catch (nfeErr) {
-      console.log('[TOOL-STATUS-NFE-NFE-ERR]', String(nfeErr))
-    }
-
-    // --- Contas a pagar ligadas ao cliente/fornecedor
-    let contas = {
-      encontradas: 0,
-      pendentes: 0,
-      pagas: [],
-      resumo: 'Nenhuma conta a pagar encontrada.',
-    }
-    try {
-      if (custDoc.length >= 11) {
-        const aps = $app.findRecordsByFilter(
-          'accounts_payable',
-          'supplier_document ~ {:doc}',
-          '-created',
-          10,
-          0,
-          { doc: custDoc },
-        )
-        const pagas = []
-        let pendentes = 0
-        for (let i = 0; i < aps.length; i++) {
-          const ap = aps[i]
-          const apStatus = String(ap.getString('status') || '')
-          if (apStatus === 'pago' || apStatus === 'paid') {
-            pagas.push({
-              descricao: String(ap.getString('description') || ''),
-              valor_fmt: formatBRL(Number(ap.get('amount')) || 0),
-              vencimento: formatDateTimeBR(ap.getString('due_date') || ''),
-              status: apStatus,
-            })
-          } else {
-            pendentes++
-          }
-        }
-        contas = {
-          encontradas: aps.length,
-          pendentes: pendentes,
-          pagas: pagas,
-          resumo:
-            pendentes > 0
-              ? pendentes + ' conta(s) com pagamento pendente.'
-              : 'Nenhuma pendência em aberto.',
-        }
-      }
-    } catch (apErr) {
-      console.log('[TOOL-STATUS-NFE-CONTAS-ERR]', String(apErr))
-    }
-
-    console.log(
-      '[TOOL-STATUS-NFE-EXECUTED]',
-      JSON.stringify({
-        horarioBrasilia: nowBrasiliaIso(),
-        phone: ctx.maskedPhone,
-        customerId: customer.id,
-        notas: notas.length,
-        contas: contas.encontradas,
-      }),
-    )
-
-    return {
-      cliente_encontrado: true,
-      cliente: custName,
-      notas: notas,
-      contas_a_pagar: contas,
-      regra_cancelada: 'NF cancelada não deve ser paga — comunique isso ao cliente com clareza.',
-    }
-  } catch (err) {
-    console.log('[TOOL-STATUS-NFE-ERROR]', String(err))
-    return { cliente_encontrado: false, notas: [], erro: String(err) }
-  }
-}
-
-// ============================================================
-// (c) segunda_via_danfe — acha a chave de 44 dígitos do cliente
-//     no pipeline DF-e e grava comando busca_por_chave na fila.
-//     NUNCA inventa chave; sem chave → escala ao humano.
-// ============================================================
-const executeSegundaViaDanfe = (ctx) => {
-  try {
-    const customer = findCustomerByPhone(ctx.phone)
-    if (!customer) {
-      return {
-        chave_encontrada: false,
-        escalavel_humano: true,
-        mensagem:
-          'Cliente não localizado pelo telefone. Escalar ao humano para identificar a nota.',
-      }
-    }
-
-    const custDoc = cleanDigits(customer.getString('document') || '')
-    const custName = String(customer.getString('name') || '')
-
-    // Procura a chave mais recente nas NF-e processadas do cliente (pipeline DF-e)
-    let chave = ''
-    let chaveOrigem = ''
-    try {
-      let bind = {}
-      let filter = ''
-      if (custDoc.length >= 11) {
-        filter = 'supplier_document ~ {:doc} || customer_document ~ {:doc}'
-        bind = { doc: custDoc }
-      } else {
-        filter = 'supplier_name ~ {:name} || customer_name ~ {:name}'
-        bind = { name: custName }
-      }
-      const nfes = $app.findRecordsByFilter('nfe_processed', filter, '-created', 5, 0, bind)
-      for (let i = 0; i < nfes.length; i++) {
-        const k = cleanDigits(nfes[i].getString('nfe_key') || '')
-        if (k.length === 44) {
-          chave = k
-          chaveOrigem = String(nfes[i].getString('nfe_number') || nfes[i].id)
-          break
-        }
-      }
-    } catch (keyErr) {
-      console.log('[TOOL-SEGUNDA-VIA-DANFE-KEY-ERR]', String(keyErr))
-    }
-
-    if (!chave) {
-      console.log(
-        '[TOOL-SEGUNDA-VIA-DANFE-SEM-CHAVE]',
-        JSON.stringify({
-          horarioBrasilia: nowBrasiliaIso(),
-          phone: ctx.maskedPhone,
-          customerId: customer.id,
-        }),
+      const d = new Date(raw)
+      if (isNaN(d.getTime())) return String(raw)
+      const b = new Date(d.getTime() - 3 * 60 * 60 * 1000)
+      return (
+        b.toISOString().slice(8, 10) +
+        '/' +
+        b.toISOString().slice(5, 7) +
+        '/' +
+        b.toISOString().slice(0, 4) +
+        ' ' +
+        b.toISOString().slice(11, 16)
       )
+    } catch (_) {
+      return String(raw)
+    }
+  }
+
+  const STATUS_LABELS = {
+    rascunho: 'em elaboração',
+    enviado: 'enviado — aguardando sua resposta',
+    aprovado: 'aprovado por você',
+    rejeitado: 'não fechado',
+    pago: 'pago',
+    aberto: 'em produção/separação',
+    cancelado: 'cancelado',
+    pendente: 'pendente',
+    processada: 'processada',
+    erro: 'com erro de processamento',
+    cancelada: 'CANCELADA',
+  }
+  const labelFor = (s) => STATUS_LABELS[String(s || '')] || String(s || '')
+
+  // Busca cliente pelo telefone canônico (colunas cnpj/cpf reais do customers)
+  const findCustomerByPhone = ($app, phone) => {
+    const canon = canonicalPhoneOf(phone)
+    if (!canon) return null
+    const variants = [canon, '55' + canon, '+' + canon, '+55' + canon]
+    for (let i = 0; i < variants.length; i++) {
+      try {
+        const found = $app.findRecordsByFilter(
+          'customers',
+          'phone ~ {:p} && deleted != true',
+          '-created',
+          1,
+          0,
+          { p: variants[i] },
+        )
+        if (found && found.length > 0) return found[0]
+      } catch (_) {}
+    }
+    return null
+  }
+
+  // ----------------------------------------
+  // TOOL 1 — status_pedido
+  // ----------------------------------------
+  const executeStatusPedido = ($app, ctx) => {
+    const phone = (ctx && ctx.phone) || ''
+    const customer = findCustomerByPhone($app, phone)
+    if (!customer) {
       return {
-        chave_encontrada: false,
-        escalavel_humano: true,
-        mensagem:
-          'Nenhuma chave de 44 dígitos encontrada nas notas do cliente. Não invente chave — escale ao humano.',
+        reply:
+          'Não encontrei pedidos para esse número aqui. Me confirma seu telefone com DDD, ou fala com o Raphael que ele resolve na hora.',
+        data: null,
       }
     }
 
-    // Grava comando busca_por_chave na fila do worker DF-e (coleção dfe_command_queue,
-    // mesmo canal da rota existente /backend/v1/dfe/commands/enqueue).
-    let enqueueResult = { ok: false, detail: '' }
-    try {
-      const col = $app.findCollectionByNameOrId('dfe_command_queue')
-      const cmd = new Record(col)
-      cmd.set('command', 'busca_por_chave')
-      cmd.set('params', { chave: chave, origem: 'ia_whatsapp', cliente: custName })
-      cmd.set('status', 'pendente')
-      cmd.set('result_summary', 'Enfileirado pela IA (segunda via DANFE)')
-      cmd.set('executed_at', '')
-      $app.save(cmd)
-      enqueueResult = { ok: true, detail: cmd.id }
-    } catch (enqErr) {
-      enqueueResult = { ok: false, detail: String(enqErr) }
-      console.log('[TOOL-SEGUNDA-VIA-DANFE-ENQUEUE-ERR]', String(enqErr))
+    const name = String(customer.getString('name') || '')
+    const quotes = $app.findRecordsByFilter('quotes', 'customer = {:cid}', '-created', 3, 0, {
+      cid: customer.id,
+    })
+
+    if (!quotes || quotes.length === 0) {
+      return {
+        reply:
+          'Oi, ' +
+          (name.split(' ')[0] || 'tudo bem') +
+          '! Não achei orçamento ou pedido em aberto para esse número. Quer que eu já veja alguma peça?',
+        data: { customer: name },
+      }
     }
 
-    console.log(
-      '[TOOL-SEGUNDA-VIA-DANFE-EXECUTED]',
-      JSON.stringify({
-        horarioBrasilia: nowBrasiliaIso(),
-        phone: ctx.maskedPhone,
-        customerId: customer.id,
-        chave: chave.slice(0, 8) + '...' + chave.slice(-4),
-        origem: chaveOrigem,
-        enfileirado: enqueueResult.ok,
-      }),
-    )
+    const q = quotes[0]
+    const qNumber = String(q.getString('number') || '')
+    const qStatus = String(q.getString('status') || '')
+    const qTotal = q.get('total')
+
+    // Pedido ligado a QUALQUER orçamento do cliente (coluna real: quote_id)
+    let order = null
+    for (let i = 0; i < quotes.length && !order; i++) {
+      try {
+        const os = $app.findRecordsByFilter('orders', 'quote_id = {:qid}', '-created', 1, 0, {
+          qid: quotes[i].id,
+        })
+        if (os && os.length > 0) order = os[0]
+      } catch (_) {}
+    }
+
+    let reply = ''
+    if (order) {
+      const oCode = String(order.getString('code') || '')
+      const oComm = String(order.getString('commercial_status') || '')
+      const oFin = String(order.getString('financial_status') || '')
+      reply =
+        'Oi, ' +
+        (name.split(' ')[0] || '') +
+        '! Seu pedido ' +
+        oCode +
+        ' está ' +
+        labelFor(oComm) +
+        (oFin === 'pago' ? ' e o pagamento já caiu.' : ' — pagamento ' + labelFor(oFin) + '.')
+      if (oComm === 'cancelado') {
+        reply += ' Sobre isso preciso te passar pro Raphael — me dá um instante.'
+        ctx && ctx.escalate && (ctx.escalate = true)
+      }
+      reply += ' Mais alguma coisa?'
+    } else {
+      reply =
+        'Oi, ' +
+        (name.split(' ')[0] || '') +
+        '! Seu orçamento ' +
+        qNumber +
+        ' está ' +
+        labelFor(qStatus) +
+        (qTotal ? ' (total ' + formatBRL(qTotal) + ')' : '') +
+        '.'
+      if (qStatus === 'enviado') {
+        reply += ' Quando aprovar, fecho o pedido na hora.'
+      }
+      reply += ' Quer que eu te mande o link de novo?'
+    }
 
     return {
-      chave_encontrada: true,
-      chave: chave,
-      chave_mascarada: chave.slice(0, 8) + '...' + chave.slice(-4),
-      numero_nfe: chaveOrigem,
-      comando_enfileirado: enqueueResult.ok,
-      resposta_sugerida: 'Gerando a segunda via da DANFE e te envio em instantes.',
+      reply: reply,
+      data: {
+        customer: name,
+        quote: { number: qNumber, status: qStatus, total: qTotal },
+        order: order
+          ? {
+              code: String(order.getString('code') || ''),
+              commercial_status: String(order.getString('commercial_status') || ''),
+              financial_status: String(order.getString('financial_status') || ''),
+            }
+          : null,
+      },
     }
-  } catch (err) {
-    console.log('[TOOL-SEGUNDA-VIA-DANFE-ERROR]', String(err))
-    return { chave_encontrada: false, escalavel_humano: true, erro: String(err) }
   }
-}
 
-// Exporta no escopo global do JSVM (isole por hook — atribui a globalThis)
-globalThis.__aiStatusTools = {
-  executeStatusPedido,
-  executeStatusNfe,
-  executeSegundaViaDanfe,
-  findCustomerByPhone,
-  canonicalPhoneOf,
-}
+  // ----------------------------------------
+  // TOOL 2 — status_nfe
+  // ----------------------------------------
+  const executeStatusNfe = ($app, ctx) => {
+    const phone = (ctx && ctx.phone) || ''
+    const customer = findCustomerByPhone($app, phone)
+    if (!customer) {
+      return {
+        reply:
+          'Não achei nota para esse número. Me manda o CNPJ ou a chave da nota que eu verifico aqui.',
+        data: null,
+      }
+    }
+
+    const name = String(customer.getString('name') || '')
+    // Colunas reais: cnpj e cpf (não existe "document")
+    const docDigits =
+      onlyDigits(customer.getString('cnpj') || '') || onlyDigits(customer.getString('cpf') || '')
+
+    if (!docDigits || docDigits.length < 11) {
+      return {
+        reply:
+          'Não tenho o CNPJ/cpf desse cadastro linkado ao número. Me manda o CNPJ que eu verifico a nota na hora.',
+        data: null,
+      }
+    }
+
+    // Colunas reais: supplier_cnpj (emitente) e dest_cnpj (destinatário)
+    let nfe = null
+    try {
+      const nfes = $app.findRecordsByFilter(
+        'nfe_processed',
+        'dest_cnpj ~ {:doc} || supplier_cnpj ~ {:doc}',
+        '-created',
+        1,
+        0,
+        { doc: docDigits },
+      )
+      if (nfes && nfes.length > 0) nfe = nfes[0]
+    } catch (_) {}
+
+    if (!nfe) {
+      return {
+        reply:
+          'Não achei NF-e para o CNPJ ' +
+          docDigits +
+          ' nos últimos lançamentos. Se foi emitida agora, pode levar alguns minutos — me chama de novo em seguida.',
+        data: null,
+      }
+    }
+
+    const nNumber = String(nfe.getString('nfe_number') || '')
+    const nStatus = String(nfe.getString('status') || '')
+    const nKey = String(nfe.getString('access_key') || '')
+    const nTotal = nfe.get('total_amount')
+
+    // REGRA PERMANENTE: nota cancelada → alerta de NÃO PAGAR
+    if (nStatus === 'cancelada') {
+      return {
+        reply:
+          'ATENÇÃO: a NF-e ' +
+          nNumber +
+          ' está CANCELADA — NÃO PAGA, por favor. Se já pagou, me fala que eu te passo pro Raphael resolver.',
+        data: {
+          customer: name,
+          nfe: { number: nNumber, status: nStatus, access_key: nKey, total: nTotal },
+          alert: 'cancelada',
+        },
+      }
+    }
+
+    let extra = ''
+    if (nStatus === 'pendente_reconciliacao') {
+      extra = ' Está em conferência interna de itens — nada muda pra você.'
+    } else if (nStatus === 'erro') {
+      extra =
+        ' Tivemos um erro no processamento interno — já estou chamando o Raphael pra conferir.'
+      ctx && ctx.escalate && (ctx.escalate = true)
+    }
+
+    return {
+      reply:
+        'Oi, ' +
+        (name.split(' ')[0] || '') +
+        '! A NF-e ' +
+        nNumber +
+        (nTotal ? ' no valor de ' + formatBRL(nTotal) : '') +
+        ' está ' +
+        labelFor(nStatus) +
+        '.' +
+        extra +
+        ' Posso te mandar o DANFE?',
+      data: {
+        customer: name,
+        nfe: { number: nNumber, status: nStatus, access_key: nKey, total: nTotal },
+      },
+    }
+  }
+
+  // ----------------------------------------
+  // TOOL 3 — segunda_via_danfe
+  // ----------------------------------------
+  const executeSegundaViaDanfe = ($app, ctx) => {
+    const phone = (ctx && ctx.phone) || ''
+    const args = (ctx && ctx.args) || {}
+    const enqueueDfeCommand = (ctx && ctx.enqueueDfeCommand) || null
+    const rawKey = onlyDigits(args.access_key || args.chave || '')
+
+    if (!rawKey) {
+      // Sem chave → tenta achar a última NF-e do cliente pelo cadastro
+      const customer = findCustomerByPhone($app, phone)
+      if (customer) {
+        const docDigits =
+          onlyDigits(customer.getString('cnpj') || '') ||
+          onlyDigits(customer.getString('cpf') || '')
+        if (docDigits && docDigits.length >= 11) {
+          try {
+            const nfes = $app.findRecordsByFilter(
+              'nfe_processed',
+              'dest_cnpj ~ {:doc} || supplier_cnpj ~ {:doc}',
+              '-created',
+              1,
+              0,
+              { doc: docDigits },
+            )
+            if (nfes && nfes.length > 0) {
+              const k = String(nfes[0].getString('access_key') || '')
+              if (k && k.length === 44) {
+                return enqueueDanfeForKey($app, ctx, enqueueDfeCommand, k, phone, true)
+              }
+            }
+          } catch (_) {}
+        }
+      }
+      // NÃO inventa chave de 44 dígitos — escala ao humano
+      return {
+        reply:
+          'Pra te mandar a segunda via do DANFE, me manda a chave de 44 dígitos da nota (tem no seu painel da NF-e, campo "chave de acesso") ou me diz a data aproximada que eu caço aqui com o Raphael.',
+        data: null,
+        escalated: true,
+      }
+    }
+
+    if (rawKey.length !== 44) {
+      return {
+        reply:
+          'Essa chave que você mandou não tem 44 dígitos — confere pra mim se copiou inteira? Ou me diz a data aproximada da nota que eu vejo aqui com o Raphael.',
+        data: null,
+        escalated: true,
+      }
+    }
+
+    return enqueueDanfeForKey($app, ctx, enqueueDfeCommand, rawKey, phone, false)
+  }
+
+  // Enfileira o comando busca_por_chave (enum confirmado na dfe_command_queue)
+  const enqueueDanfeForKey = ($app, ctx, enqueueDfeCommand, key44, phone, foundByCustomer) => {
+    const params = { access_key: key44, origem: 'ia_whatsapp' }
+    if (phone) params.phone = String(phone)
+    let queued = false
+    let queueErr = ''
+
+    if (typeof enqueueDfeCommand === 'function') {
+      try {
+        const r = enqueueDfeCommand('busca_por_chave', params)
+        queued = !!(r && r.success)
+        if (!queued) queueErr = (r && r.error) || ''
+      } catch (eQ) {
+        queueErr = eQ.message || String(eQ)
+      }
+    }
+
+    if (!queued) {
+      // fallback direto na coleção (mesma regra da rota /backend/v1/dfe/command)
+      try {
+        const col = $app.findCollectionByNameOrId('dfe_command_queue')
+        const cmdRec = new Record(col)
+        cmdRec.set('command', 'busca_por_chave')
+        cmdRec.set('params', params)
+        cmdRec.set('status', 'pendente')
+        $app.save(cmdRec)
+        queued = true
+      } catch (eF) {
+        queueErr = queueErr || eF.message || String(eF)
+      }
+    }
+
+    if (!queued) {
+      return {
+        reply:
+          'Não consegui enfileirar a busca do DANFE agora — vou te passar pro Raphael pra garantir que chegue. Me dá um instante.',
+        data: { error: queueErr },
+        escalated: true,
+      }
+    }
+
+    return {
+      reply:
+        'Fechei o pedido da segunda via do DANFE aqui — a chave ' +
+        (foundByCustomer ? 'da sua última nota' : 'que você me passou') +
+        ' já está na fila de busca na SEFAZ. Assim que baixar, te mando o PDF por aqui. 👍',
+      data: { command: 'busca_por_chave', access_key: key44, queued: true },
+      queued: true,
+    }
+  }
+
+  globalThis.__aiStatusTools = {
+    executeStatusPedido: ($app, ctx) => executeStatusPedido($app, ctx),
+    executeStatusNfe: ($app, ctx) => executeStatusNfe($app, ctx),
+    executeSegundaViaDanfe: ($app, ctx) => executeSegundaViaDanfe($app, ctx),
+    findCustomerByPhone: ($app, phone) => findCustomerByPhone($app, phone),
+    canonicalPhoneOf: canonicalPhoneOf,
+  }
+})()
