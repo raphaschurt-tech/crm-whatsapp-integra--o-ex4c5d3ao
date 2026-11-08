@@ -1874,6 +1874,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
           if (chatControlRec) {
             chatControlRec.set('human_mode', true)
             chatControlRec.set('paused_by', 'comando_atendente')
+            chatControlRec.set('paused_reason', 'comando_atendente')
             $app.save(chatControlRec)
           } else {
             const controlCol = $app.findCollectionByNameOrId('chat_control')
@@ -1881,6 +1882,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             newCtrl.set('phone', normalizedPhone)
             newCtrl.set('human_mode', true)
             newCtrl.set('paused_by', 'comando_atendente')
+            newCtrl.set('paused_reason', 'comando_atendente')
             $app.save(newCtrl)
           }
 

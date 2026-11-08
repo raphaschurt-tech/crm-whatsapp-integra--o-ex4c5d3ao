@@ -673,6 +673,35 @@ onRecordAfterCreateSuccess((e) => {
     ? '\n\nData/hora atual: ' + dateTimeSP + ' (horário de Brasília).'
     : ''
 
+  // 4.1 Identificação do cliente pelo telefone canônico para saudação personalizada
+  let identifiedCustomerName = ''
+  try {
+    const cleanDigits = String(phone || '').replace(/\D/g, '')
+    let noDdi = cleanDigits
+    if (noDdi.startsWith('55') && noDdi.length >= 12) {
+      noDdi = noDdi.slice(2)
+    }
+    const foundCusts = $app.findRecordsByFilter(
+      'customers',
+      'phone ~ {:p1} || phone ~ {:p2}',
+      '-created',
+      1,
+      0,
+      { p1: cleanDigits, p2: noDdi },
+    )
+    if (foundCusts && foundCusts.length > 0) {
+      const rawName = String(foundCusts[0].getString('name') || '').trim()
+      const isDigitsOrPhone = /^[0-9+\s()-]+$/.test(rawName) || rawName === phone
+      if (rawName && !isDigitsOrPhone) {
+        // Usa o primeiro nome ou nome curto caso seja longo
+        const firstName = rawName.split(/\s+/)[0]
+        identifiedCustomerName = firstName || rawName
+      }
+    }
+  } catch (custIdentErr) {
+    console.log('[CUSTOMER-IDENT-ERR]', custIdentErr.message || String(custIdentErr))
+  }
+
   // 5. Verificar se é a primeira resposta da IA na conversa para este telefone
   let isFirstAiReplyInConversation = false
   try {
@@ -691,9 +720,29 @@ onRecordAfterCreateSuccess((e) => {
     console.log('[FIRST-REPLY-CHECK-ERR]', String(firstReplyCheckErr))
   }
 
-  const firstReplyInstruction = isFirstAiReplyInConversation
-    ? '\n\nEsta é a sua primeira resposta nesta conversa: cumprimente o cliente e apresente-se como assistente da RPA AUTO PARTS antes de responder.'
-    : ''
+  let greetingInstruction = ''
+  if (identifiedCustomerName) {
+    greetingInstruction =
+      '\n\n[IDENTIFICAÇÃO DO CLIENTE]\n' +
+      'O cliente está cadastrado e seu nome é "' +
+      identifiedCustomerName +
+      '".\n' +
+      (isFirstAiReplyInConversation
+        ? 'Esta é a sua primeira resposta nesta conversa: cumprimente o cliente obrigatoriamente pelo nome ("Oi, ' +
+          identifiedCustomerName +
+          '!" ou "Olá, ' +
+          identifiedCustomerName +
+          '!") e apresente-se como assistente da RPA AUTO PARTS antes de responder.'
+        : 'Como o cliente se chama ' +
+          identifiedCustomerName +
+          ', mantenha o tratamento amigável e dirija-se a ele pelo nome quando fizer sentido.')
+  } else {
+    greetingInstruction = isFirstAiReplyInConversation
+      ? '\n\nEsta é a sua primeira resposta nesta conversa: cumprimente o cliente e apresente-se como assistente da RPA AUTO PARTS antes de responder.'
+      : ''
+  }
+
+  const firstReplyInstruction = greetingInstruction
 
   // 6. Configurar systemPrompt a partir de settings ou fallback mínimo cordial
   let configuredPrompt = String(validConfigRec.getString('ai_system_prompt') || '').trim()
@@ -2254,6 +2303,46 @@ onRecordAfterCreateSuccess((e) => {
     // Se houve transferência para humano, ativar human_mode na collection chat_control
     if (hasTransferMarker && phone) {
       try {
+        // Detectar motivo específico da Camada 3 se especificado no marcador ou inferido do contexto
+        let transferReason = 'atendimento_humano'
+        const reasonMarkerMatch = aiReply.match(/\[\s*TRANSFERIR\s*-\s*HUMANO\s*:\s*([^\]]+)\s*\]/i)
+        if (reasonMarkerMatch && reasonMarkerMatch[1]) {
+          transferReason = reasonMarkerMatch[1].trim()
+        } else {
+          const lowerContext = (incomingText + ' ' + aiReply).toLowerCase()
+          if (
+            lowerContext.includes('reclama') ||
+            lowerContext.includes('defeito') ||
+            lowerContext.includes('quebr') ||
+            lowerContext.includes('garantia') ||
+            lowerContext.includes('errad')
+          ) {
+            transferReason = 'reclamacao'
+          } else if (
+            lowerContext.includes('danfe') ||
+            lowerContext.includes('nota fiscal') ||
+            lowerContext.includes('nf-e') ||
+            lowerContext.includes('nfe')
+          ) {
+            transferReason = 'nota'
+          } else if (
+            lowerContext.includes('cobr') ||
+            lowerContext.includes('pagamento') ||
+            lowerContext.includes('pix') ||
+            lowerContext.includes('boleto')
+          ) {
+            transferReason = 'cobranca'
+          } else if (
+            interestDetails ||
+            lowerContext.includes('interesse') ||
+            lowerContext.includes('comprar')
+          ) {
+            transferReason = 'interesse_compra'
+          } else if (lowerContext.includes('aplic') || lowerContext.includes('compat')) {
+            transferReason = 'aplicacao'
+          }
+        }
+
         let chatControlRec = null
         try {
           const foundControls = $app.findRecordsByFilter(
@@ -2272,6 +2361,7 @@ onRecordAfterCreateSuccess((e) => {
         if (chatControlRec) {
           chatControlRec.set('human_mode', true)
           chatControlRec.set('paused_by', 'ia_transfer')
+          chatControlRec.set('paused_reason', transferReason)
           $app.save(chatControlRec)
         } else {
           const controlCol = $app.findCollectionByNameOrId('chat_control')
@@ -2279,6 +2369,7 @@ onRecordAfterCreateSuccess((e) => {
           newCtrl.set('phone', normalizedSenderPhone)
           newCtrl.set('human_mode', true)
           newCtrl.set('paused_by', 'ia_transfer')
+          newCtrl.set('paused_reason', transferReason)
           $app.save(newCtrl)
         }
 
@@ -2290,8 +2381,8 @@ onRecordAfterCreateSuccess((e) => {
         ) {
           try {
             handoffPacket = globalThis.__aiHandoff.buildHandoffPacket(normalizedSenderPhone, {
-              motivo: 'marcador_transferir_humano',
-              itens_interesse: parsedInteresseCompra ? parsedInteresseCompra.rawText : '',
+              motivo: transferReason,
+              itens_interesse: interestDetails ? JSON.stringify(interestDetails) : '',
               chat_context: aiReply,
             })
           } catch (hErr) {
@@ -2305,7 +2396,7 @@ onRecordAfterCreateSuccess((e) => {
             timestamp: new Date().toISOString(),
             phone: maskedPhone,
             paused_by: 'ia_transfer',
-            reason: 'marcador_transferir_humano',
+            reason: transferReason,
             handoff_packet: handoffPacket,
           }),
         )
