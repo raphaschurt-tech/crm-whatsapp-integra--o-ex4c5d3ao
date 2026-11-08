@@ -1054,12 +1054,38 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         )
       } catch (_) {}
 
-      // Regra de dedupe: pular mensagem já registrada em nfe_email_inbox com status 'processado' ou 'sem_xml'
-      // Processar cada e-mail 1x e nunca mais reprocessar a cada minuto
+      // Regra de dedupe: pular mensagem já registrada em nfe_email_inbox com status 'processado', 'sem_xml' ou 'erro_final'
+      // Para mensagens com status 'erro', permitir no máximo 3 tentativas (retry_count >= 3 marca 'erro_final' e nunca mais reprocessa)
+      let currentRetry = 0
       if (existingRecord) {
         const existingStatus = existingRecord.getString('status')
-        if (existingStatus === 'processado' || existingStatus === 'sem_xml') {
+        if (
+          existingStatus === 'processado' ||
+          existingStatus === 'sem_xml' ||
+          existingStatus === 'erro_final'
+        ) {
           continue
+        }
+        if (existingStatus === 'erro') {
+          currentRetry = Number(existingRecord.get('retry_count')) || 1
+          if (currentRetry >= 3) {
+            try {
+              existingRecord.set('status', 'erro_final')
+              existingRecord.set('processed_at', horarioBrasilia)
+              $app.save(existingRecord)
+              console.log(
+                '[NFE-EMAIL-ERRO-FINAL-MARKED]',
+                JSON.stringify({
+                  horarioBrasilia: horarioBrasilia,
+                  messageId: msgId,
+                  retryCount: currentRetry,
+                }),
+              )
+            } catch (efErr) {
+              console.log('[NFE-EMAIL-ERRO-FINAL-SAVE-ERR]', String(efErr))
+            }
+            continue
+          }
         }
       }
 
@@ -1844,10 +1870,13 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         inboxRec.set('processed_at', horarioBrasilia)
 
         if (xmlList.length > 0 || pdfProcessedCount > 0) {
-          inboxRec.set('status', ingestErrors.length > 0 ? 'erro' : 'processado')
           if (ingestErrors.length > 0) {
+            const nextRetry = currentRetry + 1
+            inboxRec.set('retry_count', nextRetry)
+            inboxRec.set('status', nextRetry >= 3 ? 'erro_final' : 'erro')
             inboxRec.set('error_detail', ingestErrors.join(' | '))
           } else {
+            inboxRec.set('status', 'processado')
             inboxRec.set('error_detail', '')
           }
         } else {
@@ -2882,12 +2911,24 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       )
     } catch (_) {}
 
-    // Regra de dedupe: pular mensagem já registrada em nfe_email_inbox com status 'processado' ou 'sem_xml'
-    // Processar cada e-mail 1x e nunca mais reprocessar a cada minuto
+    // Regra de dedupe: pular mensagem já registrada em nfe_email_inbox com status 'processado', 'sem_xml' ou 'erro_final'
+    // Para mensagens com status 'erro', permitir no máximo 3 tentativas (retry_count >= 3 marca 'erro_final' e nunca mais reprocessa)
+    let syncCurrentRetry = 0
     if (existingRecord) {
       const recStatus = existingRecord.getString('status')
-      if (recStatus === 'processado' || recStatus === 'sem_xml') {
+      if (recStatus === 'processado' || recStatus === 'sem_xml' || recStatus === 'erro_final') {
         continue
+      }
+      if (recStatus === 'erro') {
+        syncCurrentRetry = Number(existingRecord.get('retry_count')) || 1
+        if (syncCurrentRetry >= 3) {
+          try {
+            existingRecord.set('status', 'erro_final')
+            existingRecord.set('processed_at', horarioBrasilia)
+            $app.save(existingRecord)
+          } catch (_) {}
+          continue
+        }
       }
     }
 
@@ -3672,10 +3713,13 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       inboxRec.set('processed_at', horarioBrasilia)
 
       if (xmlList.length > 0 || pdfProcessedCount > 0) {
-        inboxRec.set('status', ingestErrors.length > 0 ? 'erro' : 'processado')
         if (ingestErrors.length > 0) {
+          const nextRetry = syncCurrentRetry + 1
+          inboxRec.set('retry_count', nextRetry)
+          inboxRec.set('status', nextRetry >= 3 ? 'erro_final' : 'erro')
           inboxRec.set('error_detail', ingestErrors.join(' | '))
         } else {
+          inboxRec.set('status', 'processado')
           inboxRec.set('error_detail', '')
         }
       } else {

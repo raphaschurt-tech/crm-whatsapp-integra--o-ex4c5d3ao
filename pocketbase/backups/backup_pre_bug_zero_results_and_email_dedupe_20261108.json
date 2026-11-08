@@ -1,0 +1,45 @@
+{
+  "backup_id": "backup_pre_bug_zero_results_and_email_dedupe_20261108",
+  "created_at": "2026-11-08T21:23:00Z",
+  "protocol": "🟡 BACKUP PRIMEIRO — BUG ZERO-RESULTS NA BUSCA DETERMINÍSTICA E DEDUPE DE E-MAILS COM STATUS ERRO",
+  "description": "Backup de segurança preventivo das configurações (settings), estado das 4 mensagens com status erro em nfe_email_inbox e cópia de segurança dos hooks ai_message_worker.js e nfe_email_inbox.js antes de qualquer alteração.",
+  "settings_snapshot": {
+    "id": "ks86suaa4vn5xd4",
+    "ai_enabled": true,
+    "ai_model": "gpt-4o-mini",
+    "ai_excluded_skus": "",
+    "authorized_test_phone": "5511947518805",
+    "allowed_families_sample": ["BUCHA DA BANDEJA", "BIELETA", "COXIM CAMBIO", "COXIM MOTOR"]
+  },
+  "nfe_email_inbox_error_records": [
+    {
+      "id": "yfwmromsh8t5egj",
+      "gmail_message_id": "1a1a781c74fbbe72",
+      "status": "erro",
+      "error_detail": "ReferenceError: nfeExtractEmitDataFromXml is not defined",
+      "subject": "Envio da NF-e - N.Doc 001198484 - Série 1"
+    },
+    {
+      "id": "ueqcitnpi81v0im",
+      "gmail_message_id": "1a1a801fb29c6cb0",
+      "status": "erro",
+      "error_detail": "ReferenceError: nfeExtractEmitDataFromXml is not defined",
+      "subject": "Envio da NF-e - N.Doc 001198550 - Série 1"
+    },
+    {
+      "id": "dch60fldif0zkq4",
+      "gmail_message_id": "1a1acf7d30e58317",
+      "status": "erro",
+      "error_detail": "ReferenceError: nfeExtractEmitDataFromXml is not defined",
+      "subject": "Envio da NF-e - N.Doc 001198992 - Série 1"
+    },
+    {
+      "id": "w2xjfefwiidu7pf",
+      "gmail_message_id": "1a1b1d7ae642f205",
+      "status": "erro",
+      "error_detail": "ReferenceError: nfeExtractEmitDataFromXml is not defined",
+      "subject": "Envio da NF-e - N.Doc 001199371 - Série 1"
+    }
+  ],
+  "target_fox_products": ["2020", "2672", "2986", "3008"]
+}

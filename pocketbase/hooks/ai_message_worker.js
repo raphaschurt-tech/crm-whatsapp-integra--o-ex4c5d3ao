@@ -1459,63 +1459,92 @@ onRecordAfterCreateSuccess((e) => {
         }
       }
 
+      // ESTRATÉGIA ROBUSTA PARA O JSVM DO POCKETBASE:
+      // A consulta multi-placeholder com N operadores ~ encadeados falha ou se comporta de forma imprevisível no JSVM.
+      // Em vez de passar uma query gigantesca com dezenas de placeholders bindParams para findRecordsByFilter,
+      // consultamos cada conceito/token individualmente contra name e sku (campos principais indexados)
+      // e fazemos a união/interseção em memória, garantindo que Fase 1 e Fase 2 funcionem 100% sem erros de parser.
       let candidates = []
       const candidateIds = {}
+      let phase1Count = 0
+      let phase2Count = 0
 
-      // Execução da Fase 1 (AND entre conceitos)
-      if (groupConds.length > 0) {
-        const andFilterExpr = groupConds.join(' && ')
-        try {
-          const phase1Candidates = $app.findRecordsByFilter(
-            'products',
-            andFilterExpr,
-            'name',
-            50,
-            0,
-            bindParams,
-          )
-          if (phase1Candidates && phase1Candidates.length > 0) {
-            for (let p1i = 0; p1i < phase1Candidates.length; p1i++) {
-              const rec = phase1Candidates[p1i]
-              candidates.push(rec)
-              candidateIds[rec.id] = true
+      // Mapa de produtos por ID retornados por cada grupo de tokens
+      // groupHits[gi] = Set de IDs que casaram com o grupo gi
+      // allFetchedRecs[id] = Record
+      const groupHits = []
+      const allFetchedRecs = {}
+
+      for (let gi = 0; gi < tokenGroups.length; gi++) {
+        const variants = tokenGroups[gi]
+        const hitsForThisGroup = {}
+        for (let vi = 0; vi < variants.length; vi++) {
+          const varTerm = variants[vi]
+          if (!varTerm || varTerm.length < 2) continue
+          try {
+            const matchedRecs = $app.findRecordsByFilter(
+              'products',
+              'name ~ {:v} || sku ~ {:v}',
+              'name',
+              100,
+              0,
+              { v: varTerm },
+            )
+            if (matchedRecs && matchedRecs.length > 0) {
+              for (let mi = 0; mi < matchedRecs.length; mi++) {
+                const mRec = matchedRecs[mi]
+                hitsForThisGroup[mRec.id] = true
+                if (!allFetchedRecs[mRec.id]) {
+                  allFetchedRecs[mRec.id] = mRec
+                }
+              }
+            }
+          } catch (tokQErr) {
+            console.log('[TOOL-BUSCAR-PRODUTOS-TOK-ERR]', String(varTerm), String(tokQErr))
+          }
+        }
+        groupHits.push(hitsForThisGroup)
+      }
+
+      // Fase 1: Interseção estrita em memória (deve casar com TODOS os conceitos)
+      if (tokenGroups.length > 0 && groupHits.length === tokenGroups.length) {
+        const allIds = Object.keys(allFetchedRecs)
+        for (let idi = 0; idi < allIds.length; idi++) {
+          const id = allIds[idi]
+          let matchedAllGroups = true
+          for (let gi = 0; gi < groupHits.length; gi++) {
+            if (!groupHits[gi][id]) {
+              matchedAllGroups = false
+              break
             }
           }
-        } catch (searchErr1) {
-          console.log('[TOOL-BUSCAR-PRODUTOS-PHASE1-ERR]', String(searchErr1))
+          if (matchedAllGroups) {
+            candidates.push(allFetchedRecs[id])
+            candidateIds[id] = true
+            phase1Count++
+          }
         }
       }
 
-      // Execução da Fase 2 (OR amplo com limit 200) somente se Fase 1 retornar menos de 5 candidatos
-      if (candidates.length < 5 && groupConds.length > 0) {
-        const orFilterExpr = groupConds.join(' || ')
-        try {
-          const phase2Candidates = $app.findRecordsByFilter(
-            'products',
-            orFilterExpr,
-            'name',
-            200,
-            0,
-            bindParams,
-          )
-          if (phase2Candidates && phase2Candidates.length > 0) {
-            for (let p2i = 0; p2i < phase2Candidates.length; p2i++) {
-              const rec = phase2Candidates[p2i]
-              if (!candidateIds[rec.id]) {
-                candidates.push(rec)
-                candidateIds[rec.id] = true
-              }
-            }
+      // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, adiciona os que casaram com pelo menos 1 grupo)
+      if (candidates.length < 5) {
+        const allIds = Object.keys(allFetchedRecs)
+        for (let idi = 0; idi < allIds.length; idi++) {
+          const id = allIds[idi]
+          if (!candidateIds[id]) {
+            candidates.push(allFetchedRecs[id])
+            candidateIds[id] = true
+            phase2Count++
+            if (candidates.length >= 200) break
           }
-        } catch (searchErr2) {
-          console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(searchErr2))
         }
       }
 
       // Fallback amplo pelo termo cru caso nada tenha sido encontrado
+      let fallbackCount = 0
       if ((!candidates || candidates.length === 0) && rawTerm.length >= 2) {
         try {
-          candidates = $app.findRecordsByFilter(
+          const fallbackRecs = $app.findRecordsByFilter(
             'products',
             'name ~ {:rt} || sku ~ {:rt} || brand ~ {:rt} || barcode ~ {:rt}',
             '-stock_quantity,name',
@@ -1523,8 +1552,24 @@ onRecordAfterCreateSuccess((e) => {
             0,
             { rt: rawTerm },
           )
-        } catch (_) {}
+          if (fallbackRecs && fallbackRecs.length > 0) {
+            for (let fbi = 0; fbi < fallbackRecs.length; fbi++) {
+              candidates.push(fallbackRecs[fbi])
+              fallbackCount++
+            }
+          }
+        } catch (fbErr) {
+          console.log('[TOOL-BUSCAR-PRODUTOS-FALLBACK-ERR]', String(fbErr))
+        }
       }
+
+      console.log(
+        '[TOOL-BUSCAR-PRODUTOS-STEP]',
+        'totalCandidatosBanco=' + (candidates ? candidates.length : 0),
+      )
+      console.log('[TOOL-BUSCAR-PRODUTOS-STEP]', 'phase1Count=' + phase1Count)
+      console.log('[TOOL-BUSCAR-PRODUTOS-STEP]', 'phase2Count=' + phase2Count)
+      console.log('[TOOL-BUSCAR-PRODUTOS-STEP]', 'fallbackCount=' + fallbackCount)
 
       // Helper para checar se uma faixa de anos no nome do produto (ex.: "88/97", "92/04")
       // contempla os anos pesquisados (ex.: 91 está entre 88 e 97)
@@ -1714,6 +1759,9 @@ onRecordAfterCreateSuccess((e) => {
           filteredRanked = strictMatch.concat(partialMatch)
         }
       }
+
+      console.log('[TOOL-BUSCAR-PRODUTOS-STEP]', 'scoredCandidatesCount=' + scoredCandidates.length)
+      console.log('[TOOL-BUSCAR-PRODUTOS-STEP]', 'filteredRankedCount=' + filteredRanked.length)
 
       // Limitar aos top 5
       const topSelected = filteredRanked.slice(0, 5)
