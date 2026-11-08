@@ -1,1 +1,0 @@
-wrote pocketbase/hooks/ai_test_search_route.js (234 lines) — read the file to see its current content
