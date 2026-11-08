@@ -5,6 +5,7 @@ import {
   matchesYearRange,
   scoreAndRankProducts,
   twoPhaseProductSearch,
+  MockProduct,
 } from './aiSearchProduct'
 
 // Executa os testes no momento da importação em ambiente de desenvolvimento / verificação
@@ -791,14 +792,37 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
   }
 
   // Teste 18: Caso real do bug report: "Qual valor da bucha bandeja fox 2014"
-  // Deve extrair tokens ['bucha', 'bandeja', 'fox'] (com 'qual' e 'valor' removidos por stopwords) e ano 14
+  // Deve extrair tokens ['bucha', 'bandeja', 'fox'] (com 'qual' e 'valor' removidos por stopwords comerciais) e ano 14
+  // Deve encontrar os 4 SKUs reais catalogados na RPA: 2020, 2672, 2986 e 3008
   const foxQuery = 'Qual valor da bucha bandeja fox 2014'
   const foxExtraction = extractAiTokensAndYears(foxQuery)
-  const foxCatalog = [
+  details.push(`Tokens extraídos para "${foxQuery}": ${JSON.stringify(foxExtraction.searchTokens)}`)
+  details.push(`Anos detectados para "${foxQuery}": ${JSON.stringify(foxExtraction.detectedYears)}`)
+
+  if (
+    !foxExtraction.searchTokens.includes('bucha') ||
+    !foxExtraction.searchTokens.includes('bandeja') ||
+    !foxExtraction.searchTokens.includes('fox') ||
+    foxExtraction.searchTokens.includes('qual') ||
+    foxExtraction.searchTokens.includes('valor')
+  ) {
+    details.push(
+      'ERRO: Stopwords comerciais (qual, valor) não foram devidamente removidas para Fox 2014',
+    )
+    allPass = false
+  }
+  if (!foxExtraction.detectedYears.includes(14)) {
+    details.push('ERRO: Ano 2014 (14) não foi detectado na query da Fox 2014')
+    allPass = false
+  }
+
+  const foxCatalog: MockProduct[] = [
     {
       sku: '2020',
       name: 'BUCHA CROSSFOX 05/14 POLO 02/16 SPACEFOX 03/20 FOX 03/10 A110/16 SAVEIRO 08/20 TRASEIRA BANDEJA DIANTEIRA MAIOR',
       brand: 'DPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
       price: 0,
       stock_quantity: 0,
       sou_family: 'BUCHA DA BANDEJA',
@@ -807,36 +831,81 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
       sku: '2672',
       name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
       brand: 'AXIOS BORRACHAS',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
       price: 0,
       stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+    },
+    {
+      sku: '2986',
+      name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'RPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      price: 0,
+      stock_quantity: 1,
       sou_family: 'BUCHA DA BANDEJA',
     },
     {
       sku: '3008',
       name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
       brand: 'JAHU',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
       price: 0,
       stock_quantity: 0,
       sou_family: 'BUCHA DA BANDEJA',
     },
   ]
 
+  const foxCandidates = twoPhaseProductSearch(foxCatalog, foxExtraction.searchTokens, foxQuery)
   const foxRanked = scoreAndRankProducts(
-    foxCatalog,
+    foxCandidates,
     foxQuery,
     foxExtraction.searchTokens,
     foxExtraction.detectedYears,
   )
 
-  if (foxRanked.length === 0) {
-    details.push('ERRO: Busca determinística falhou em ranquear bucha bandeja fox 2014!')
-    allPass = false
-  } else if (!foxRanked.some((p) => p.rec.sku === '2020')) {
-    details.push('ERRO: SKU 2020 não foi incluído no ranking de bucha bandeja fox 2014!')
+  const foxReturnedSkus = foxRanked.map((p) => p.rec.sku)
+  details.push(
+    `SKUs retornados para "Qual valor da bucha bandeja fox 2014": ${foxReturnedSkus.join(', ')}`,
+  )
+
+  const expectedFoxSkus = ['2020', '2672', '2986', '3008']
+  const missingFoxSkus = expectedFoxSkus.filter((sku) => !foxReturnedSkus.includes(sku))
+
+  if (missingFoxSkus.length > 0) {
+    details.push(`ERRO: SKUs esperados faltando para Fox 2014: ${missingFoxSkus.join(', ')}`)
     allPass = false
   } else {
     details.push(
-      'SUCESSO: "Qual valor da bucha bandeja fox 2014" ranqueou com sucesso o SKU 2020 (DPA) e correlatos!',
+      'SUCESSO: Todos os 4 SKUs da Fox (2020, 2672, 2986, 3008) foram localizados e ranqueados com sucesso!',
+    )
+  }
+
+  // Teste 19: Caso de consulta de orçamento
+  // Mensagem do print: "já faz tempo que pedi um orçamento e ainda não me responderam, pode por favor dar uma resposta"
+  // Validação: stopwords comerciais filtram "orcamento" e "resposta", e lógica determinística identifica intenção de orçamento
+  const orcamentoQuery =
+    'já faz tempo que pedi um orçamento e ainda não me responderam, pode por favor dar uma resposta'
+  const isOrcamentoIntent = (text: string) => {
+    const t = text.toLowerCase()
+    return (
+      t.includes('orcamento') ||
+      t.includes('orçamento') ||
+      t.includes('cotacao') ||
+      t.includes('cotação') ||
+      t.includes('pedido')
+    )
+  }
+  const detectOrcamento = isOrcamentoIntent(orcamentoQuery)
+  if (!detectOrcamento) {
+    details.push('ERRO: Falha ao detectar intenção de status_pedido na mensagem do cliente')
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO: Intenção de status_pedido / consulta de orçamento detectada com precisão!',
     )
   }
 

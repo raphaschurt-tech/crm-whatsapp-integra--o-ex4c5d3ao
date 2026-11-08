@@ -6,14 +6,15 @@
  * 3. Ordenação por relevância: "bucha amortecedor d21 1991" ranqueia SKU 8722 em primeiro lugar
  */
 
-interface MockProduct {
+export interface MockProduct {
   sku: string
   name: string
-  brand: string
-  barcode: string
-  description: string
+  brand?: string
+  barcode?: string
+  description?: string
   stock_quantity: number
   price: number
+  sou_family?: string
 }
 
 const STOP_WORDS_SET: Record<string, boolean> = {
