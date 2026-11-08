@@ -19,6 +19,7 @@ import ProductDetail from './pages/Stock/ProductDetail'
 import FamilyList from './pages/Stock/FamilyList'
 import PipelineCompras from './pages/PipelineCompras/PipelineCompras'
 import Atendimento from './pages/WhatsApp/Atendimento'
+import AtendimentoMetricasPage from './pages/WhatsApp/AtendimentoMetricasPage'
 import UserList from './pages/Users/UserList'
 import SettingsPage from './pages/Settings/SettingsPage'
 import PaymentPage from './pages/Payment/PaymentPage'
@@ -127,6 +128,14 @@ export function App() {
                   }
                 />
                 <Route path="whatsapp" element={null} />
+                <Route
+                  path="atendimento/metricas"
+                  element={
+                    <ProtectedRoute adminOnly>
+                      <AtendimentoMetricasPage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route path="usuarios" element={<UserList />} />
                 <Route path="configuracoes" element={<SettingsPage />} />
               </Route>

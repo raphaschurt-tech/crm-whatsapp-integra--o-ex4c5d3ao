@@ -20,6 +20,7 @@ import {
   Minus,
   ChevronRight,
   TrendingUp,
+  BarChart2,
   Inbox,
   ShieldAlert,
   ArrowDownCircle,
@@ -86,7 +87,8 @@ export default function Layout() {
 
   const hasWhatsAppTab = tabs.some((t) => t.routeKey === 'whatsapp' || t.routeKey === '/whatsapp')
   const isAtendimentoRoute =
-    location.pathname.startsWith('/whatsapp') || location.pathname.startsWith('/atendimento')
+    (location.pathname.startsWith('/whatsapp') || location.pathname === '/atendimento') &&
+    !location.pathname.startsWith('/atendimento/metricas')
 
   // Estrutura reagrupada oficial inspirada no ERP SOU.IS
   // Todos os itens foram auditados: existem páginas e rotas dedicadas no sistema
@@ -105,6 +107,16 @@ export default function Layout() {
         children: [
           { id: 'whatsapp', label: 'Conversas', path: '/whatsapp', icon: MessageCircle },
           { id: 'clientes', label: 'Contatos', path: '/clientes', icon: Users },
+          ...(isAdmin
+            ? [
+                {
+                  id: 'atendimento-metricas',
+                  label: 'Métricas & IA',
+                  path: '/atendimento/metricas',
+                  icon: BarChart2,
+                },
+              ]
+            : []),
         ],
       },
       {
@@ -229,6 +241,7 @@ export default function Layout() {
     if (path === '/' || path === '/dashboard') return 'Dashboard'
     if (path.startsWith('/pipeline-compras')) return 'Pipeline de Compras'
     if (path.startsWith('/funil')) return 'Funil de Vendas'
+    if (path.startsWith('/atendimento/metricas')) return 'Métricas de Atendimento'
     if (path.startsWith('/atendimento') || path.startsWith('/whatsapp'))
       return 'Atendimento WhatsApp'
     if (path.startsWith('/orcamentos/novo')) return 'Novo Orçamento'

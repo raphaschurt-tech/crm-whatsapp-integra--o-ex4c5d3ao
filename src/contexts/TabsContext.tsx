@@ -405,6 +405,7 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
     if (clean === '/' || clean === '/dashboard') return 'Dashboard'
     if (clean === '/funil') return 'Pipeline'
     if (clean === '/pipeline-compras') return 'Pipeline de Compras'
+    if (clean === '/atendimento/metricas') return 'Métricas de Atendimento'
     if (clean === '/whatsapp') return 'Atendimento'
     if (clean === '/orcamentos') return 'Orçamentos'
     if (clean === '/orcamentos/novo') return 'Novo Orçamento'
