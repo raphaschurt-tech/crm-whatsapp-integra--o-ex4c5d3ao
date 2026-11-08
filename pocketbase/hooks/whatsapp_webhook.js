@@ -1884,6 +1884,21 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             $app.save(newCtrl)
           }
 
+          let handoffPacket = null
+          if (
+            globalThis.__aiHandoff &&
+            typeof globalThis.__aiHandoff.buildHandoffPacket === 'function'
+          ) {
+            try {
+              handoffPacket = globalThis.__aiHandoff.buildHandoffPacket(normalizedPhone, {
+                motivo: 'comando_atendente',
+                raw_command: rawCmdText,
+              })
+            } catch (hErr) {
+              console.log('[AI-HANDOFF-PACKET-BUILD-ERR]', hErr.message || String(hErr))
+            }
+          }
+
           console.log(
             '[HUMAN-MODE-ON]',
             JSON.stringify({
@@ -1891,6 +1906,7 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
               phone: maskedSenderPhone,
               paused_by: 'comando_atendente',
               command: rawCmdText,
+              handoff_packet: handoffPacket,
             }),
           )
         } catch (ctrlErr) {

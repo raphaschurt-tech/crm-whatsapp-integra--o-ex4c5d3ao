@@ -1055,6 +1055,48 @@ onRecordAfterCreateSuccess((e) => {
         },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'status_pedido',
+        description:
+          'Consulta o status do último orçamento e pedido do cliente pelo número de WhatsApp cadastrado. Retorna número do orçamento/pedido, status comercial, financeiro e valor real.',
+        parameters: {
+          type: 'object',
+          properties: {},
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'status_nfe',
+        description:
+          'Consulta o status da última NF-e emitida para o CNPJ/CPF do cliente. Retorna número da nota, chave de acesso, status e valor. Se a nota estiver cancelada, alerta que NÃO deve pagar.',
+        parameters: {
+          type: 'object',
+          properties: {},
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'segunda_via_danfe',
+        description:
+          'Enfileira o comando para buscar e emitir a segunda via do DANFE (PDF da NF-e) na SEFAZ. Exige a chave de acesso de 44 dígitos da nota ou busca a chave da última nota do cliente. NUNCA inventa chave.',
+        parameters: {
+          type: 'object',
+          properties: {
+            access_key: {
+              type: 'string',
+              description:
+                'Chave de acesso de 44 dígitos da NF-e (opcional se o cliente já tiver nota emitida no sistema)',
+            },
+          },
+        },
+      },
+    },
   ]
 
   // Executores locais das ferramentas
@@ -1808,6 +1850,40 @@ onRecordAfterCreateSuccess((e) => {
       const sku = toolArgs && toolArgs.sku ? toolArgs.sku : ''
       return executeConsultarEstoqueAoVivo(sku)
     }
+    if (toolName === 'status_pedido') {
+      if (
+        globalThis.__aiStatusTools &&
+        typeof globalThis.__aiStatusTools.executeStatusPedido === 'function'
+      ) {
+        return globalThis.__aiStatusTools.executeStatusPedido(phone)
+      }
+      return {
+        status: 'nao_localizado',
+        mensagem: 'Módulo de status de pedido indisponível no momento',
+      }
+    }
+    if (toolName === 'status_nfe') {
+      if (
+        globalThis.__aiStatusTools &&
+        typeof globalThis.__aiStatusTools.executeStatusNfe === 'function'
+      ) {
+        return globalThis.__aiStatusTools.executeStatusNfe(phone)
+      }
+      return {
+        status: 'nao_localizado',
+        mensagem: 'Módulo de status de NF-e indisponível no momento',
+      }
+    }
+    if (toolName === 'segunda_via_danfe') {
+      if (
+        globalThis.__aiStatusTools &&
+        typeof globalThis.__aiStatusTools.executeSegundaViaDanfe === 'function'
+      ) {
+        const key = toolArgs && toolArgs.access_key ? toolArgs.access_key : ''
+        return globalThis.__aiStatusTools.executeSegundaViaDanfe(phone, key)
+      }
+      return { status: 'erro', mensagem: 'Módulo de segunda via indisponível no momento' }
+    }
     return { erro: 'Ferramenta desconhecida: ' + toolName }
   }
 
@@ -2195,15 +2271,32 @@ onRecordAfterCreateSuccess((e) => {
 
         if (chatControlRec) {
           chatControlRec.set('human_mode', true)
-          chatControlRec.set('paused_by', 'transferencia_ia')
+          chatControlRec.set('paused_by', 'ia_transfer')
           $app.save(chatControlRec)
         } else {
           const controlCol = $app.findCollectionByNameOrId('chat_control')
           const newCtrl = new Record(controlCol)
-          newCtrl.set('phone', phone)
+          newCtrl.set('phone', normalizedSenderPhone)
           newCtrl.set('human_mode', true)
-          newCtrl.set('paused_by', 'transferencia_ia')
+          newCtrl.set('paused_by', 'ia_transfer')
           $app.save(newCtrl)
+        }
+
+        // Montar pacote de handoff estruturado para o atendente
+        let handoffPacket = null
+        if (
+          globalThis.__aiHandoff &&
+          typeof globalThis.__aiHandoff.buildHandoffPacket === 'function'
+        ) {
+          try {
+            handoffPacket = globalThis.__aiHandoff.buildHandoffPacket(normalizedSenderPhone, {
+              motivo: 'marcador_transferir_humano',
+              itens_interesse: parsedInteresseCompra ? parsedInteresseCompra.rawText : '',
+              chat_context: aiReply,
+            })
+          } catch (hErr) {
+            console.log('[AI-HANDOFF-PACKET-BUILD-ERR]', hErr.message || String(hErr))
+          }
         }
 
         console.log(
@@ -2211,8 +2304,9 @@ onRecordAfterCreateSuccess((e) => {
           JSON.stringify({
             timestamp: new Date().toISOString(),
             phone: maskedPhone,
-            paused_by: 'transferencia_ia',
-            messageId: messageId,
+            paused_by: 'ia_transfer',
+            reason: 'marcador_transferir_humano',
+            handoff_packet: handoffPacket,
           }),
         )
       } catch (transferSaveErr) {

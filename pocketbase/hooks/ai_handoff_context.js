@@ -55,10 +55,11 @@
     } catch (_) {}
 
     if (customer) {
+      const docVal = String(safeGet(customer, 'cnpj', '') || safeGet(customer, 'cpf', '') || '')
       packet.cliente = {
         id: customer.id,
         nome: String(safeGet(customer, 'name', '') || ''),
-        documento: String(safeGet(customer, 'document', safeGet(customer, 'cnpj', '')) || ''),
+        documento: docVal,
         pipeline_status: String(safeGet(customer, 'pipeline_status', '') || ''),
         lead_source: String(safeGet(customer, 'lead_source', '') || ''),
       }
@@ -73,44 +74,47 @@
       } catch (_) {}
 
       // 3. Último orçamento (quotes) do cliente
+      let lastQuote = null
       try {
-        const quotes = $app.findRecordsByFilter('quotes', 'customer = {:cid}', '-created', 1, 0, {
+        const quotes = $app.findRecordsByFilter('quotes', 'customer = {:cid}', '-created', 3, 0, {
           cid: customer.id,
         })
         if (quotes && quotes.length > 0) {
-          const q = quotes[0]
+          lastQuote = quotes[0]
           packet.ultimo_orcamento = {
-            numero: String(safeGet(q, 'quote_number', safeGet(q, 'number', q.id)) || ''),
-            status: String(safeGet(q, 'status', '') || ''),
-            valor: safeGet(q, 'total', safeGet(q, 'value', null)),
-            data: String(safeGet(q, 'created', '') || ''),
+            numero: String(safeGet(lastQuote, 'number', lastQuote.id) || ''),
+            status: String(safeGet(lastQuote, 'status', '') || ''),
+            valor: safeGet(lastQuote, 'total', null),
+            data: String(safeGet(lastQuote, 'created', '') || ''),
+          }
+
+          // 4. Último pedido (orders) do cliente via quote_id
+          for (let qi = 0; qi < quotes.length && !packet.ultimo_pedido; qi++) {
+            try {
+              const os = $app.findRecordsByFilter('orders', 'quote_id = {:qid}', '-created', 1, 0, {
+                qid: quotes[qi].id,
+              })
+              if (os && os.length > 0) {
+                const o = os[0]
+                packet.ultimo_pedido = {
+                  codigo: String(safeGet(o, 'code', o.id) || ''),
+                  commercial_status: String(safeGet(o, 'commercial_status', '') || ''),
+                  financial_status: String(safeGet(o, 'financial_status', '') || ''),
+                  data: String(safeGet(o, 'created', '') || ''),
+                }
+              }
+            } catch (_) {}
           }
         }
       } catch (_) {}
 
-      // 4. Último pedido (orders) do cliente
-      try {
-        const orders = $app.findRecordsByFilter('orders', 'customer = {:cid}', '-created', 1, 0, {
-          cid: customer.id,
-        })
-        if (orders && orders.length > 0) {
-          const o = orders[0]
-          packet.ultimo_pedido = {
-            codigo: String(safeGet(o, 'order_number', safeGet(o, 'code', o.id)) || ''),
-            commercial_status: String(safeGet(o, 'commercial_status', '') || ''),
-            financial_status: String(safeGet(o, 'financial_status', '') || ''),
-            data: String(safeGet(o, 'created', '') || ''),
-          }
-        }
-      } catch (_) {}
-
-      // 5. Última NF-e processada do cliente (busca pelo documento)
+      // 5. Última NF-e processada do cliente (busca pelo documento em dest_cnpj ou supplier_cnpj)
       const docDigits = String(packet.cliente.documento || '').replace(/\D/g, '')
       if (docDigits.length >= 11) {
         try {
           const nfes = $app.findRecordsByFilter(
             'nfe_processed',
-            'customer_document ~ {:doc} || customer_cnpj ~ {:doc} || cnpj ~ {:doc}',
+            'dest_cnpj ~ {:doc} || supplier_cnpj ~ {:doc}',
             '-created',
             1,
             0,
@@ -119,9 +123,10 @@
           if (nfes && nfes.length > 0) {
             const n = nfes[0]
             packet.ultima_nfe = {
-              numero: String(safeGet(n, 'nfe_number', safeGet(n, 'numero', '')) || ''),
-              status: String(safeGet(n, 'status', safeGet(n, 'processing_status', '')) || ''),
-              chave: String(safeGet(n, 'chave', safeGet(n, 'access_key', '')) || ''),
+              numero: String(safeGet(n, 'nfe_number', '') || ''),
+              status: String(safeGet(n, 'status', '') || ''),
+              chave: String(safeGet(n, 'access_key', '') || ''),
+              valor: safeGet(n, 'total_amount', null),
               data: String(safeGet(n, 'created', '') || ''),
             }
           }

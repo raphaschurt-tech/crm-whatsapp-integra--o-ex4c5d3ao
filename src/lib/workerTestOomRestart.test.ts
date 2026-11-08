@@ -2,6 +2,7 @@
  * Teste hermético que executa o script worker-dfe/test-oom-restart.js
  * e garante que todas as provas passam com 0 falhas e veredito final OK.
  */
+/// <reference types="node" />
 import { describe, it, expect } from 'vitest'
 import { spawnSync } from 'child_process'
 import path from 'path'
