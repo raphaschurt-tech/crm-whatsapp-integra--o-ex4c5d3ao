@@ -308,14 +308,326 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       }
     }
 
+    // F4 (0.0.266/0.0.294): Helpers de emitente e fornecedor inlinados no callback (regra do JSVM)
+    function inlineCleanDigits(value) {
+      if (!value) return ''
+      return String(value).replace(/\D/g, '')
+    }
+
+    function inlineCanonicalPhoneCore(rawPhone) {
+      if (!rawPhone) return ''
+      const digits = inlineCleanDigits(rawPhone)
+      if (digits.length >= 14 || digits.length < 8) return ''
+      let withoutDdi = digits
+      if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+        withoutDdi = digits.slice(2)
+      }
+      if (withoutDdi.length === 11 && withoutDdi[2] === '9') {
+        return withoutDdi.slice(0, 2) + withoutDdi.slice(3)
+      }
+      return withoutDdi
+    }
+
+    function inlineEnsureSupplierDocument(supplierRec, emitCnpj, sourceLabel) {
+      if (!supplierRec || !emitCnpj) return
+      try {
+        const existing = $app.findRecordsByFilter(
+          'customer_documents',
+          'document_number = {:num}',
+          '-created',
+          1,
+          0,
+          { num: emitCnpj },
+        )
+        if (existing && existing.length > 0) return
+        const docsCol = $app.findCollectionByNameOrId('customer_documents')
+        const docRec = new Record(docsCol)
+        docRec.set('customer', supplierRec.id)
+        docRec.set('document_type', 'CNPJ')
+        docRec.set('document_number', emitCnpj)
+        docRec.set('root_cnpj', emitCnpj.slice(0, 8))
+        docRec.set(
+          'label',
+          'Unidade (auto via NF-e' + (sourceLabel ? ' — ' + sourceLabel : '') + ')',
+        )
+        docRec.set('is_primary', false)
+        $app.save(docRec)
+        console.log(
+          '[NFE-SUPPLIER-DOC-LINKED]',
+          JSON.stringify({ supplierId: supplierRec.id, document: emitCnpj }),
+        )
+      } catch (docErr) {
+        console.log('[NFE-SUPPLIER-DOC-ERR]', String(docErr))
+      }
+    }
+
+    function inlineExtractEmitDataFromXml(xmlString) {
+      if (!xmlString || typeof xmlString !== 'string') return {}
+
+      function extractTag(src, tagName) {
+        if (!src) return ''
+        const re = new RegExp('<' + tagName + '[^>]*>([\\s\\S]*?)<\\/' + tagName + '>', 'i')
+        const m = src.match(re)
+        return m && m[1] ? m[1].trim() : ''
+      }
+
+      const infNFeBlock = extractTag(xmlString, 'infNFe')
+      const emitBlock = extractTag(infNFeBlock || xmlString, 'emit')
+      if (!emitBlock) return {}
+
+      const cnpj = inlineCleanDigits(extractTag(emitBlock, 'CNPJ'))
+      const name = extractTag(emitBlock, 'xNome')
+      const fant = extractTag(emitBlock, 'xFant')
+      const ie = extractTag(emitBlock, 'IE')
+
+      const enderEmitBlock = extractTag(emitBlock, 'enderEmit')
+      const phone = inlineCleanDigits(extractTag(enderEmitBlock, 'fone'))
+      const xLgr = extractTag(enderEmitBlock, 'xLgr')
+      const nro = extractTag(enderEmitBlock, 'nro')
+      const xBairro = extractTag(enderEmitBlock, 'xBairro')
+      const xMun = extractTag(enderEmitBlock, 'xMun')
+      const uf = extractTag(enderEmitBlock, 'UF')
+      const cep = inlineCleanDigits(extractTag(enderEmitBlock, 'CEP'))
+
+      const addressParts = []
+      if (xLgr) addressParts.push(xLgr + (nro ? ', ' + nro : ''))
+      if (xBairro) addressParts.push(xBairro)
+      if (xMun) addressParts.push(xMun + (uf ? ' - ' + uf : ''))
+      if (cep) addressParts.push('CEP ' + cep)
+      const fullAddress = addressParts.join(' - ')
+
+      return {
+        cnpj: cnpj,
+        name: name || fant,
+        fantasia: fant,
+        ie: ie,
+        phone: phone,
+        xLgr: xLgr,
+        nro: nro,
+        xBairro: xBairro,
+        xMun: xMun,
+        uf: uf,
+        cep: cep,
+        address: fullAddress,
+      }
+    }
+
+    function inlineResolveOrCreateSupplier(emit, sourceChannel) {
+      const emitCnpj = inlineCleanDigits(emit && emit.cnpj)
+      const emitName = String((emit && emit.name) || '').trim()
+      const emitPhone = inlineCleanDigits(emit && emit.phone)
+      const emitEmail = String((emit && emit.email) || '').trim()
+      const emitIe = String((emit && emit.ie) || '').trim()
+      const emitAddress = String((emit && emit.address) || '').trim()
+      const rootCnpj = emitCnpj ? emitCnpj.slice(0, 8) : ''
+      const sourceLabel = String(sourceChannel || 'xml')
+
+      let supplier = null
+      let matchedBy = ''
+
+      if (emitCnpj) {
+        try {
+          const found = $app.findRecordsByFilter(
+            'customers',
+            'cnpj = {:cnpj} && deleted = false',
+            '-created',
+            1,
+            0,
+            { cnpj: emitCnpj },
+          )
+          if (found && found.length > 0) {
+            supplier = found[0]
+            matchedBy = 'cnpj'
+          }
+        } catch (_) {}
+      }
+
+      if (!supplier && emitCnpj) {
+        try {
+          const docs = $app.findRecordsByFilter(
+            'customer_documents',
+            'document_number = {:num}',
+            '-created',
+            1,
+            0,
+            { num: emitCnpj },
+          )
+          if (docs && docs.length > 0) {
+            const custId = docs[0].getString('customer')
+            if (custId) {
+              try {
+                supplier = $app.findRecordById('customers', custId)
+                if (supplier) matchedBy = 'customer_documents'
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!supplier && rootCnpj) {
+        try {
+          const docs = $app.findRecordsByFilter(
+            'customer_documents',
+            'root_cnpj = {:root}',
+            '-created',
+            1,
+            0,
+            { root: rootCnpj },
+          )
+          if (docs && docs.length > 0) {
+            const custId = docs[0].getString('customer')
+            if (custId) {
+              try {
+                const cust = $app.findRecordById('customers', custId)
+                if (cust && !cust.getBool('deleted')) {
+                  supplier = cust
+                  matchedBy = 'raiz_cnpj'
+                }
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!supplier && emitPhone) {
+        const core = inlineCanonicalPhoneCore(emitPhone)
+        if (core) {
+          try {
+            const found = $app.findRecordsByFilter(
+              'customers',
+              'phone ~ {:core} && deleted = false',
+              '-created',
+              10,
+              0,
+              { core: core },
+            )
+            for (let i = 0; i < found.length; i++) {
+              if (inlineCanonicalPhoneCore(found[i].getString('phone')) === core) {
+                supplier = found[i]
+                matchedBy = 'telefone'
+                break
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (!supplier && emitEmail) {
+        try {
+          const found = $app.findRecordsByFilter(
+            'customers',
+            'email = {:email} && deleted = false',
+            '-created',
+            1,
+            0,
+            { email: emitEmail },
+          )
+          if (found && found.length > 0) {
+            supplier = found[0]
+            matchedBy = 'email'
+          }
+        } catch (_) {}
+      }
+
+      if (!supplier && emitName && emitName.length >= 5) {
+        try {
+          const byName = $app.findRecordsByFilter(
+            'customers',
+            "customer_type = 'Fornecedor' && deleted = false && name ~ {:nm}",
+            '-created',
+            1,
+            0,
+            { nm: emitName },
+          )
+          if (byName && byName.length > 0) {
+            supplier = byName[0]
+            matchedBy = 'nome'
+          }
+        } catch (_) {}
+      }
+
+      if (supplier) {
+        try {
+          let changed = false
+          if (!supplier.getString('cnpj') && emitCnpj) {
+            supplier.set('cnpj', emitCnpj)
+            changed = true
+          }
+          if (!supplier.getString('company') && emitName) {
+            supplier.set('company', emitName)
+            changed = true
+          }
+          if (!supplier.getString('type')) {
+            supplier.set('type', 'PJ')
+            changed = true
+          }
+          if (emitCnpj && supplier.getString('customer_type') !== 'Fornecedor') {
+            supplier.set('customer_type', 'Fornecedor')
+            changed = true
+          }
+          if (changed) $app.save(supplier)
+        } catch (_) {}
+        inlineEnsureSupplierDocument(supplier, emitCnpj, sourceLabel)
+        return {
+          supplier: supplier,
+          created: false,
+          matchedBy: matchedBy,
+          pendingRegistration: false,
+        }
+      }
+
+      const phoneToSave = emitPhone || '0000000000'
+
+      try {
+        const custCol = $app.findCollectionByNameOrId('customers')
+        const newSupp = new Record(custCol)
+        newSupp.set('name', emitName || 'Fornecedor CNPJ ' + emitCnpj)
+        newSupp.set('company', emitName || '')
+        newSupp.set('cnpj', emitCnpj)
+        newSupp.set('phone', phoneToSave)
+        if (emitEmail) newSupp.set('email', emitEmail)
+        newSupp.set('type', 'PJ')
+        newSupp.set('customer_type', 'Fornecedor')
+        newSupp.set('source', 'nfe_' + sourceLabel)
+
+        const notesParts = [
+          'Fornecedor cadastrado automaticamente via ingestão de NF-e (' + sourceLabel + ').',
+        ]
+        if (emitIe) notesParts.push('IE: ' + emitIe)
+        if (emitAddress) notesParts.push('Endereço: ' + emitAddress)
+        newSupp.set('notes', notesParts.join(' | '))
+
+        $app.save(newSupp)
+        inlineEnsureSupplierDocument(newSupp, emitCnpj, sourceLabel)
+        console.log(
+          '[NFE-SUPPLIER-AUTO-CREATED]',
+          JSON.stringify({
+            supplierId: newSupp.id,
+            cnpj: emitCnpj,
+            nome: emitName,
+            origem: sourceLabel,
+            hasPhone: Boolean(emitPhone),
+            horarioBrasilia: new Date(Date.now() - 3 * 3600 * 1000)
+              .toISOString()
+              .replace('T', ' ')
+              .slice(0, 19),
+          }),
+        )
+        return { supplier: newSupp, created: true, matchedBy: '', pendingRegistration: false }
+      } catch (suppErr) {
+        console.log('[NFE-SUPPLIER-CREATE-ERR]', String(suppErr))
+        return { supplier: null, created: false, matchedBy: '', pendingRegistration: true }
+      }
+    }
+
     // F4 (0.0.266): Auto-cadastro / Dedupe do fornecedor via XML
-    const emitData = nfeExtractEmitDataFromXml(xmlContent)
+    const emitData = inlineExtractEmitDataFromXml(xmlContent)
     if (!emitData.cnpj && parsed.emitCnpj) emitData.cnpj = parsed.emitCnpj
     if (!emitData.name && parsed.emitName) emitData.name = parsed.emitName
     if (!emitData.phone && parsed.emitPhone) emitData.phone = parsed.emitPhone
     if (senderEmail) emitData.email = senderEmail
 
-    const resolvedSupplier = nfeResolveOrCreateSupplier(emitData, 'email_inbox_cron')
+    const resolvedSupplier = inlineResolveOrCreateSupplier(emitData, 'email_inbox_cron')
     const supplierRec = resolvedSupplier ? resolvedSupplier.supplier : null
 
     // Leitura das configurações (CNPJ da empresa, flag de auto launch do email, margens de famílias)
@@ -2244,14 +2556,326 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       }
     }
 
+    // F4 (0.0.266/0.0.294): Helpers de emitente e fornecedor inlinados no callback (regra do JSVM)
+    function inlineCleanDigitsSync(value) {
+      if (!value) return ''
+      return String(value).replace(/\D/g, '')
+    }
+
+    function inlineCanonicalPhoneCoreSync(rawPhone) {
+      if (!rawPhone) return ''
+      const digits = inlineCleanDigitsSync(rawPhone)
+      if (digits.length >= 14 || digits.length < 8) return ''
+      let withoutDdi = digits
+      if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+        withoutDdi = digits.slice(2)
+      }
+      if (withoutDdi.length === 11 && withoutDdi[2] === '9') {
+        return withoutDdi.slice(0, 2) + withoutDdi.slice(3)
+      }
+      return withoutDdi
+    }
+
+    function inlineEnsureSupplierDocumentSync(supplierRec, emitCnpj, sourceLabel) {
+      if (!supplierRec || !emitCnpj) return
+      try {
+        const existing = $app.findRecordsByFilter(
+          'customer_documents',
+          'document_number = {:num}',
+          '-created',
+          1,
+          0,
+          { num: emitCnpj },
+        )
+        if (existing && existing.length > 0) return
+        const docsCol = $app.findCollectionByNameOrId('customer_documents')
+        const docRec = new Record(docsCol)
+        docRec.set('customer', supplierRec.id)
+        docRec.set('document_type', 'CNPJ')
+        docRec.set('document_number', emitCnpj)
+        docRec.set('root_cnpj', emitCnpj.slice(0, 8))
+        docRec.set(
+          'label',
+          'Unidade (auto via NF-e' + (sourceLabel ? ' — ' + sourceLabel : '') + ')',
+        )
+        docRec.set('is_primary', false)
+        $app.save(docRec)
+        console.log(
+          '[NFE-SUPPLIER-DOC-LINKED]',
+          JSON.stringify({ supplierId: supplierRec.id, document: emitCnpj }),
+        )
+      } catch (docErr) {
+        console.log('[NFE-SUPPLIER-DOC-ERR]', String(docErr))
+      }
+    }
+
+    function inlineExtractEmitDataFromXmlSync(xmlString) {
+      if (!xmlString || typeof xmlString !== 'string') return {}
+
+      function extractTag(src, tagName) {
+        if (!src) return ''
+        const re = new RegExp('<' + tagName + '[^>]*>([\\s\\S]*?)<\\/' + tagName + '>', 'i')
+        const m = src.match(re)
+        return m && m[1] ? m[1].trim() : ''
+      }
+
+      const infNFeBlock = extractTag(xmlString, 'infNFe')
+      const emitBlock = extractTag(infNFeBlock || xmlString, 'emit')
+      if (!emitBlock) return {}
+
+      const cnpj = inlineCleanDigitsSync(extractTag(emitBlock, 'CNPJ'))
+      const name = extractTag(emitBlock, 'xNome')
+      const fant = extractTag(emitBlock, 'xFant')
+      const ie = extractTag(emitBlock, 'IE')
+
+      const enderEmitBlock = extractTag(emitBlock, 'enderEmit')
+      const phone = inlineCleanDigitsSync(extractTag(enderEmitBlock, 'fone'))
+      const xLgr = extractTag(enderEmitBlock, 'xLgr')
+      const nro = extractTag(enderEmitBlock, 'nro')
+      const xBairro = extractTag(enderEmitBlock, 'xBairro')
+      const xMun = extractTag(enderEmitBlock, 'xMun')
+      const uf = extractTag(enderEmitBlock, 'UF')
+      const cep = inlineCleanDigitsSync(extractTag(enderEmitBlock, 'CEP'))
+
+      const addressParts = []
+      if (xLgr) addressParts.push(xLgr + (nro ? ', ' + nro : ''))
+      if (xBairro) addressParts.push(xBairro)
+      if (xMun) addressParts.push(xMun + (uf ? ' - ' + uf : ''))
+      if (cep) addressParts.push('CEP ' + cep)
+      const fullAddress = addressParts.join(' - ')
+
+      return {
+        cnpj: cnpj,
+        name: name || fant,
+        fantasia: fant,
+        ie: ie,
+        phone: phone,
+        xLgr: xLgr,
+        nro: nro,
+        xBairro: xBairro,
+        xMun: xMun,
+        uf: uf,
+        cep: cep,
+        address: fullAddress,
+      }
+    }
+
+    function inlineResolveOrCreateSupplierSync(emit, sourceChannel) {
+      const emitCnpj = inlineCleanDigitsSync(emit && emit.cnpj)
+      const emitName = String((emit && emit.name) || '').trim()
+      const emitPhone = inlineCleanDigitsSync(emit && emit.phone)
+      const emitEmail = String((emit && emit.email) || '').trim()
+      const emitIe = String((emit && emit.ie) || '').trim()
+      const emitAddress = String((emit && emit.address) || '').trim()
+      const rootCnpj = emitCnpj ? emitCnpj.slice(0, 8) : ''
+      const sourceLabel = String(sourceChannel || 'xml')
+
+      let supplier = null
+      let matchedBy = ''
+
+      if (emitCnpj) {
+        try {
+          const found = $app.findRecordsByFilter(
+            'customers',
+            'cnpj = {:cnpj} && deleted = false',
+            '-created',
+            1,
+            0,
+            { cnpj: emitCnpj },
+          )
+          if (found && found.length > 0) {
+            supplier = found[0]
+            matchedBy = 'cnpj'
+          }
+        } catch (_) {}
+      }
+
+      if (!supplier && emitCnpj) {
+        try {
+          const docs = $app.findRecordsByFilter(
+            'customer_documents',
+            'document_number = {:num}',
+            '-created',
+            1,
+            0,
+            { num: emitCnpj },
+          )
+          if (docs && docs.length > 0) {
+            const custId = docs[0].getString('customer')
+            if (custId) {
+              try {
+                supplier = $app.findRecordById('customers', custId)
+                if (supplier) matchedBy = 'customer_documents'
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!supplier && rootCnpj) {
+        try {
+          const docs = $app.findRecordsByFilter(
+            'customer_documents',
+            'root_cnpj = {:root}',
+            '-created',
+            1,
+            0,
+            { root: rootCnpj },
+          )
+          if (docs && docs.length > 0) {
+            const custId = docs[0].getString('customer')
+            if (custId) {
+              try {
+                const cust = $app.findRecordById('customers', custId)
+                if (cust && !cust.getBool('deleted')) {
+                  supplier = cust
+                  matchedBy = 'raiz_cnpj'
+                }
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!supplier && emitPhone) {
+        const core = inlineCanonicalPhoneCoreSync(emitPhone)
+        if (core) {
+          try {
+            const found = $app.findRecordsByFilter(
+              'customers',
+              'phone ~ {:core} && deleted = false',
+              '-created',
+              10,
+              0,
+              { core: core },
+            )
+            for (let i = 0; i < found.length; i++) {
+              if (inlineCanonicalPhoneCoreSync(found[i].getString('phone')) === core) {
+                supplier = found[i]
+                matchedBy = 'telefone'
+                break
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      if (!supplier && emitEmail) {
+        try {
+          const found = $app.findRecordsByFilter(
+            'customers',
+            'email = {:email} && deleted = false',
+            '-created',
+            1,
+            0,
+            { email: emitEmail },
+          )
+          if (found && found.length > 0) {
+            supplier = found[0]
+            matchedBy = 'email'
+          }
+        } catch (_) {}
+      }
+
+      if (!supplier && emitName && emitName.length >= 5) {
+        try {
+          const byName = $app.findRecordsByFilter(
+            'customers',
+            "customer_type = 'Fornecedor' && deleted = false && name ~ {:nm}",
+            '-created',
+            1,
+            0,
+            { nm: emitName },
+          )
+          if (byName && byName.length > 0) {
+            supplier = byName[0]
+            matchedBy = 'nome'
+          }
+        } catch (_) {}
+      }
+
+      if (supplier) {
+        try {
+          let changed = false
+          if (!supplier.getString('cnpj') && emitCnpj) {
+            supplier.set('cnpj', emitCnpj)
+            changed = true
+          }
+          if (!supplier.getString('company') && emitName) {
+            supplier.set('company', emitName)
+            changed = true
+          }
+          if (!supplier.getString('type')) {
+            supplier.set('type', 'PJ')
+            changed = true
+          }
+          if (emitCnpj && supplier.getString('customer_type') !== 'Fornecedor') {
+            supplier.set('customer_type', 'Fornecedor')
+            changed = true
+          }
+          if (changed) $app.save(supplier)
+        } catch (_) {}
+        inlineEnsureSupplierDocumentSync(supplier, emitCnpj, sourceLabel)
+        return {
+          supplier: supplier,
+          created: false,
+          matchedBy: matchedBy,
+          pendingRegistration: false,
+        }
+      }
+
+      const phoneToSave = emitPhone || '0000000000'
+
+      try {
+        const custCol = $app.findCollectionByNameOrId('customers')
+        const newSupp = new Record(custCol)
+        newSupp.set('name', emitName || 'Fornecedor CNPJ ' + emitCnpj)
+        newSupp.set('company', emitName || '')
+        newSupp.set('cnpj', emitCnpj)
+        newSupp.set('phone', phoneToSave)
+        if (emitEmail) newSupp.set('email', emitEmail)
+        newSupp.set('type', 'PJ')
+        newSupp.set('customer_type', 'Fornecedor')
+        newSupp.set('source', 'nfe_' + sourceLabel)
+
+        const notesParts = [
+          'Fornecedor cadastrado automaticamente via ingestão de NF-e (' + sourceLabel + ').',
+        ]
+        if (emitIe) notesParts.push('IE: ' + emitIe)
+        if (emitAddress) notesParts.push('Endereço: ' + emitAddress)
+        newSupp.set('notes', notesParts.join(' | '))
+
+        $app.save(newSupp)
+        inlineEnsureSupplierDocumentSync(newSupp, emitCnpj, sourceLabel)
+        console.log(
+          '[NFE-SUPPLIER-AUTO-CREATED]',
+          JSON.stringify({
+            supplierId: newSupp.id,
+            cnpj: emitCnpj,
+            nome: emitName,
+            origem: sourceLabel,
+            hasPhone: Boolean(emitPhone),
+            horarioBrasilia: new Date(Date.now() - 3 * 3600 * 1000)
+              .toISOString()
+              .replace('T', ' ')
+              .slice(0, 19),
+          }),
+        )
+        return { supplier: newSupp, created: true, matchedBy: '', pendingRegistration: false }
+      } catch (suppErr) {
+        console.log('[NFE-SUPPLIER-CREATE-ERR]', String(suppErr))
+        return { supplier: null, created: false, matchedBy: '', pendingRegistration: true }
+      }
+    }
+
     // F4 (0.0.266): Auto-cadastro / Dedupe do fornecedor via XML
-    const emitData = nfeExtractEmitDataFromXml(xmlContent)
+    const emitData = inlineExtractEmitDataFromXmlSync(xmlContent)
     if (!emitData.cnpj && parsed.emitCnpj) emitData.cnpj = parsed.emitCnpj
     if (!emitData.name && parsed.emitName) emitData.name = parsed.emitName
     if (!emitData.phone && parsed.emitPhone) emitData.phone = parsed.emitPhone
     if (senderEmail) emitData.email = senderEmail
 
-    const resolvedSupplier = nfeResolveOrCreateSupplier(emitData, 'email_inbox_sync')
+    const resolvedSupplier = inlineResolveOrCreateSupplierSync(emitData, 'email_inbox_sync')
     const supplierRec = resolvedSupplier ? resolvedSupplier.supplier : null
 
     // Leitura de configurações

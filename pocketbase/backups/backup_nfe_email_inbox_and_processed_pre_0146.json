@@ -1,0 +1,120 @@
+{
+  "timestamp": "2026-11-08T22:00:00.000Z",
+  "reason": "Backup pré-reparo do extrator de XML e reprocessamento das 4 notas presas da Jahu em nfe_email_inbox",
+  "schema_summary": {
+    "nfe_email_inbox": {
+      "fields": [
+        "gmail_message_id",
+        "gmail_thread_id",
+        "sender_email",
+        "sender_known",
+        "sender_name",
+        "subject",
+        "email_date",
+        "xml_count",
+        "xml_keys",
+        "status",
+        "retry_count",
+        "error_detail",
+        "processed_at",
+        "xml_payload"
+      ],
+      "indexes": ["idx_nfe_email_msg_id", "idx_nfe_email_status", "idx_nfe_email_sender"]
+    },
+    "nfe_processed": {
+      "fields": [
+        "access_key",
+        "nfe_number",
+        "series",
+        "issue_date",
+        "supplier_cnpj",
+        "supplier_name",
+        "supplier",
+        "total_amount",
+        "items_count",
+        "matched_items_count",
+        "pending_items_count",
+        "status",
+        "xml_payload",
+        "raw_items",
+        "notes",
+        "exception_reason",
+        "dest_cnpj",
+        "c_stat",
+        "prot_nfe",
+        "souis_stock_status",
+        "souis_stock_launched_at",
+        "souis_stock_launched_by",
+        "source_channel",
+        "cfop_entrada_sugerido"
+      ],
+      "indexes": ["idx_fin_nfe_access_key", "idx_fin_nfe_status", "idx_fin_nfe_supplier_cnpj"]
+    }
+  },
+  "stuck_emails_backup": [
+    {
+      "id": "yfwmromsh8t5egj",
+      "gmail_message_id": "1a1a781c74fbbe72",
+      "gmail_thread_id": "1a1a781c74fbbe72",
+      "sender_email": "contato_jahu@jahu.com.br",
+      "sender_known": true,
+      "sender_name": "contato_jahu@jahu.com.br",
+      "subject": "Envio da NF-e - N.Doc 001198484 - Série 1",
+      "email_date": "Wed, 04 Nov 2026 17:01:01 +0000 (UTC)",
+      "xml_count": 1,
+      "xml_keys": [],
+      "status": "erro_final",
+      "retry_count": 3,
+      "error_detail": "ReferenceError: nfeExtractEmitDataFromXml is not defined",
+      "processed_at": "2026-11-08T18:23:00.064-03:00"
+    },
+    {
+      "id": "ueqcitnpi81v0im",
+      "gmail_message_id": "1a1a801fb29c6cb0",
+      "gmail_thread_id": "1a1a801fb29c6cb0",
+      "sender_email": "contato_jahu@jahu.com.br",
+      "sender_known": true,
+      "sender_name": "contato_jahu@jahu.com.br",
+      "subject": "Envio da NF-e - N.Doc 001198550 - Série 1",
+      "email_date": "Wed, 04 Nov 2026 19:21:02 +0000 (UTC)",
+      "xml_count": 1,
+      "xml_keys": [],
+      "status": "erro_final",
+      "retry_count": 3,
+      "error_detail": "ReferenceError: nfeExtractEmitDataFromXml is not defined",
+      "processed_at": "2026-11-08T18:23:00.064-03:00"
+    },
+    {
+      "id": "dch60fldif0zkq4",
+      "gmail_message_id": "1a1acf7d30e58317",
+      "gmail_thread_id": "1a1acf7d30e58317",
+      "sender_email": "contato_jahu@jahu.com.br",
+      "sender_known": true,
+      "sender_name": "contato_jahu@jahu.com.br",
+      "subject": "Envio da NF-e - N.Doc 001198992 - Série 1",
+      "email_date": "Thu, 05 Nov 2026 18:28:03 +0000 (UTC)",
+      "xml_count": 1,
+      "xml_keys": [],
+      "status": "erro_final",
+      "retry_count": 3,
+      "error_detail": "ReferenceError: nfeExtractEmitDataFromXml is not defined",
+      "processed_at": "2026-11-08T18:23:00.064-03:00"
+    },
+    {
+      "id": "w2xjfefwiidu7pf",
+      "gmail_message_id": "1a1b1d7ae642f205",
+      "gmail_thread_id": "1a1b1d7ae642f205",
+      "sender_email": "contato_jahu@jahu.com.br",
+      "sender_known": true,
+      "sender_name": "contato_jahu@jahu.com.br",
+      "subject": "Envio da NF-e - N.Doc 001199371 - Série 1",
+      "email_date": "Fri, 06 Nov 2026 17:11:04 +0000 (UTC)",
+      "xml_count": 1,
+      "xml_keys": [],
+      "status": "erro_final",
+      "retry_count": 3,
+      "error_detail": "ReferenceError: nfeExtractEmitDataFromXml is not defined",
+      "processed_at": "2026-11-08T18:23:00.064-03:00"
+    }
+  ]
+}
