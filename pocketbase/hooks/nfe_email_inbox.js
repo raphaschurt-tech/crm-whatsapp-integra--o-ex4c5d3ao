@@ -1054,9 +1054,13 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         )
       } catch (_) {}
 
-      // Se já processado com sucesso, pula; se estava 'sem_xml' ou 'erro', permite reprocessar
-      if (existingRecord && existingRecord.getString('status') === 'processado') {
-        continue
+      // Regra de dedupe: pular mensagem já registrada em nfe_email_inbox com status 'processado' ou 'sem_xml'
+      // Processar cada e-mail 1x e nunca mais reprocessar a cada minuto
+      if (existingRecord) {
+        const existingStatus = existingRecord.getString('status')
+        if (existingStatus === 'processado' || existingStatus === 'sem_xml') {
+          continue
+        }
       }
 
       let senderRaw = ''
@@ -2878,25 +2882,12 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       )
     } catch (_) {}
 
-    // Se já processado com sucesso, pula.
-    // Se status for 'sem_xml' ou 'erro', pular se já foi processado nas últimas 24h
-    // (só reprocessar no cron se processed_at for nulo/vazio ou tiver mais de 24h).
+    // Regra de dedupe: pular mensagem já registrada em nfe_email_inbox com status 'processado' ou 'sem_xml'
+    // Processar cada e-mail 1x e nunca mais reprocessar a cada minuto
     if (existingRecord) {
       const recStatus = existingRecord.getString('status')
-      if (recStatus === 'processado') {
+      if (recStatus === 'processado' || recStatus === 'sem_xml') {
         continue
-      }
-      if (recStatus === 'sem_xml' || recStatus === 'erro') {
-        const procAtStr = existingRecord.getString('processed_at') || ''
-        if (procAtStr) {
-          const procTime = new Date(procAtStr).getTime()
-          const nowTime = new Date(horarioBrasilia).getTime()
-          const diffMs = nowTime - procTime
-          const diffHours = diffMs / (1000 * 60 * 60)
-          if (!isNaN(diffHours) && diffHours < 24 && diffHours >= 0) {
-            continue
-          }
-        }
       }
     }
 

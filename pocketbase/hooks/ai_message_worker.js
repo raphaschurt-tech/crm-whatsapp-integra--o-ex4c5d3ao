@@ -1889,6 +1889,113 @@ onRecordAfterCreateSuccess((e) => {
     }
   }
 
+  // 7.1. Busca determinística pré-IA (para garantir que termos como "bucha bandeja fox 2014"
+  // nunca recebam "não encontrei", e injetar produtos reais encontrados no contexto da IA)
+  let preSearchProductResults = null
+  let isPieceOrProductQuery = false
+
+  try {
+    const rawCustomerQuery = String(incomingText || '').trim()
+    const lowerCustQuery = rawCustomerQuery.toLowerCase()
+
+    // Palavras-chave indicativas de busca de produto / peça
+    const productKeywords = [
+      'bucha',
+      'bandeja',
+      'coxim',
+      'amortecedor',
+      'pivo',
+      'terminal',
+      'bieleta',
+      'kit',
+      'pastilha',
+      'disco',
+      'rolamento',
+      'filtro',
+      'vela',
+      'correia',
+      'suspensao',
+      'dianteiro',
+      'traseiro',
+      'sup',
+      'inf',
+      'fox',
+      'gol',
+      'palio',
+      'corsa',
+      'civic',
+      'corolla',
+      'hb20',
+      'onix',
+      'fiesta',
+      'ka',
+      'uno',
+      'celta',
+      'strada',
+      'saveiro',
+      'peca',
+      'peça',
+      'tem ',
+      'preco',
+      'preço',
+      'valor',
+      'custa',
+    ]
+
+    for (let pki = 0; pki < productKeywords.length; pki++) {
+      if (lowerCustQuery.includes(productKeywords[pki])) {
+        isPieceOrProductQuery = true
+        break
+      }
+    }
+
+    if (rawCustomerQuery.length >= 3) {
+      const searchRes = executeBuscarProdutos(rawCustomerQuery)
+      if (searchRes && searchRes.produtos && searchRes.produtos.length > 0) {
+        preSearchProductResults = searchRes
+        isPieceOrProductQuery = true
+      }
+    }
+  } catch (preSearchErr) {
+    console.log('[PRE-SEARCH-PRODUCT-ERR]', String(preSearchErr))
+  }
+
+  // Se a busca determinística pré-IA encontrou produtos no banco, injeta no contexto como mensagem de sistema prioritária
+  if (
+    preSearchProductResults &&
+    preSearchProductResults.produtos &&
+    preSearchProductResults.produtos.length > 0
+  ) {
+    const preFoundList = preSearchProductResults.produtos.map((p) => {
+      return (
+        '- SKU: ' +
+        p.sku +
+        ' | Nome: ' +
+        p.nome +
+        ' | Marca: ' +
+        (p.marca || 'N/D') +
+        ' | Preço: ' +
+        (p.preco > 0 ? 'R$ ' + p.preco.toFixed(2) : 'Sob consulta') +
+        ' | Estoque: ' +
+        (p.estoque > 0 ? p.estoque + ' un.' : 'disponível em até 48 horas') +
+        ' (' +
+        p.status_consulta +
+        ')'
+      )
+    })
+
+    const preSearchNotice =
+      '[PRODUTOS REAIS ENCONTRADOS DETERMINISTICAMENTE NO CATÁLOGO DO ERP]:\n' +
+      'A busca determinística pré-IA já consultou o banco para a mensagem do cliente e encontrou os seguintes produtos correspondentes:\n' +
+      preFoundList.join('\n') +
+      '\n\nREGRA MANDATÓRIA: Os produtos acima EXISTEM em nosso estoque/catálogo. NUNCA responda "não encontrei", "não temos" ou "não trabalho com isso". Apresente os itens encontrados informando os valores e prazos (se estoque 0 ou preço 0, informe Sob consulta / disponível em até 48 horas).'
+
+    chatMessages.push({
+      role: 'system',
+      content: preSearchNotice,
+    })
+  }
+
   // Despachante genérico de tool calls
   const dispatchToolCall = (toolName, toolArgs) => {
     if (toolName === 'buscar_produtos') {
@@ -1961,9 +2068,28 @@ onRecordAfterCreateSuccess((e) => {
     let currentMessages = chatMessages.slice()
     const MAX_TOOL_ROUNDS = 4
     let rounds = 0
+    let didExecuteTool = false
 
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++
+
+      // Se é mensagem claramente de produto/peça, não houve tool_call na 1ª rodada e não há produtos pré-injetados,
+      // força tool_choice: { type: 'function', function: { name: 'buscar_produtos' } } na 2ª tentativa
+      let currentToolChoice = 'auto'
+      if (
+        rounds === 2 &&
+        !didExecuteTool &&
+        isPieceOrProductQuery &&
+        (!preSearchProductResults ||
+          !preSearchProductResults.produtos ||
+          preSearchProductResults.produtos.length === 0)
+      ) {
+        currentToolChoice = {
+          type: 'function',
+          function: { name: 'buscar_produtos' },
+        }
+      }
+
       const openAiRes = $http.send({
         url: 'https://api.openai.com/v1/chat/completions',
         method: 'POST',
@@ -1975,7 +2101,7 @@ onRecordAfterCreateSuccess((e) => {
           model: 'gpt-4o-mini',
           messages: currentMessages,
           tools: availableTools,
-          tool_choice: 'auto',
+          tool_choice: currentToolChoice,
           max_tokens: 450,
           temperature: 0.2,
         }),
@@ -2009,6 +2135,7 @@ onRecordAfterCreateSuccess((e) => {
       ) {
         currentMessages.push(choiceMsg)
 
+        didExecuteTool = true
         for (let t = 0; t < choiceMsg.tool_calls.length; t++) {
           const tCall = choiceMsg.tool_calls[t]
           const fnName = tCall.function ? tCall.function.name : ''

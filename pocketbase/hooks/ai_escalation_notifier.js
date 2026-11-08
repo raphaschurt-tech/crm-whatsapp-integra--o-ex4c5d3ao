@@ -1,390 +1,295 @@
 // ============================================
-// HELPER DE NOTIFICAÇÃO DE ESCALADA VIA WHATSAPP — Fase 7
-// Quando ocorre uma escalada para humano:
-//   (a) Camada 3 detecta tom sensível / [TRANSFERIR-HUMANO] (reclamacao, nota, cobranca, aplicacao, etc.)
-//   (b) Cliente digita /atendente
-// Envia ADICIONALMENTE uma mensagem WhatsApp curta para 11947518805
-// usando a mesma integração Z-API já existente no projeto.
+// pocketbase/hooks/ai_escalation_notifier.js
+// NOTIFICADOR DE ESCALADA VIA WHATSAPP — Fase 7
+// ============================================
+// Regra fundamental do PocketBase JSVM:
+// "Hook scoping error: top-level declarations are referenced inside callbacks —
+// PocketBase's JSVM executes callbacks in a separate VM pool, so top-level
+// functions and variables are not accessible at runtime".
 //
-// Regras obrigatórias:
-// 1. Mensagem curta em tom de alerta interno:
+// Conclusão arquitetural:
+// 1. NENHUMA função ou variável referenciada nos callbacks (routerAdd, cronAdd, etc.)
+//    pode ser declarada no top-level do arquivo.
+// 2. A lógica central de envio e dedupe fica exposta via função inline encapsulada em
+//    globalThis.__aiEscalationNotifier = { notifyEscalation: ... } e globalThis.notifyEscalation.
+// 3. Cada callback (routerAdd, onBootstrap) possui sua própria implementação estritamente
+//    INLINE ou resolve estritamente em tempo de execução via globalThis sem fecho léxico top-level.
+// 4. O dedupe de 5 minutos (não repetir notificação da mesma escalada por telefone+motivo)
+//    é armazenado em chat_control (ou memória no globalThis / settings) de forma persistente
+//    ou inline.
+// 5. Destino da notificação: 5511947518805 via Z-API /send-text (credenciais lidas de settings).
+// 6. Formato obrigatório:
 //    "🔔 ESCALADA — Cliente <Nome> (<Telefone>) | Motivo: <motivo> | Assunto: <assunto> | <HH:mm>"
-// 2. Horário em Brasília (UTC-3).
-// 3. Dedupe simples: não notificar duplicado se o mesmo telefone+motivo
-//    escalar na janela de 5 minutos.
-// 4. Tolerante a falha: se o envio Z-API falhar, apenas loga e NUNCA bloqueia
-//    nem atrasa a escalada do cliente.
-// 5. Exportado em escopo global (função de topo + globalThis.__aiEscalationNotifier + globalThis.notifyEscalation)
-//    para resolução garantida em qualquer VM/callback do PocketBase.
+// 7. Horário Brasília (UTC-3).
+// 8. Tolerante a erros: NUNCA bloqueia a escalada.
 // ============================================
 
-const TARGET_ESCALATION_PHONE = '5511947518805'
-const DEDUPE_WINDOW_MS = 5 * 60 * 1000 // 5 minutos
-
-// Armazena no escopo do hook os timestamps dos últimos envios por chave telefone+motivo
-const recentEscalations = new Map()
-
-function safeStr(v) {
-  return v === undefined || v === null ? '' : String(v).trim()
-}
-
-function canonicalDigits(p) {
-  const s = String(p || '').replace(/\D/g, '')
-  if (s.startsWith('55') && s.length >= 12) return s.slice(2)
-  return s
-}
-
-function formatBrasiliaTime(dateObj) {
+;(function () {
   try {
-    const d = dateObj || new Date()
-    const utcMs = d.getTime()
-    const spMs = utcMs - 3 * 3600 * 1000
-    const spDate = new Date(spMs)
-    const hh = String(spDate.getUTCHours()).padStart(2, '0')
-    const mm = String(spDate.getUTCMinutes()).padStart(2, '0')
-    return hh + ':' + mm
-  } catch (_) {
-    return '00:00'
-  }
-}
+    if (typeof globalThis === 'undefined') return
 
-function formatPhoneDisplay(phone) {
-  const digits = canonicalDigits(phone)
-  if (digits.length === 11) {
-    return '(' + digits.slice(0, 2) + ') ' + digits.slice(2, 7) + '-' + digits.slice(7)
-  }
-  if (digits.length === 10) {
-    return '(' + digits.slice(0, 2) + ') ' + digits.slice(2, 6) + '-' + digits.slice(6)
-  }
-  return phone || 'sem telefone'
-}
-
-function resolveCustomerName($app, phone) {
-  if (!$app || !phone) return ''
-  try {
-    const p1 = String(phone).replace(/\D/g, '')
-    const p2 = canonicalDigits(phone)
-    const found = $app.findRecordsByFilter(
-      'customers',
-      'phone ~ {:p1} || phone ~ {:p2}',
-      '-created',
-      1,
-      0,
-      { p1: p1, p2: p2 },
-    )
-    if (found && found.length > 0) {
-      const rawName = safeStr(found[0].getString('name') || found[0].getString('contact_name'))
-      const isDigitsOrPhone = /^[0-9+\s()-]+$/.test(rawName) || rawName === phone
-      if (rawName && !isDigitsOrPhone) {
-        return rawName
-      }
+    // Objeto de dedupe em globalThis para persistir entre chamadas na mesma instância
+    if (!globalThis.__aiEscalationRecentMap) {
+      globalThis.__aiEscalationRecentMap = {}
     }
-  } catch (err) {
-    console.log('[ESCALATION-NOTIFIER-NAME-ERR]', err.message || String(err))
-  }
-  return ''
-}
 
-function extractSubject($app, phone, incomingText, aiReply) {
-  // 1. Tenta extrair a partir do incomingText se houver texto claro
-  const text = safeStr(incomingText)
-  if (text && text !== '/atendente' && text.length > 3) {
-    // Limpa quebras de linha e limita tamanho para manter a notificação curta
-    const clean = text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ')
-    if (clean.length > 80) {
-      return clean.slice(0, 77) + '...'
-    }
-    return clean
-  }
+    const TARGET_ESCALATION_PHONE = '5511947518805'
+    const DEDUPE_WINDOW_MS = 5 * 60 * 1000 // 5 minutos
 
-  // 2. Tenta extrair de chat_summaries caso incomingText seja vazio ou apenas comando
-  if ($app && phone) {
-    try {
-      const canon = canonicalDigits(phone)
-      const sums = $app.findRecordsByFilter(
-        'chat_summaries',
-        'canonical_phone = {:cp}',
-        '-created',
-        1,
-        0,
-        { cp: canon },
-      )
-      if (sums && sums.length > 0) {
-        const preview = safeStr(sums[0].getString('last_message_preview'))
-        if (preview && preview !== '/atendente' && preview.length > 3) {
-          const clean = preview.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ')
-          if (clean.length > 80) return clean.slice(0, 77) + '...'
-          return clean
+    const coreNotifyEscalation = function (opts) {
+      try {
+        const o = opts || {}
+        const $pbApp = o.$app || (typeof $app !== 'undefined' ? $app : null)
+        const phone = o.phone ? String(o.phone).trim() : ''
+        const reason = o.reason ? String(o.reason).trim() : 'atendimento_humano'
+        const incomingText = o.incomingText ? String(o.incomingText).trim() : ''
+        const aiReply = o.aiReply ? String(o.aiReply).trim() : ''
+
+        if (!phone) {
+          console.log('[ESCALATION-NOTIFIER-SKIP] Telefone não informado.')
+          return { sent: false, skipped: true, reason: 'missing_phone' }
         }
+
+        // Canonical phone
+        let canonPhone = phone.replace(/\D/g, '')
+        if (canonPhone.startsWith('55') && canonPhone.length >= 12) {
+          canonPhone = canonPhone.slice(2)
+        }
+
+        // 1. Dedupe em memória (5 minutos por telefone+motivo)
+        const dedupeKey = canonPhone + ':' + reason
+        const nowMs = Date.now()
+        if (globalThis.__aiEscalationRecentMap) {
+          const lastSent = globalThis.__aiEscalationRecentMap[dedupeKey] || 0
+          if (nowMs - lastSent < DEDUPE_WINDOW_MS) {
+            console.log(
+              '[ESCALATION-NOTIFIER-DEDUPE]',
+              JSON.stringify({
+                phone: phone,
+                reason: reason,
+                message: 'Notificação suprimida por dedupe (janela de 5 min).',
+              }),
+            )
+            return { sent: false, skipped: true, reason: 'dedupe_suppressed' }
+          }
+        }
+
+        // 2. Horário de Brasília (UTC-3)
+        let timeStr = '00:00'
+        try {
+          const spDate = new Date(Date.now() - 3 * 3600 * 1000)
+          const hh = String(spDate.getUTCHours()).padStart(2, '0')
+          const mm = String(spDate.getUTCMinutes()).padStart(2, '0')
+          timeStr = hh + ':' + mm
+        } catch (_) {}
+
+        // 3. Resolução do Nome do Cliente
+        let customerName = ''
+        if ($pbApp && canonPhone) {
+          try {
+            const rawDigits = phone.replace(/\D/g, '')
+            const foundCusts = $pbApp.findRecordsByFilter(
+              'customers',
+              'phone ~ {:p1} || phone ~ {:p2}',
+              '-created',
+              1,
+              0,
+              { p1: rawDigits, p2: canonPhone },
+            )
+            if (foundCusts && foundCusts.length > 0) {
+              const rawName = String(
+                foundCusts[0].getString('name') || foundCusts[0].getString('contact_name') || '',
+              ).trim()
+              const isDigits = /^[0-9+\s()-]+$/.test(rawName) || rawName === phone
+              if (rawName && !isDigits) {
+                customerName = rawName
+              }
+            }
+          } catch (cErr) {
+            console.log('[ESCALATION-NOTIFIER-NAME-ERR]', String(cErr))
+          }
+        }
+
+        // 4. Formatação de exibição do telefone
+        let phoneDisplay = phone
+        if (canonPhone.length === 11) {
+          phoneDisplay =
+            '(' + canonPhone.slice(0, 2) + ') ' + canonPhone.slice(2, 7) + '-' + canonPhone.slice(7)
+        } else if (canonPhone.length === 10) {
+          phoneDisplay =
+            '(' + canonPhone.slice(0, 2) + ') ' + canonPhone.slice(2, 6) + '-' + canonPhone.slice(6)
+        }
+
+        // 5. Extração de Assunto
+        let subject = ''
+        if (incomingText && incomingText !== '/atendente' && incomingText.length > 3) {
+          const clean = incomingText.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ')
+          subject = clean.length > 80 ? clean.slice(0, 77) + '...' : clean
+        } else if ($pbApp && canonPhone) {
+          try {
+            const sums = $pbApp.findRecordsByFilter(
+              'chat_summaries',
+              'canonical_phone = {:cp}',
+              '-created',
+              1,
+              0,
+              { cp: canonPhone },
+            )
+            if (sums && sums.length > 0) {
+              const preview = String(sums[0].getString('last_message_preview') || '').trim()
+              if (preview && preview !== '/atendente' && preview.length > 3) {
+                const clean = preview.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ')
+                subject = clean.length > 80 ? clean.slice(0, 77) + '...' : clean
+              }
+            }
+          } catch (_) {}
+        }
+        if (!subject) {
+          if (reason === 'reclamacao') subject = 'Reclamação ou insatisfação com atendimento/peça'
+          else if (reason === 'nota') subject = 'Problema ou dúvida sobre nota fiscal / DANFE'
+          else if (reason === 'cobranca')
+            subject = 'Dúvida ou solicitação sobre cobrança/financeiro'
+          else if (reason === 'interesse_compra') subject = 'Interesse de compra / cotação formal'
+          else if (reason === 'aplicacao')
+            subject = 'Dúvida de aplicação de peça (requer atendente)'
+          else if (reason === 'comando_atendente') subject = 'Cliente solicitou atendente humano'
+          else subject = 'Solicitação de atendimento humano'
+        }
+
+        // Mapeamento de rótulo do motivo
+        let reasonLabel = reason
+        if (reason === 'reclamacao') reasonLabel = 'Reclamação'
+        else if (reason === 'nota') reasonLabel = 'Nota Fiscal'
+        else if (reason === 'cobranca') reasonLabel = 'Cobrança'
+        else if (reason === 'interesse_compra') reasonLabel = 'Interesse de Compra'
+        else if (reason === 'aplicacao') reasonLabel = 'Aplicação de Peça'
+        else if (reason === 'comando_atendente') reasonLabel = 'Solicitado pelo Cliente'
+
+        // 6. Montagem da mensagem obrigatória
+        const clientPart = customerName ? customerName + ' (' + phoneDisplay + ')' : phoneDisplay
+        const finalMessage =
+          '🔔 ESCALADA — Cliente ' +
+          clientPart +
+          ' | Motivo: ' +
+          reasonLabel +
+          ' | Assunto: ' +
+          subject +
+          ' | ' +
+          timeStr
+
+        console.log(
+          '[ESCALATION-NOTIFIER-PREPARED]',
+          JSON.stringify({
+            target: TARGET_ESCALATION_PHONE,
+            clientPhone: phone,
+            customerName: customerName,
+            reason: reason,
+            subject: subject,
+            horarioBrasilia: timeStr,
+            message: finalMessage,
+          }),
+        )
+
+        // Grava no dedupe
+        if (globalThis.__aiEscalationRecentMap) {
+          globalThis.__aiEscalationRecentMap[dedupeKey] = nowMs
+        }
+
+        if (!$pbApp) {
+          return { sent: false, error: 'missing_$app', message: finalMessage }
+        }
+
+        // 7. Leitura da configuração Z-API em settings
+        let zapiCfg = null
+        try {
+          const setRecs = $pbApp.findRecordsByFilter('settings', 'id != ""', '-created', 1, 0)
+          if (setRecs && setRecs.length > 0) {
+            const s = setRecs[0]
+            const inst = String(s.getString('zapi_instance_id') || '').trim()
+            const tok = String(s.getString('zapi_token') || '').trim()
+            const clTok = String(s.getString('zapi_client_token') || '').trim()
+            if (inst && tok && clTok) {
+              zapiCfg = { instance: inst, token: tok, clientToken: clTok }
+            }
+          }
+        } catch (setErr) {
+          console.log('[ESCALATION-NOTIFIER-SETTINGS-ERR]', String(setErr))
+        }
+
+        if (!zapiCfg) {
+          console.log('[ESCALATION-NOTIFIER-WARN] Z-API não configurada em settings.')
+          return { sent: false, error: 'zapi_not_configured', message: finalMessage }
+        }
+
+        // 8. Envio Z-API estritamente protegido
+        try {
+          const zapiSendUrl =
+            'https://api.z-api.io/instances/' +
+            encodeURIComponent(zapiCfg.instance) +
+            '/token/' +
+            encodeURIComponent(zapiCfg.token) +
+            '/send-text'
+
+          const res = $http.send({
+            url: zapiSendUrl,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Client-Token': zapiCfg.clientToken,
+            },
+            body: JSON.stringify({
+              phone: TARGET_ESCALATION_PHONE,
+              message: finalMessage,
+            }),
+            timeout: 10,
+          })
+
+          const status = res.statusCode
+          const success = status >= 200 && status < 300
+          if (success) {
+            console.log(
+              '[ESCALATION-NOTIFIER-SENT]',
+              JSON.stringify({
+                target: TARGET_ESCALATION_PHONE,
+                status: status,
+                clientPhone: phone,
+                reason: reason,
+              }),
+            )
+            return { sent: true, status: status, message: finalMessage }
+          } else {
+            const bodyStr = String(res.body || '')
+            console.log(
+              '[ESCALATION-NOTIFIER-FAILED]',
+              JSON.stringify({
+                target: TARGET_ESCALATION_PHONE,
+                status: status,
+                body: bodyStr.slice(0, 200),
+                clientPhone: phone,
+              }),
+            )
+            return { sent: false, status: status, error: bodyStr, message: finalMessage }
+          }
+        } catch (httpErr) {
+          console.log('[ESCALATION-NOTIFIER-FAILED]', String(httpErr))
+          return { sent: false, error: String(httpErr), message: finalMessage }
+        }
+      } catch (fatalErr) {
+        console.log('[ESCALATION-NOTIFIER-FATAL-ERR]', String(fatalErr))
+        return { sent: false, error: String(fatalErr) }
       }
-    } catch (_) {}
-  }
-
-  // 3. Fallback inteligente baseado no aiReply se houver menção
-  if (aiReply) {
-    const cleanReply = safeStr(aiReply).replace(/[\r\n]+/g, ' ')
-    if (cleanReply.length > 80) return cleanReply.slice(0, 77) + '...'
-    if (cleanReply) return cleanReply
-  }
-
-  return 'solicitação de atendimento humano'
-}
-
-function buildNotificationMessage(data) {
-  const nome = safeStr(data.customerName)
-  const telDisplay = formatPhoneDisplay(data.phone)
-  const clienteParte = nome ? nome + ' (' + telDisplay + ')' : telDisplay
-  const motivo = safeStr(data.reason) || 'atendimento_humano'
-  const assunto = safeStr(data.subject) || 'solicitação de atendimento'
-  const horario = safeStr(data.timeStr) || formatBrasiliaTime(new Date())
-
-  return (
-    '🔔 ESCALADA — Cliente ' +
-    clienteParte +
-    ' | Motivo: ' +
-    motivo +
-    ' | Assunto: ' +
-    assunto +
-    ' | ' +
-    horario
-  )
-}
-
-function checkDedupe(phone, reason) {
-  const now = Date.now()
-  const canon = canonicalDigits(phone)
-  const key = canon + ':' + safeStr(reason)
-
-  // Limpeza de itens antigos no Map (> 10 minutos)
-  for (const [k, ts] of recentEscalations.entries()) {
-    if (now - ts > 10 * 60 * 1000) {
-      recentEscalations.delete(k)
     }
-  }
 
-  const lastTs = recentEscalations.get(key)
-  if (lastTs && now - lastTs < DEDUPE_WINDOW_MS) {
-    return false // Duplicado na janela de 5 min
-  }
-  recentEscalations.set(key, now)
-  return true // Pode enviar
-}
-
-function getZapiConfig($app) {
-  try {
-    const records = $app.findRecordsByFilter(
-      'settings',
-      "zapi_instance_id != '' && zapi_token != '' && zapi_client_token != ''",
-      '-created',
-      1,
-      0,
-    )
-    if (records && records.length > 0) {
-      const r = records[0]
-      return {
-        instance: safeStr(r.getString('zapi_instance_id')),
-        token: safeStr(r.getString('zapi_token')),
-        clientToken: safeStr(r.getString('zapi_client_token')),
-      }
+    globalThis.__aiEscalationNotifier = {
+      notifyEscalation: coreNotifyEscalation,
     }
-  } catch (err) {
-    console.log('[ESCALATION-NOTIFIER-CONFIG-ERR]', err.message || String(err))
+    globalThis.notifyEscalation = coreNotifyEscalation
+  } catch (initErr) {
+    console.log('[ESCALATION-NOTIFIER-INIT-ERR]', String(initErr))
   }
-  return null
-}
+})()
 
-function notifyEscalation(params) {
-  const opts = params || {}
-  const $app = opts.$app
-  const phone = safeStr(opts.phone)
-  const reason = safeStr(opts.reason) || 'atendimento_humano'
-  const incomingText = safeStr(opts.incomingText)
-  const aiReply = safeStr(opts.aiReply)
-
-  if (!phone) {
-    console.log('[ESCALATION-NOTIFIER-SKIP] Telefone não informado.')
-    return { sent: false, skipped: true, reason: 'missing_phone' }
-  }
-
-  // 1. Dedupe em memória
-  if (!checkDedupe(phone, reason)) {
-    console.log(
-      '[ESCALATION-NOTIFIER-DEDUPE]',
-      JSON.stringify({
-        phone: phone,
-        reason: reason,
-        message: 'Notificação suprimida por dedupe (janela de 5 min).',
-      }),
-    )
-    return { sent: false, skipped: true, reason: 'dedupe_suppressed' }
-  }
-
-  // 2. Extração de nome e assunto
-  const customerName = resolveCustomerName($app, phone)
-  const subject = extractSubject($app, phone, incomingText, aiReply)
-  const timeStr = formatBrasiliaTime(new Date())
-
-  const message = buildNotificationMessage({
-    customerName: customerName,
-    phone: phone,
-    reason: reason,
-    subject: subject,
-    timeStr: timeStr,
-  })
-
-  console.log(
-    '[ESCALATION-NOTIFIER-PREPARED]',
-    JSON.stringify({
-      target: TARGET_ESCALATION_PHONE,
-      clientPhone: phone,
-      customerName: customerName,
-      reason: reason,
-      subject: subject,
-      horarioBrasilia: timeStr,
-      message: message,
-    }),
-  )
-
-  // 3. Envio via Z-API usando as mesmas credenciais do settings
-  if (!$app) {
-    return { sent: false, error: 'missing_$app', message: message }
-  }
-
-  const cfg = getZapiConfig($app)
-  if (!cfg || !cfg.instance || !cfg.token || !cfg.clientToken) {
-    console.log('[ESCALATION-NOTIFIER-WARN] Z-API não configurada em settings.')
-    return { sent: false, error: 'zapi_not_configured', message: message }
-  }
-
-  try {
-    const zapiSendUrl =
-      'https://api.z-api.io/instances/' +
-      encodeURIComponent(cfg.instance) +
-      '/token/' +
-      encodeURIComponent(cfg.token) +
-      '/send-text'
-
-    const res = $http.send({
-      url: zapiSendUrl,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Client-Token': cfg.clientToken,
-      },
-      body: JSON.stringify({
-        phone: TARGET_ESCALATION_PHONE,
-        message: message,
-      }),
-      timeout: 10,
-    })
-
-    const status = res.statusCode
-    const success = status >= 200 && status < 300
-    if (success) {
-      console.log(
-        '[ESCALATION-NOTIFIER-SENT]',
-        JSON.stringify({
-          target: TARGET_ESCALATION_PHONE,
-          status: status,
-          clientPhone: phone,
-          reason: reason,
-        }),
-      )
-      return { sent: true, status: status, message: message }
-    } else {
-      const bodyStr = String(res.body || '')
-      console.log(
-        '[ESCALATION-NOTIFIER-FAILED]',
-        JSON.stringify({
-          target: TARGET_ESCALATION_PHONE,
-          status: status,
-          body: bodyStr,
-          clientPhone: phone,
-        }),
-      )
-      return { sent: false, status: status, error: bodyStr, message: message }
-    }
-  } catch (httpErr) {
-    const errStr = httpErr.message || String(httpErr)
-    console.log(
-      '[ESCALATION-NOTIFIER-HTTP-ERR]',
-      JSON.stringify({
-        target: TARGET_ESCALATION_PHONE,
-        error: errStr,
-        clientPhone: phone,
-      }),
-    )
-    return { sent: false, error: errStr, message: message }
-  }
-}
-
-// Objeto de exportação
-const escalationNotifierApi = {
-  TARGET_ESCALATION_PHONE: TARGET_ESCALATION_PHONE,
-  formatBrasiliaTime: formatBrasiliaTime,
-  formatPhoneDisplay: formatPhoneDisplay,
-  resolveCustomerName: resolveCustomerName,
-  extractSubject: extractSubject,
-  buildNotificationMessage: buildNotificationMessage,
-  checkDedupe: checkDedupe,
-  notifyEscalation: notifyEscalation,
-}
-
-// Disponibilização em globalThis, global e escopo de módulos
-try {
-  if (typeof globalThis !== 'undefined') {
-    globalThis.__aiEscalationNotifier = escalationNotifierApi
-    globalThis.notifyEscalation = notifyEscalation
-  }
-} catch (_) {}
-
-try {
-  if (typeof global !== 'undefined') {
-    global.__aiEscalationNotifier = escalationNotifierApi
-    global.notifyEscalation = notifyEscalation
-  }
-} catch (_) {}
-
-if (typeof module !== 'undefined' && module && module.exports) {
-  module.exports = escalationNotifierApi
-}
-if (typeof exports !== 'undefined' && exports) {
-  exports.__aiEscalationNotifier = escalationNotifierApi
-  exports.notifyEscalation = notifyEscalation
-}
-
-// Execução de autoteste funcional no ciclo de bootstrap do PocketBase
-if (typeof onBootstrap === 'function') {
-  onBootstrap((e) => {
-    e.next()
-    try {
-      const fn =
-        (typeof notifyEscalation === 'function' && notifyEscalation) ||
-        (typeof globalThis !== 'undefined' &&
-          globalThis.__aiEscalationNotifier &&
-          typeof globalThis.__aiEscalationNotifier.notifyEscalation === 'function' &&
-          globalThis.__aiEscalationNotifier.notifyEscalation) ||
-        null
-
-      if (fn) {
-        const testRes = fn({
-          $app: $app,
-          phone: '11999990000',
-          reason: 'reclamacao',
-          incomingText: 'peça com prazo estourado e defeito',
-          aiReply: '',
-        })
-        console.log('[ESCALATION-BOOT-PROBE]', JSON.stringify(testRes))
-      } else {
-        console.log('[ESCALATION-BOOT-PROBE-ERR] notifyEscalation is not defined')
-      }
-    } catch (bootErr) {
-      console.log('[ESCALATION-BOOT-PROBE-ERR]', bootErr.message || String(bootErr))
-    }
-  })
-}
-
-// Rota de teste/diagnóstico interno para prova funcional segura
+// Rota de teste/diagnóstico interno para prova funcional segura (TUDO INLINE)
 if (typeof routerAdd === 'function') {
   try {
     routerAdd('POST', '/backend/v1/ai/test-escalation-notify', (e) => {
@@ -393,23 +298,46 @@ if (typeof routerAdd === 'function') {
         reqBody = e.requestInfo().body || {}
       } catch (_) {}
 
-      const testPhone = safeStr(reqBody.phone) || '11999990000'
-      const testReason = safeStr(reqBody.reason) || 'reclamacao'
-      const testIncoming = safeStr(reqBody.incomingText) || 'peça veio com defeito e prazo estourou'
+      const testPhone = reqBody.phone ? String(reqBody.phone).trim() : '11999990000'
+      const testReason = reqBody.reason ? String(reqBody.reason).trim() : 'reclamacao'
+      const testIncoming = reqBody.incomingText
+        ? String(reqBody.incomingText).trim()
+        : 'peça veio com defeito e prazo estourou'
       const bypassDedupe = Boolean(reqBody.bypassDedupe)
 
-      if (bypassDedupe) {
-        const canon = canonicalDigits(testPhone)
-        recentEscalations.delete(canon + ':' + testReason)
+      if (bypassDedupe && typeof globalThis !== 'undefined' && globalThis.__aiEscalationRecentMap) {
+        let cp = testPhone.replace(/\D/g, '')
+        if (cp.startsWith('55') && cp.length >= 12) cp = cp.slice(2)
+        delete globalThis.__aiEscalationRecentMap[cp + ':' + testReason]
       }
 
-      const res = notifyEscalation({
-        $app: $app,
-        phone: testPhone,
-        reason: testReason,
-        incomingText: testIncoming,
-        aiReply: '',
-      })
+      let res = null
+      if (
+        typeof globalThis !== 'undefined' &&
+        globalThis.__aiEscalationNotifier &&
+        typeof globalThis.__aiEscalationNotifier.notifyEscalation === 'function'
+      ) {
+        res = globalThis.__aiEscalationNotifier.notifyEscalation({
+          $app: $app,
+          phone: testPhone,
+          reason: testReason,
+          incomingText: testIncoming,
+          aiReply: '',
+        })
+      } else if (
+        typeof globalThis !== 'undefined' &&
+        typeof globalThis.notifyEscalation === 'function'
+      ) {
+        res = globalThis.notifyEscalation({
+          $app: $app,
+          phone: testPhone,
+          reason: testReason,
+          incomingText: testIncoming,
+          aiReply: '',
+        })
+      } else {
+        res = { sent: false, error: 'notifyEscalation_not_loaded' }
+      }
 
       return e.json(200, {
         ok: true,
@@ -418,6 +346,6 @@ if (typeof routerAdd === 'function') {
       })
     })
   } catch (rErr) {
-    console.log('[ESCALATION-NOTIFIER-ROUTER-ERR]', rErr.message || String(rErr))
+    console.log('[ESCALATION-NOTIFIER-ROUTER-ERR]', String(rErr))
   }
 }

@@ -27,7 +27,7 @@ export interface BackupMetadata {
 }
 
 export const PRE_MIGRATION_BACKUP_SUMMARY: BackupMetadata = {
-  timestamp: '2026-10-31T00:00:00.000Z',
+  timestamp: '2026-11-08T17:05:00.000Z',
   totalCustomers: 122,
   activeCustomers: 111,
   deletedCustomers: 11,
