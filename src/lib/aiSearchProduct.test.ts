@@ -790,5 +790,55 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
     )
   }
 
+  // Teste 18: Caso real do bug report: "Qual valor da bucha bandeja fox 2014"
+  // Deve extrair tokens ['bucha', 'bandeja', 'fox'] (com 'qual' e 'valor' removidos por stopwords) e ano 14
+  const foxQuery = 'Qual valor da bucha bandeja fox 2014'
+  const foxExtraction = extractAiTokensAndYears(foxQuery)
+  const foxCatalog = [
+    {
+      sku: '2020',
+      name: 'BUCHA CROSSFOX 05/14 POLO 02/16 SPACEFOX 03/20 FOX 03/10 A110/16 SAVEIRO 08/20 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'DPA',
+      price: 0,
+      stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+    },
+    {
+      sku: '2672',
+      name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'AXIOS BORRACHAS',
+      price: 0,
+      stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+    },
+    {
+      sku: '3008',
+      name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'JAHU',
+      price: 0,
+      stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+    },
+  ]
+
+  const foxRanked = scoreAndRankProducts(
+    foxCatalog,
+    foxQuery,
+    foxExtraction.searchTokens,
+    foxExtraction.detectedYears,
+  )
+
+  if (foxRanked.length === 0) {
+    details.push('ERRO: Busca determinística falhou em ranquear bucha bandeja fox 2014!')
+    allPass = false
+  } else if (!foxRanked.some((p) => p.rec.sku === '2020')) {
+    details.push('ERRO: SKU 2020 não foi incluído no ranking de bucha bandeja fox 2014!')
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO: "Qual valor da bucha bandeja fox 2014" ranqueou com sucesso o SKU 2020 (DPA) e correlatos!',
+    )
+  }
+
   return { success: allPass, details }
 }

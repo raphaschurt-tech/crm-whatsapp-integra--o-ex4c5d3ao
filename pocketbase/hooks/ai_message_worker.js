@@ -1242,6 +1242,30 @@ onRecordAfterCreateSuccess((e) => {
         peças: true,
         pra: true,
         pro: true,
+        // Stopwords de pergunta de preço e cotação (ex.: "Qual valor da bucha bandeja fox 2014")
+        preco: true,
+        preço: true,
+        precos: true,
+        preços: true,
+        valor: true,
+        valores: true,
+        cotacao: true,
+        cotação: true,
+        orcamento: true,
+        orçamento: true,
+        saber: true,
+        quero: true,
+        gostaria: true,
+        favor: true,
+        por: true,
+        obrigado: true,
+        obrigada: true,
+        ola: true,
+        olá: true,
+        bom: true,
+        dia: true,
+        tarde: true,
+        noite: true,
       }
 
       // Normalização de diacríticos/acentos e extração de tokens
@@ -1268,7 +1292,7 @@ onRecordAfterCreateSuccess((e) => {
         const token = rawWords[wi]
         if (!token) continue
 
-        // Ignorar se for stopword
+        // Ignorar se for stopword (a menos que seja o único termo do usuário)
         if (stopWordsSet[token]) continue
 
         // Detecção e tratamento de anos:
@@ -1949,6 +1973,7 @@ onRecordAfterCreateSuccess((e) => {
       }
     }
 
+    // Pré-busca determinística: executa sempre que houver 3+ caracteres
     if (rawCustomerQuery.length >= 3) {
       const searchRes = executeBuscarProdutos(rawCustomerQuery)
       if (searchRes && searchRes.produtos && searchRes.produtos.length > 0) {
@@ -1958,6 +1983,74 @@ onRecordAfterCreateSuccess((e) => {
     }
   } catch (preSearchErr) {
     console.log('[PRE-SEARCH-PRODUCT-ERR]', String(preSearchErr))
+  }
+
+  // 7.1.1 Pré-consulta determinística de status de pedido / orçamento
+  // Se o cliente pergunta sobre orçamento ou pedido ("já faz tempo que pedi um orçamento", "status do pedido", etc.)
+  // roda status_pedido antes da IA para injetar o orçamento real direto no contexto.
+  let preStatusPedidoResult = null
+  try {
+    const rawQueryForStatus = String(incomingText || '').toLowerCase()
+    const isStatusQuery =
+      rawQueryForStatus.includes('orcamento') ||
+      rawQueryForStatus.includes('orçamento') ||
+      rawQueryForStatus.includes('pedido') ||
+      rawQueryForStatus.includes('pedi') ||
+      rawQueryForStatus.includes('resposta') ||
+      rawQueryForStatus.includes('status') ||
+      rawQueryForStatus.includes('comprar') ||
+      rawQueryForStatus.includes('cotacao') ||
+      rawQueryForStatus.includes('cotação')
+
+    if (
+      isStatusQuery &&
+      globalThis.__aiStatusTools &&
+      typeof globalThis.__aiStatusTools.executeStatusPedido === 'function'
+    ) {
+      const statusRes = globalThis.__aiStatusTools.executeStatusPedido($app, {
+        phone: senderPhone,
+        customerRecord: null,
+      })
+      if (statusRes && statusRes.data && (statusRes.data.quote || statusRes.data.order)) {
+        preStatusPedidoResult = statusRes
+      }
+    }
+  } catch (preStatusErr) {
+    console.log('[PRE-STATUS-PEDIDO-ERR]', String(preStatusErr))
+  }
+
+  if (preStatusPedidoResult) {
+    const quoteData = preStatusPedidoResult.data.quote
+    const orderData = preStatusPedidoResult.data.order
+    let statusNotice = '[DADOS REAIS DE ORÇAMENTO/PEDIDO DO CLIENTE LOCALIZADOS NO BANCO]:\n'
+    if (quoteData) {
+      statusNotice +=
+        '- Orçamento número: ' +
+        (quoteData.number || 'N/D') +
+        ' | Status: ' +
+        (quoteData.status || 'N/D') +
+        (quoteData.total ? ' | Total: R$ ' + Number(quoteData.total).toFixed(2) : '') +
+        '\n'
+    }
+    if (orderData) {
+      statusNotice +=
+        '- Pedido código: ' +
+        (orderData.code || 'N/D') +
+        ' | Status Comercial: ' +
+        (orderData.commercial_status || 'N/D') +
+        ' | Status Financeiro: ' +
+        (orderData.financial_status || 'N/D') +
+        '\n'
+    }
+    statusNotice +=
+      'Mensagem formatada sugerida da ferramenta: "' + (preStatusPedidoResult.reply || '') + '"\n'
+    statusNotice +=
+      'REGRA MANDATÓRIA: O cliente possui orçamento/pedido ativo no sistema com os dados acima. NUNCA diga "não consegui localizar o seu orçamento" ou "problema no sistema". Responda informando o número exato do orçamento/pedido e seu status atual.'
+
+    chatMessages.push({
+      role: 'system',
+      content: statusNotice,
+    })
   }
 
   // Se a busca determinística pré-IA encontrou produtos no banco, injeta no contexto como mensagem de sistema prioritária
@@ -1988,7 +2081,7 @@ onRecordAfterCreateSuccess((e) => {
       '[PRODUTOS REAIS ENCONTRADOS DETERMINISTICAMENTE NO CATÁLOGO DO ERP]:\n' +
       'A busca determinística pré-IA já consultou o banco para a mensagem do cliente e encontrou os seguintes produtos correspondentes:\n' +
       preFoundList.join('\n') +
-      '\n\nREGRA MANDATÓRIA: Os produtos acima EXISTEM em nosso estoque/catálogo. NUNCA responda "não encontrei", "não temos" ou "não trabalho com isso". Apresente os itens encontrados informando os valores e prazos (se estoque 0 ou preço 0, informe Sob consulta / disponível em até 48 horas).'
+      '\n\nREGRA MANDATÓRIA: Os produtos acima EXISTEM em nosso estoque/catálogo. NUNCA responda "não encontrei", "não temos" ou "não trabalho com isso". Apresente os itens encontrados informando os valores e prazos (se estoque 0 ou preço 0, informe "Sob consulta — disponível em até 48h" ou sob encomenda).'
 
     chatMessages.push({
       role: 'system',

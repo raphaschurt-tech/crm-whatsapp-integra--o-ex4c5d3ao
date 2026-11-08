@@ -74,6 +74,7 @@
   const findCustomerByPhone = ($app, phone) => {
     const canon = canonicalPhoneOf(phone)
     if (!canon) return null
+    // Tenta primeiro clientes ativos, depois qualquer registro se não houver ativo
     const variants = [canon, '55' + canon, '+' + canon, '+55' + canon]
     for (let i = 0; i < variants.length; i++) {
       try {
@@ -85,6 +86,15 @@
           0,
           { p: variants[i] },
         )
+        if (found && found.length > 0) return found[0]
+      } catch (_) {}
+    }
+    // Fallback: mesmo que deleted = true (ex: contatos históricos ou de teste)
+    for (let i = 0; i < variants.length; i++) {
+      try {
+        const found = $app.findRecordsByFilter('customers', 'phone ~ {:p}', '-created', 1, 0, {
+          p: variants[i],
+        })
         if (found && found.length > 0) return found[0]
       } catch (_) {}
     }
