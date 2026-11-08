@@ -1886,13 +1886,11 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
             $app.save(newCtrl)
           }
 
+          const handoffHelper = globalThis.__aiHandoffContext || globalThis.__aiHandoff || null
           let handoffPacket = null
-          if (
-            globalThis.__aiHandoff &&
-            typeof globalThis.__aiHandoff.buildHandoffPacket === 'function'
-          ) {
+          if (handoffHelper && typeof handoffHelper.buildHandoffPacket === 'function') {
             try {
-              handoffPacket = globalThis.__aiHandoff.buildHandoffPacket(normalizedPhone, {
+              handoffPacket = handoffHelper.buildHandoffPacket($app, normalizedPhone, {
                 motivo: 'comando_atendente',
                 raw_command: rawCmdText,
               })
@@ -1911,6 +1909,26 @@ routerAdd('POST', '/backend/v1/whatsapp/webhook', (e) => {
               handoff_packet: handoffPacket,
             }),
           )
+
+          // NOTIFICAÇÃO ADICIONAL DE ESCALADA VIA WHATSAPP (11947518805)
+          // Dispara quando o cliente digita o comando /atendente
+          // Tolerante a erro: nunca bloqueia nem atrasa a escalada
+          if (
+            globalThis.__aiEscalationNotifier &&
+            typeof globalThis.__aiEscalationNotifier.notifyEscalation === 'function'
+          ) {
+            try {
+              globalThis.__aiEscalationNotifier.notifyEscalation({
+                $app: $app,
+                phone: normalizedPhone,
+                reason: 'comando_atendente',
+                incomingText: rawCmdText,
+                aiReply: '',
+              })
+            } catch (notifErr) {
+              console.log('[ESCALATION-NOTIF-HOOK-ERR]', notifErr.message || String(notifErr))
+            }
+          }
         } catch (ctrlErr) {
           console.log('[CHAT-CONTROL-SAVE-ERR]', ctrlErr.message || String(ctrlErr))
         }

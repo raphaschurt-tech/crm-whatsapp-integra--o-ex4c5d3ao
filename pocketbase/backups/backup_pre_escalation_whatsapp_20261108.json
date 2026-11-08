@@ -1,0 +1,14 @@
+{
+  "backup_id": "backup_pre_escalation_whatsapp_20261108",
+  "created_at": "2026-11-08T14:48:00.000Z",
+  "description": "Backup de segurança pré-notificação de escalada via WhatsApp (âncora 🟡). Estado de settings, chat_control e hooks.",
+  "settings": {
+    "id": "ks86suaa4vn5xd4",
+    "ai_enabled": true,
+    "authorized_test_phone": "5511947518805",
+    "whatsapp_number": "5511947861439",
+    "zapi_instance_id": "3F82053E374BF28959D38ADBF15570D8"
+  },
+  "chat_control_snapshot_count": 5,
+  "target_notification_phone": "11947518805"
+}

@@ -2374,13 +2374,11 @@ onRecordAfterCreateSuccess((e) => {
         }
 
         // Montar pacote de handoff estruturado para o atendente
+        const handoffHelper = globalThis.__aiHandoffContext || globalThis.__aiHandoff || null
         let handoffPacket = null
-        if (
-          globalThis.__aiHandoff &&
-          typeof globalThis.__aiHandoff.buildHandoffPacket === 'function'
-        ) {
+        if (handoffHelper && typeof handoffHelper.buildHandoffPacket === 'function') {
           try {
-            handoffPacket = globalThis.__aiHandoff.buildHandoffPacket(normalizedSenderPhone, {
+            handoffPacket = handoffHelper.buildHandoffPacket($app, normalizedSenderPhone, {
               motivo: transferReason,
               itens_interesse: interestDetails ? JSON.stringify(interestDetails) : '',
               chat_context: aiReply,
@@ -2400,6 +2398,26 @@ onRecordAfterCreateSuccess((e) => {
             handoff_packet: handoffPacket,
           }),
         )
+
+        // NOTIFICAÇÃO ADICIONAL DE ESCALADA VIA WHATSAPP (11947518805)
+        // Dispara para qualquer motivo de transferência humana na Camada 3 (reclamacao, nota, cobranca, aplicacao, etc.)
+        // Tolerante a erro: nunca bloqueia nem atrasa a escalada
+        if (
+          globalThis.__aiEscalationNotifier &&
+          typeof globalThis.__aiEscalationNotifier.notifyEscalation === 'function'
+        ) {
+          try {
+            globalThis.__aiEscalationNotifier.notifyEscalation({
+              $app: $app,
+              phone: normalizedSenderPhone || phone,
+              reason: transferReason,
+              incomingText: incomingText,
+              aiReply: aiReply,
+            })
+          } catch (notifErr) {
+            console.log('[ESCALATION-NOTIF-HOOK-ERR]', notifErr.message || String(notifErr))
+          }
+        }
       } catch (transferSaveErr) {
         console.log(
           '[CHAT-CONTROL-TRANSFER-SAVE-ERR]',
