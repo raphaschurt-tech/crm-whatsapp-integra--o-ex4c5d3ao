@@ -1475,22 +1475,36 @@ onRecordAfterCreateSuccess((e) => {
       const groupHits = []
       const allFetchedRecs = {}
 
+      // Plano A mínimo: limit por token aumentado de 100 para 1000 e sem ordenação alfabética
+      // para evitar truncamento de termos frequentes (ex.: "fox" ~430 hits, "bucha" ~850 hits).
+      const groupHitCounts = []
+      let anyTokenTruncated = false
+
       for (let gi = 0; gi < tokenGroups.length; gi++) {
         const variants = tokenGroups[gi]
         const hitsForThisGroup = {}
+        let maxHitsForVariant = 0
+
         for (let vi = 0; vi < variants.length; vi++) {
           const varTerm = variants[vi]
           if (!varTerm || varTerm.length < 2) continue
           try {
+            // Consulta sem sort e com limit=1000
             const matchedRecs = $app.findRecordsByFilter(
               'products',
               'name ~ {:v} || sku ~ {:v}',
-              'name',
-              100,
+              '',
+              1000,
               0,
               { v: varTerm },
             )
             if (matchedRecs && matchedRecs.length > 0) {
+              if (matchedRecs.length > maxHitsForVariant) {
+                maxHitsForVariant = matchedRecs.length
+              }
+              if (matchedRecs.length >= 1000) {
+                anyTokenTruncated = true
+              }
               for (let mi = 0; mi < matchedRecs.length; mi++) {
                 const mRec = matchedRecs[mi]
                 hitsForThisGroup[mRec.id] = true
@@ -1503,7 +1517,14 @@ onRecordAfterCreateSuccess((e) => {
             console.log('[TOOL-BUSCAR-PRODUTOS-TOK-ERR]', String(varTerm), String(tokQErr))
           }
         }
+        const distinctHitsThisGroup = Object.keys(hitsForThisGroup).length
         groupHits.push(hitsForThisGroup)
+        const primaryTok = searchTokens[gi] || (variants && variants[0]) || 'grupo' + gi
+        groupHitCounts.push({
+          token: primaryTok,
+          hits: distinctHitsThisGroup,
+          maxVariantHits: maxHitsForVariant,
+        })
       }
 
       // Fase 1: Interseção estrita em memória (deve casar com TODOS os conceitos)
@@ -1524,6 +1545,21 @@ onRecordAfterCreateSuccess((e) => {
             phase1Count++
           }
         }
+      }
+
+      // Log em linha própria de groupHits por token e contagem da interseção
+      const groupHitsLogSummary =
+        groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+        ' | interseção=' +
+        phase1Count
+      console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+
+      // Aviso explícito se algum token atingiu o limite de 1000 hits (truncamento detectado)
+      if (anyTokenTruncated) {
+        console.log(
+          '[TOOL-BUSCAR-PRODUTOS-TRUNCATION-WARNING]',
+          'Um ou mais tokens atingiram o limite de 1000 hits (truncamento detectado -> avaliar Plano B futura com SQL direto / bind).',
+        )
       }
 
       // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, adiciona os que casaram com pelo menos 1 grupo)

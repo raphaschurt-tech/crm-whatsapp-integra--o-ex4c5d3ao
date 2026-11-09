@@ -909,5 +909,122 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
     )
   }
 
+  // Teste 20: Catálogo com >100 produtos contendo "fox" simulando o Plano A mínimo
+  // Validação: mesmo com mais de 100 produtos contendo "fox" em ordem alfabética que antes
+  // empurrariam a BUCHA TRASEIRA BANDEJA para além do limite 100 com ordenação por nome,
+  // o mecanismo com limit 1000 e sem ordenação alfabética localiza e ranqueia as buchas da bandeja.
+  const largeFoxCatalog: MockProduct[] = []
+
+  // Adiciona 120 produtos "fox" de outras famílias (amortecedores, bieletas, bombas, filtros, cabos...)
+  // que em ordem alfabética tradicional vinham antes de "bucha" ou truncavam o resultado se limit fosse 100
+  const noiseTypes = [
+    'AMORTECEDOR DIANTEIRO',
+    'AMORTECEDOR TRASEIRO',
+    'BIELETA BARRA ESTABILIZADORA',
+    'BOMBA COMBUSTIVEL',
+    'BOMBA DIRECAO HIDRAULICA',
+    'CABO ACELERADOR',
+    'CABO EMBREAGEM',
+    'COXIM MOTOR',
+    'DISCO FREIO',
+    'FILTRO AR',
+    'FILTRO COMBUSTIVEL',
+    'FILTRO OLEO',
+  ]
+
+  for (let i = 1; i <= 120; i++) {
+    const noiseType = noiseTypes[i % noiseTypes.length]
+    largeFoxCatalog.push({
+      sku: `NOISE_${10000 + i}`,
+      name: `${noiseType} FOX 03/14 1.0 1.6 MOTOR EA111 ITEM ${i}`,
+      brand: 'PARTS CO',
+      barcode: '',
+      description: 'Produto de teste catálogo ruidoso',
+      price: 150,
+      stock_quantity: 5,
+      sou_family: noiseType,
+    })
+  }
+
+  // Insere os 4 SKUs reais de bucha da bandeja da Fox no catálogo grande (>100 itens fox)
+  largeFoxCatalog.push(
+    {
+      sku: '2020',
+      name: 'BUCHA CROSSFOX 05/14 POLO 02/16 SPACEFOX 03/20 FOX 03/10 A110/16 SAVEIRO 08/20 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'DPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      price: 0,
+      stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+    },
+    {
+      sku: '2672',
+      name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'AXIOS BORRACHAS',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      price: 0,
+      stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+    },
+    {
+      sku: '2986',
+      name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'RPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      price: 0,
+      stock_quantity: 1,
+      sou_family: 'BUCHA DA BANDEJA',
+    },
+    {
+      sku: '3008',
+      name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'JAHU',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      price: 0,
+      stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+    },
+  )
+
+  const largeTestExtraction = extractAiTokensAndYears('bucha bandeja fox 2014')
+  const largeTestCandidates = twoPhaseProductSearch(
+    largeFoxCatalog,
+    largeTestExtraction.searchTokens,
+    'bucha bandeja fox 2014',
+  )
+  const largeTestRanked = scoreAndRankProducts(
+    largeTestCandidates,
+    'bucha bandeja fox 2014',
+    largeTestExtraction.searchTokens,
+    largeTestExtraction.detectedYears,
+  )
+
+  const largeFoundSkus = largeTestRanked.map((p) => p.rec.sku)
+  const totalFoxItems = largeFoxCatalog.filter((p) => p.name.toLowerCase().includes('fox')).length
+  details.push(
+    `Teste 20: Catálogo com ${totalFoxItems} produtos contendo "fox" (>100 itens) testado. SKUs localizados: ${largeFoundSkus.join(', ')}`,
+  )
+
+  const hasBuchaBandejaSku =
+    largeFoundSkus.includes('2020') ||
+    largeFoundSkus.includes('2672') ||
+    largeFoundSkus.includes('2986') ||
+    largeFoundSkus.includes('3008')
+
+  if (!hasBuchaBandejaSku) {
+    details.push(
+      'ERRO: Bucha da bandeja não foi encontrada no catálogo com >100 produtos contendo "fox"',
+    )
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO: Bucha da bandeja localizada e priorizada com sucesso em catálogo com >100 produtos contendo "fox"!',
+    )
+  }
+
   return { success: allPass, details }
 }
