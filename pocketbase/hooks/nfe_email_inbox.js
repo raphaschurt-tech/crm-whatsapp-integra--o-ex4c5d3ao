@@ -250,6 +250,7 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
     const subject = (metaObj.subject || '').trim()
     const emailDate = (metaObj.email_date || '').trim()
     const gmailMsgId = (metaObj.gmail_message_id || '').trim()
+    const senderKnown = Boolean(metaObj.sender_known)
     const brasiliaNow = getBrasiliaIsoDate()
 
     const parsed = parseNfeXml(xmlContent)
@@ -1794,6 +1795,7 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         subject: subject,
         email_date: emailDate,
         gmail_message_id: msgId,
+        sender_known: senderKnown,
       }
 
       for (let x = 0; x < xmlList.length; x++) {
@@ -1854,7 +1856,7 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       }
 
       function sendToDanfeReviewQueueEmailCron(accessKey, reason, audit) {
-        const bIso = getBrasiliaIso()
+        const bIso = getBrasiliaIsoDate()
         const cleanReason = (reason || 'DANFE em PDF pendente de revisão').trim()
         const cleanAccessKey = (accessKey || '').trim()
         const auditObj = audit || {}
@@ -1902,7 +1904,7 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       }
 
       function enqueueDfeKeyDownloadEmailCron(accessKey, audit) {
-        const bIso = getBrasiliaIso()
+        const bIso = getBrasiliaIsoDate()
         try {
           const cmdCol = $app.findCollectionByNameOrId('dfe_command_queue')
           const cmdRec = new Record(cmdCol)
@@ -1932,7 +1934,7 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       }
 
       function processDanfePdfInlineEmailCron(pdfBytesOrB64, audit) {
-        const bIso = getBrasiliaIso()
+        const bIso = getBrasiliaIsoDate()
         let markdownText = ''
 
         try {
@@ -2518,6 +2520,7 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
     const subject = (metaObj.subject || '').trim()
     const emailDate = (metaObj.email_date || '').trim()
     const gmailMsgId = (metaObj.gmail_message_id || '').trim()
+    const senderKnown = Boolean(metaObj.sender_known)
     const brasiliaNow = getBrasiliaIsoDate()
 
     const parsed = parseNfeXml(xmlContent)
@@ -3950,6 +3953,7 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       subject: subject,
       email_date: emailDate,
       gmail_message_id: msgId,
+      sender_known: senderKnown,
     }
 
     for (let x = 0; x < xmlList.length; x++) {
