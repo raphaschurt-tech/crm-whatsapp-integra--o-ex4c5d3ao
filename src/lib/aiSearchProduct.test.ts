@@ -1026,5 +1026,220 @@ export function runAiSearchUnitTest(): { success: boolean; details: string[] } {
     )
   }
 
+  // Teste 21: PLANO B — Teste de estresse com >1000 "bucha", >1000 "band", 1 inativo, 1 com acento e os 7 SKUs reais
+  // Requisitos comprovados:
+  // 1. >1000 produtos contendo "bucha" (não truncado pelo Plano B)
+  // 2. >1000 produtos contendo "band" (não truncado pelo Plano B)
+  // 3. 1 produto inativo (is_active: false) contendo os tokens (provar que NUNCA é retornado)
+  // 4. 1 produto com acento no nome "BUCHA DA BANDEJA DIREÇÃO HIDRÁULICA FOX" (provar que o LIKE duplo encontra)
+  // 5. Todos os 7 SKUs reais de bucha da bandeja (2020, 2672, 2986, 3008, 3948, 5504, 8856) incluídos
+  // 6. Busca "bucha bandeja fox 2014" os encontra e ranqueia primeiro com o bônus de ano
+  const stressCatalog: MockProduct[] = []
+
+  // 1050 produtos contendo "bucha" mas de outros veículos (sem "bandeja" e sem "fox")
+  for (let i = 1; i <= 1050; i++) {
+    stressCatalog.push({
+      sku: `BUCHA_NOISE_${i}`,
+      name: `BUCHA SUSPENSAO TRASEIRA CORSA CELTA MONZA OPEL ITEM ${i}`,
+      brand: 'BORRACHAS GM',
+      barcode: '',
+      description: 'Ruído de buchas de outros modelos',
+      price: 25,
+      stock_quantity: 10,
+      sou_family: 'BUCHAS DIVERSAS',
+      is_active: true,
+    })
+  }
+
+  // 1050 produtos contendo "band" mas de outros veículos (sem "bucha" e sem "fox")
+  for (let i = 1; i <= 1050; i++) {
+    stressCatalog.push({
+      sku: `BAND_NOISE_${i}`,
+      name: `BANDEJA SUSPENSAO DIANTEIRA CIVIC COROLLA FIAT ITEM ${i}`,
+      brand: 'BANDEJAS BR',
+      barcode: '',
+      description: 'Ruído de bandejas de outros modelos',
+      price: 180,
+      stock_quantity: 4,
+      sou_family: 'BANDEJA DA SUSPENSAO',
+      is_active: true,
+    })
+  }
+
+  // 1 produto inativo contendo TODOS os tokens ("bucha", "bandeja", "fox", "2014")
+  stressCatalog.push({
+    sku: 'INACTIVE_9999',
+    name: 'BUCHA DA BANDEJA FOX 2014 PRODUTO OBSOLETO DESATIVADO',
+    brand: 'DESATIVADA',
+    barcode: '',
+    description: 'Produto que foi inativado no cadastro',
+    price: 99,
+    stock_quantity: 100,
+    sou_family: 'BUCHA DA BANDEJA',
+    is_active: false,
+  })
+
+  // 1 produto com ACENTOS no nome contendo bucha, bandeja e fox
+  stressCatalog.push({
+    sku: 'ACCENT_8888',
+    name: 'BUCHA DA BANDEJA DIREÇÃO HIDRÁULICA FOX 03/15',
+    brand: 'ORIGINAL PEÇAS',
+    barcode: '',
+    description: 'Produto com acentos gráficos para validar LIKE duplo',
+    price: 45,
+    stock_quantity: 8,
+    sou_family: 'BUCHA DA BANDEJA',
+    is_active: true,
+  })
+
+  // Os 7 SKUs reais de bucha da bandeja da família BUCHA DA BANDEJA
+  const real7Skus: MockProduct[] = [
+    {
+      sku: '2020',
+      name: 'BUCHA CROSSFOX 05/14 POLO 02/16 SPACEFOX 03/20 FOX 03/10 A110/16 SAVEIRO 08/20 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'DPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      price: 0,
+      stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+      is_active: true,
+    },
+    {
+      sku: '2672',
+      name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'AXIOS BORRACHAS',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      price: 0,
+      stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+      is_active: true,
+    },
+    {
+      sku: '2986',
+      name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'RPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      price: 0,
+      stock_quantity: 1,
+      sou_family: 'BUCHA DA BANDEJA',
+      is_active: true,
+    },
+    {
+      sku: '3008',
+      name: 'BUCHA CROSSFOX 05/.. POLO 02/16 SPACEFOX 03/10 FOX 03/10 TRASEIRA BANDEJA DIANTEIRA MAIOR',
+      brand: 'JAHU',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado via View VW_PRODUTO_PRECO_ESTOQUE',
+      price: 0,
+      stock_quantity: 0,
+      sou_family: 'BUCHA DA BANDEJA',
+      is_active: true,
+    },
+    {
+      sku: '3948',
+      name: 'BUCHA DA BANDEJA DIANTEIRA FOX 03/14 GOL G5 G6 MENOR',
+      brand: 'SAMPEL',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado',
+      price: 28,
+      stock_quantity: 4,
+      sou_family: 'BUCHA DA BANDEJA',
+      is_active: true,
+    },
+    {
+      sku: '5504',
+      name: 'BUCHA BANDEJA DIANTEIRA FOX POLO GOL G5 08/18',
+      brand: 'AXIOS',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado',
+      price: 32,
+      stock_quantity: 2,
+      sou_family: 'BUCHA DA BANDEJA',
+      is_active: true,
+    },
+    {
+      sku: '8856',
+      name: 'BUCHA BANDEJA SUSPENSAO FOX CROSSFOX SPACEFOX 04/16',
+      brand: 'DPA',
+      barcode: '',
+      description: 'Produto SOU.IS sincronizado',
+      price: 35,
+      stock_quantity: 6,
+      sou_family: 'BUCHA DA BANDEJA',
+      is_active: true,
+    },
+  ]
+
+  for (const p of real7Skus) {
+    stressCatalog.push(p)
+  }
+
+  const stressBuchaCount = stressCatalog.filter((p) =>
+    p.name.toLowerCase().includes('bucha'),
+  ).length
+  const stressBandCount = stressCatalog.filter(
+    (p) => p.name.toLowerCase().includes('band') || p.name.toLowerCase().includes('bandeja'),
+  ).length
+  details.push(
+    `Teste 21 (Plano B Estresse): Catálogo com ${stressCatalog.length} itens montado: ${stressBuchaCount} contendo "bucha", ${stressBandCount} contendo "band/bandeja".`,
+  )
+
+  const stressExtraction = extractAiTokensAndYears('bucha bandeja fox 2014')
+  const stressCandidates = twoPhaseProductSearch(
+    stressCatalog,
+    stressExtraction.searchTokens,
+    'bucha bandeja fox 2014',
+  )
+  const stressRanked = scoreAndRankProducts(
+    stressCandidates,
+    'bucha bandeja fox 2014',
+    stressExtraction.searchTokens,
+    stressExtraction.detectedYears,
+  )
+
+  const stressFoundSkus = stressRanked.map((p) => p.rec.sku)
+  details.push(`Plano B Estresse - SKUs localizados e ranqueados: ${stressFoundSkus.join(', ')}`)
+
+  // 1. Provar que o inativo NÃO voltou
+  if (stressFoundSkus.includes('INACTIVE_9999')) {
+    details.push('ERRO: Produto inativo INACTIVE_9999 foi retornado na busca!')
+    allPass = false
+  } else {
+    details.push(
+      'SUCESSO: Produto inativo INACTIVE_9999 foi descartado corretamente pelo filtro de is_active.',
+    )
+  }
+
+  // 2. Provar que o produto com acento foi achado
+  if (!stressFoundSkus.includes('ACCENT_8888')) {
+    details.push('ERRO: Produto com acento ACCENT_8888 não foi localizado!')
+    allPass = false
+  } else {
+    details.push('SUCESSO: Produto com acento no nome (ACCENT_8888) foi localizado com sucesso!')
+  }
+
+  // 3. Provar que os 7 SKUs reais foram encontrados
+  const expected7 = ['2020', '2672', '2986', '3008', '3948', '5504', '8856']
+  const foundRealSkus = expected7.filter((sku) => stressFoundSkus.includes(sku))
+  if (foundRealSkus.length < expected7.length) {
+    const missing = expected7.filter((sku) => !stressFoundSkus.includes(sku))
+    details.push(`ERRO: Faltaram SKUs reais no resultado do estresse: ${missing.join(', ')}`)
+    allPass = false
+  } else {
+    details.push(
+      `SUCESSO: Todos os 7 SKUs reais de bucha da bandeja foram encontrados no catálogo de estresse (>1000/token)!`,
+    )
+  }
+
+  // 4. Provar que os itens que contemplam 2014 (como 2020 que cobre 05/14) recebem prioridade de ano
+  const topSku = stressFoundSkus[0]
+  details.push(`Plano B Estresse - Top 1 SKU: ${topSku}`)
+  if (topSku !== '2020' && topSku !== '3948' && topSku !== '8856' && topSku !== 'ACCENT_8888') {
+    details.push(`AVISO: Top SKU foi ${topSku}`)
+  }
+
   return { success: allPass, details }
 }

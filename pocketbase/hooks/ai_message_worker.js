@@ -1424,155 +1424,213 @@ onRecordAfterCreateSuccess((e) => {
         tokenGroups.push(getEquivalentsForToken(searchTokens[sti]))
       }
 
-      // Busca em duas fases no banco de dados com equivalência de apelidos:
-      // Fase 1: Consulta AND entre os grupos (cada conceito deve casar via o token ou um de seus apelidos)
-      // Fase 2: Se Fase 1 retornar menos de 5 candidatos, executa consulta OR com limit 200 para complementar pool
-      const queryGroups = tokenGroups.slice(0, 8)
-      const bindParams = {}
-      const groupConds = []
-      let paramCounter = 0
-
-      for (let gi = 0; gi < queryGroups.length; gi++) {
-        const groupVariants = queryGroups[gi]
-        const variantConds = []
-        for (let vi = 0; vi < groupVariants.length; vi++) {
-          const pKey = 'p' + paramCounter++
-          bindParams[pKey] = groupVariants[vi]
-          variantConds.push(
-            '(name ~ {:' +
-              pKey +
-              '} || sku ~ {:' +
-              pKey +
-              '} || brand ~ {:' +
-              pKey +
-              '} || barcode ~ {:' +
-              pKey +
-              '} || description ~ {:' +
-              pKey +
-              '})',
-          )
-        }
-        if (variantConds.length === 1) {
-          groupConds.push(variantConds[0])
-        } else if (variantConds.length > 1) {
-          groupConds.push('(' + variantConds.join(' || ') + ')')
-        }
-      }
-
-      // ESTRATÉGIA ROBUSTA PARA O JSVM DO POCKETBASE:
-      // A consulta multi-placeholder com N operadores ~ encadeados falha ou se comporta de forma imprevisível no JSVM.
-      // Em vez de passar uma query gigantesca com dezenas de placeholders bindParams para findRecordsByFilter,
-      // consultamos cada conceito/token individualmente contra name e sku (campos principais indexados)
-      // e fazemos a união/interseção em memória, garantindo que Fase 1 e Fase 2 funcionem 100% sem erros de parser.
       let candidates = []
       const candidateIds = {}
       let phase1Count = 0
       let phase2Count = 0
-
-      // Mapa de produtos por ID retornados por cada grupo de tokens
-      // groupHits[gi] = Set de IDs que casaram com o grupo gi
-      // allFetchedRecs[id] = Record
-      const groupHits = []
       const allFetchedRecs = {}
 
-      // Plano A mínimo: limit por token aumentado de 100 para 1000 e sem ordenação alfabética
-      // para evitar truncamento de termos frequentes (ex.: "fox" ~430 hits, "bucha" ~850 hits).
+      // PLANO B DA BUSCA — SQL DIRETO COM $app.db().newQuery:
+      // Resolve truncamento definitivo (tokens comuns como "bucha" e "band" ultrapassam 1000 produtos individualmente).
+      // Em vez de consultar por token e fazer interseção em memória, executa UMA query única no SQLite:
+      // WHERE is_active = 1 AND ((name LIKE %c1% OR name LIKE %a1%...)) AND ((name LIKE %c2%...))
+      // (1) Parênteses explícitos por conceito; aliases em OR dentro dos parênteses; conceitos unidos por AND.
+      // (2) bind() obrigatório para todo valor (prevenção total contra SQL injection).
+      // (3) Escape de % e _ nos tokens antes de envolver com %...%.
+      // (4) LIKE duplo por token/alias: variante com acento e sem acento para cobrir nomes acentuados no banco.
+      // (5) Anos e stopwords já foram removidos de searchTokens antes de montar os parâmetros.
+      // (6) Sem ORDER BY (ranking sofisticado em memória preservado).
+      // (7) LIMIT 2000 de segurança + TRUNCATION-WARNING se o pool atingir o cap.
+      // (8) Mantém allowlist, exclusões, ranking, fallback e log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS].
+      const escapeSqlLike = (str) => {
+        if (!str) return ''
+        return String(str).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+      }
+
+      const buildLikeVariants = (term) => {
+        const raw = String(term || '')
+          .trim()
+          .toLowerCase()
+        const unaccented = removeAccents(raw).toLowerCase()
+        const set = [raw]
+        if (unaccented && unaccented !== raw && set.indexOf(unaccented) === -1) {
+          set.push(unaccented)
+        }
+        return set
+      }
+
       const groupHitCounts = []
-      let anyTokenTruncated = false
+      let anyTruncated = false
 
-      for (let gi = 0; gi < tokenGroups.length; gi++) {
-        const variants = tokenGroups[gi]
-        const hitsForThisGroup = {}
-        let maxHitsForVariant = 0
+      if (tokenGroups.length > 0) {
+        try {
+          const sqlWhereGroups = []
+          const bindParams = {}
+          let pIdx = 0
 
-        for (let vi = 0; vi < variants.length; vi++) {
-          const varTerm = variants[vi]
-          if (!varTerm || varTerm.length < 2) continue
+          for (let gi = 0; gi < tokenGroups.length; gi++) {
+            const variants = tokenGroups[gi]
+            const variantClauses = []
+            for (let vi = 0; vi < variants.length; vi++) {
+              const vTerm = variants[vi]
+              if (!vTerm || vTerm.length < 2) continue
+              const likeVars = buildLikeVariants(vTerm)
+              for (let lvi = 0; lvi < likeVars.length; lvi++) {
+                const pKey = 'p_' + pIdx++
+                bindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
+                variantClauses.push(
+                  '(name LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\" OR sku LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\" OR brand LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\" OR barcode LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\" OR description LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\")',
+                )
+              }
+            }
+            if (variantClauses.length > 0) {
+              sqlWhereGroups.push('(' + variantClauses.join(' OR ') + ')')
+            }
+          }
+
+          let whereSql = 'is_active = 1'
+          if (sqlWhereGroups.length > 0) {
+            whereSql += ' AND ' + sqlWhereGroups.join(' AND ')
+          }
+
+          const sql = 'SELECT * FROM products WHERE ' + whereSql + ' LIMIT 2000'
+          const queryResult = arrayOf(new Record())
+          $app.db().newQuery(sql).bind(bindParams).all(queryResult)
+
+          if (queryResult && queryResult.length > 0) {
+            if (queryResult.length >= 2000) {
+              anyTruncated = true
+            }
+            for (let ri = 0; ri < queryResult.length; ri++) {
+              const r = queryResult[ri]
+              candidates.push(r)
+              candidateIds[r.id] = true
+              allFetchedRecs[r.id] = r
+              phase1Count++
+            }
+          }
+        } catch (sqlErr) {
+          console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(sqlErr))
+        }
+
+        // Medição e contagem de hits por conceito para manter o log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS]
+        for (let gi = 0; gi < tokenGroups.length; gi++) {
+          const variants = tokenGroups[gi]
+          const primaryTok = searchTokens[gi] || (variants && variants[0]) || 'grupo' + gi
           try {
-            // Consulta sem sort e com limit=1000
-            const matchedRecs = $app.findRecordsByFilter(
-              'products',
-              'name ~ {:v} || sku ~ {:v}',
-              '',
-              1000,
-              0,
-              { v: varTerm },
-            )
-            if (matchedRecs && matchedRecs.length > 0) {
-              if (matchedRecs.length > maxHitsForVariant) {
-                maxHitsForVariant = matchedRecs.length
-              }
-              if (matchedRecs.length >= 1000) {
-                anyTokenTruncated = true
-              }
-              for (let mi = 0; mi < matchedRecs.length; mi++) {
-                const mRec = matchedRecs[mi]
-                hitsForThisGroup[mRec.id] = true
-                if (!allFetchedRecs[mRec.id]) {
-                  allFetchedRecs[mRec.id] = mRec
-                }
+            const groupClauses = []
+            const gBindParams = {}
+            let gIdx = 0
+            for (let vi = 0; vi < variants.length; vi++) {
+              const vTerm = variants[vi]
+              if (!vTerm || vTerm.length < 2) continue
+              const likeVars = buildLikeVariants(vTerm)
+              for (let lvi = 0; lvi < likeVars.length; lvi++) {
+                const pKey = 'gp_' + gIdx++
+                gBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
+                groupClauses.push(
+                  '(name LIKE {:' + pKey + '} ESCAPE "\\" OR sku LIKE {:' + pKey + '} ESCAPE "\\")',
+                )
               }
             }
-          } catch (tokQErr) {
-            console.log('[TOOL-BUSCAR-PRODUTOS-TOK-ERR]', String(varTerm), String(tokQErr))
-          }
-        }
-        const distinctHitsThisGroup = Object.keys(hitsForThisGroup).length
-        groupHits.push(hitsForThisGroup)
-        const primaryTok = searchTokens[gi] || (variants && variants[0]) || 'grupo' + gi
-        groupHitCounts.push({
-          token: primaryTok,
-          hits: distinctHitsThisGroup,
-          maxVariantHits: maxHitsForVariant,
-        })
-      }
-
-      // Fase 1: Interseção estrita em memória (deve casar com TODOS os conceitos)
-      if (tokenGroups.length > 0 && groupHits.length === tokenGroups.length) {
-        const allIds = Object.keys(allFetchedRecs)
-        for (let idi = 0; idi < allIds.length; idi++) {
-          const id = allIds[idi]
-          let matchedAllGroups = true
-          for (let gi = 0; gi < groupHits.length; gi++) {
-            if (!groupHits[gi][id]) {
-              matchedAllGroups = false
-              break
+            if (groupClauses.length > 0) {
+              const countSql =
+                'SELECT COUNT(*) as total FROM products WHERE is_active = 1 AND (' +
+                groupClauses.join(' OR ') +
+                ')'
+              const countRes = new DynamicModel({ total: 0 })
+              $app.db().newQuery(countSql).bind(gBindParams).one(countRes)
+              const gHits = Number(countRes.total) || 0
+              groupHitCounts.push({ token: primaryTok, hits: gHits })
+            } else {
+              groupHitCounts.push({ token: primaryTok, hits: 0 })
             }
-          }
-          if (matchedAllGroups) {
-            candidates.push(allFetchedRecs[id])
-            candidateIds[id] = true
-            phase1Count++
+          } catch (gErr) {
+            groupHitCounts.push({ token: primaryTok, hits: phase1Count })
           }
         }
       }
 
-      // Log em linha própria de groupHits por token e contagem da interseção
+      // Log em linha própria de groupHits por token e contagem da interseção SQL
       const groupHitsLogSummary =
         groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
         ' | interseção=' +
         phase1Count
       console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
 
-      // Aviso explícito se algum token atingiu o limite de 1000 hits (truncamento detectado)
-      if (anyTokenTruncated) {
+      // Aviso explícito se o resultado SQL atingiu o limite de 2000 hits (truncamento detectado)
+      if (anyTruncated) {
         console.log(
           '[TOOL-BUSCAR-PRODUTOS-TRUNCATION-WARNING]',
-          'Um ou mais tokens atingiram o limite de 1000 hits (truncamento detectado -> avaliar Plano B futura com SQL direto / bind).',
+          'Pool de candidatos atingiu o limite de 2000 hits (truncamento no LIMIT 2000).',
         )
       }
 
-      // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, adiciona os que casaram com pelo menos 1 grupo)
-      if (candidates.length < 5) {
-        const allIds = Object.keys(allFetchedRecs)
-        for (let idi = 0; idi < allIds.length; idi++) {
-          const id = allIds[idi]
-          if (!candidateIds[id]) {
-            candidates.push(allFetchedRecs[id])
-            candidateIds[id] = true
-            phase2Count++
-            if (candidates.length >= 200) break
+      // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, busca candidatos que casam com pelo menos 1 conceito via SQL OR)
+      if (candidates.length < 5 && tokenGroups.length > 1) {
+        try {
+          const orWhereClauses = []
+          const orBindParams = {}
+          let orIdx = 0
+
+          for (let gi = 0; gi < tokenGroups.length; gi++) {
+            const variants = tokenGroups[gi]
+            for (let vi = 0; vi < variants.length; vi++) {
+              const vTerm = variants[vi]
+              if (!vTerm || vTerm.length < 2) continue
+              const likeVars = buildLikeVariants(vTerm)
+              for (let lvi = 0; lvi < likeVars.length; lvi++) {
+                const pKey = 'orp_' + orIdx++
+                orBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
+                orWhereClauses.push(
+                  '(name LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\" OR sku LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\" OR brand LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\" OR barcode LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\" OR description LIKE {:' +
+                    pKey +
+                    '} ESCAPE "\\")',
+                )
+              }
+            }
           }
+
+          if (orWhereClauses.length > 0) {
+            const orSql =
+              'SELECT * FROM products WHERE is_active = 1 AND (' +
+              orWhereClauses.join(' OR ') +
+              ') LIMIT 200'
+            const orResult = arrayOf(new Record())
+            $app.db().newQuery(orSql).bind(orBindParams).all(orResult)
+            if (orResult && orResult.length > 0) {
+              for (let ori = 0; ori < orResult.length; ori++) {
+                const r = orResult[ori]
+                if (!candidateIds[r.id]) {
+                  candidates.push(r)
+                  candidateIds[r.id] = true
+                  allFetchedRecs[r.id] = r
+                  phase2Count++
+                  if (candidates.length >= 200) break
+                }
+              }
+            }
+          }
+        } catch (orErr) {
+          console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(orErr))
         }
       }
 

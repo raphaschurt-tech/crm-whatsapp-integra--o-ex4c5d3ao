@@ -15,6 +15,7 @@ export interface MockProduct {
   stock_quantity: number
   price: number
   sou_family?: string
+  is_active?: boolean
 }
 
 const STOP_WORDS_SET: Record<string, boolean> = {
@@ -249,15 +250,18 @@ export function twoPhaseProductSearch(
     return variants.some((v) => full.includes(removeAccents(v).toLowerCase()))
   }
 
+  // Filtro de ativo: descarta is_active === false
+  const activeProducts = products.filter((p) => p.is_active !== false)
+
   // Fase 1: AND estrito entre conceitos
-  const phase1 = products.filter((p) => tokenGroups.every((group) => matchesGroup(p, group)))
+  const phase1 = activeProducts.filter((p) => tokenGroups.every((group) => matchesGroup(p, group)))
 
   const selectedIds = new Set(phase1.map((p) => p.sku))
   const results = [...phase1]
 
   // Fase 2: OR caso Fase 1 traga menos de 5
   if (results.length < 5) {
-    const phase2 = products.filter((p) => {
+    const phase2 = activeProducts.filter((p) => {
       if (selectedIds.has(p.sku)) return false
       return tokenGroups.some((group) => matchesGroup(p, group))
     })
@@ -271,7 +275,7 @@ export function twoPhaseProductSearch(
   // Fallback se nada foi encontrado
   if (results.length === 0 && rawTerm.length >= 2) {
     const rt = removeAccents(rawTerm).toLowerCase()
-    const fallback = products.filter((p) =>
+    const fallback = activeProducts.filter((p) =>
       removeAccents(`${p.name} ${p.sku} ${p.brand} ${p.barcode}`).toLowerCase().includes(rt),
     )
     results.push(...fallback.slice(0, 20))
