@@ -1151,6 +1151,7 @@ onRecordAfterCreateSuccess((e) => {
   // Executores locais das ferramentas
   const executeBuscarProdutos = (termo) => {
     try {
+      const colProdutos = $app.findCollectionByNameOrId('products')
       const rawTerm = String(termo || '').trim()
       if (!rawTerm) return { total: 0, produtos: [] }
 
@@ -1504,7 +1505,7 @@ onRecordAfterCreateSuccess((e) => {
           }
 
           const sql = 'SELECT * FROM products WHERE ' + whereSql + ' LIMIT 2000'
-          const queryResult = arrayOf(new Record())
+          const queryResult = arrayOf(new Record(colProdutos))
           $app.db().newQuery(sql).bind(bindParams).all(queryResult)
 
           if (queryResult && queryResult.length > 0) {
@@ -1614,7 +1615,7 @@ onRecordAfterCreateSuccess((e) => {
               'SELECT * FROM products WHERE is_active = 1 AND (' +
               orWhereClauses.join(' OR ') +
               ') LIMIT 200'
-            const orResult = arrayOf(new Record())
+            const orResult = arrayOf(new Record(colProdutos))
             $app.db().newQuery(orSql).bind(orBindParams).all(orResult)
             if (orResult && orResult.length > 0) {
               for (let ori = 0; ori < orResult.length; ori++) {
@@ -1946,8 +1947,11 @@ onRecordAfterCreateSuccess((e) => {
         produtos: results,
       }
     } catch (err) {
-      console.log('[TOOL-BUSCAR-PRODUTOS-ERROR]', String(err))
-      return { total: 0, produtos: [], erro: String(err) }
+      console.error(
+        '[TOOL-BUSCAR-PRODUTOS-ERROR]',
+        err && err.stack ? String(err.stack) : String(err),
+      )
+      return []
     }
   }
 
@@ -2234,8 +2238,18 @@ onRecordAfterCreateSuccess((e) => {
   // Despachante genérico de tool calls
   const dispatchToolCall = (toolName, toolArgs) => {
     if (toolName === 'buscar_produtos') {
-      const termo = toolArgs && toolArgs.termo ? toolArgs.termo : ''
-      return executeBuscarProdutos(termo)
+      try {
+        const termo = toolArgs && toolArgs.termo ? toolArgs.termo : ''
+        return executeBuscarProdutos(termo)
+      } catch (toolBuscarErr) {
+        console.error(
+          '[TOOL-BUSCAR-PRODUTOS-ERROR]',
+          toolBuscarErr && toolBuscarErr.stack
+            ? String(toolBuscarErr.stack)
+            : String(toolBuscarErr),
+        )
+        return []
+      }
     }
     if (toolName === 'consultar_estoque_ao_vivo') {
       const sku = toolArgs && toolArgs.sku ? toolArgs.sku : ''
