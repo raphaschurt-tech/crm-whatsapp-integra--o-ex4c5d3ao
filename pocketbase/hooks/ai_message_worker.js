@@ -1624,9 +1624,17 @@ onRecordAfterCreateSuccess((e) => {
           const groupHitsLogSummary =
             groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
             ' | interseção=' +
+
+        // Log em linha própria de groupHits por token e contagem da interseção SQL
+        const groupHitsLogSummary =
+          groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+          ' | interseção=' +
+          phase1Count
+        console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+=======
             phase1Count
           console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
-   >>>>>>> REPLACE
+        }
 =======
 
         // Log em linha própria de groupHits por token e contagem da interseção SQL
