@@ -15,6 +15,84 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
       if (!digits || digits.length >= 14) return ''
       if ((digits.length === 12 || digits.length === 13) && digits.startsWith('55')) {
         return digits.slice(2)
+            phase1Count
+          console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+        }
+=======
+
+        // Log em linha própria de groupHits por token e contagem da interseção SQL
+        const groupHitsLogSummary =
+          groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+          ' | interseção=' +
+          phase1Count
+        console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+
+        // Aviso explícito se o resultado SQL atingiu o limite de 2000 hits (truncamento detectado)
+        if (anyTruncated) {
+          console.log(
+            '[TOOL-BUSCAR-PRODUTOS-TRUNCATION-WARNING]',
+            'Pool de candidatos atingiu o limite de 2000 hits (truncamento no LIMIT 2000).',
+          )
+        }
+
+        // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, busca candidatos que casam com pelo menos 1 conceito via SQL OR)
+        if (candidates.length < 5 && tokenGroups.length > 1) {
+          try {
+            const orWhereClauses = []
+            const orBindParams = {}
+            let orIdx = 0
+
+            for (let gi = 0; gi < tokenGroups.length; gi++) {
+              const variants = tokenGroups[gi]
+              for (let vi = 0; vi < variants.length; vi++) {
+                const vTerm = variants[vi]
+                if (!vTerm || vTerm.length < 2) continue
+                const likeVars = buildLikeVariants(vTerm)
+                for (let lvi = 0; lvi < likeVars.length; lvi++) {
+                  const pKey = 'orp_' + orIdx++
+                  orBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
+                  orWhereClauses.push(
+                    '(name LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR sku LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR brand LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR barcode LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR description LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\")',
+                  )
+                }
+              }
+            }
+
+            if (orWhereClauses.length > 0) {
+              const orSql =
+                'SELECT * FROM products WHERE is_active = 1 AND (' +
+                orWhereClauses.join(' OR ') +
+                ') LIMIT 200'
+              const orResult = arrayOf(new Record(colProdutos))
+              $app.db().newQuery(orSql).bind(orBindParams).all(orResult)
+              if (orResult && orResult.length > 0) {
+                for (let ori = 0; ori < orResult.length; ori++) {
+                  const r = orResult[ori]
+                  if (!candidateIds[r.id]) {
+                    candidates.push(r)
+                    candidateIds[r.id] = true
+                    allFetchedRecs[r.id] = r
+                    phase2Count++
+                    if (candidates.length >= 200) break
+                  }
+                }
+              }
+            }
+          } catch (orErr) {
+            console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(orErr))
+          }
+        }
+=======
       }
       return digits
     }
@@ -1517,21 +1595,13 @@ onRecordAfterCreateSuccess((e) => {
             const FIELDS = ['name', 'sku', 'brand', 'barcode', 'description']
 
             for (let gi = 0; gi < tokenGroups.length; gi++) {
-              const built = buildConceptOrGroup(
-                tokenGroups[gi],
-                FIELDS,
-                'p' + gi + '_',
-              )
+              const built = buildConceptOrGroup(tokenGroups[gi], FIELDS, 'p' + gi + '_')
               if (built) {
+                // chaves já únicas por conceito (p0_0, p1_0, ...) — sem renomeio
                 for (const pk in built.params) {
-                  bindParams[gi + '_' + pk] = built.params[pk]
+                  bindParams[pk] = built.params[pk]
                 }
-                // renomeia as chaves do filtro para os params renomeados
-                let clause = built.clause
-                for (const pk in built.params) {
-                  clause = clause.split('{:' + pk + '}').join('{:' + gi + '_' + pk + '}')
-                }
-                conceptClauses.push(clause)
+                conceptClauses.push(built.clause)
               }
             }
 
@@ -1570,6 +1640,181 @@ onRecordAfterCreateSuccess((e) => {
                   anyTruncated = true
                 }
 
+=======
+            phase1Count
+          console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+        }
+=======
+
+        // Log em linha própria de groupHits por token e contagem da interseção SQL
+        const groupHitsLogSummary =
+          groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+          ' | interseção=' +
+          phase1Count
+        console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+
+        // Aviso explícito se o resultado SQL atingiu o limite de 2000 hits (truncamento detectado)
+        if (anyTruncated) {
+          console.log(
+            '[TOOL-BUSCAR-PRODUTOS-TRUNCATION-WARNING]',
+            'Pool de candidatos atingiu o limite de 2000 hits (truncamento no LIMIT 2000).',
+          )
+        }
+
+        // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, busca candidatos que casam com pelo menos 1 conceito via SQL OR)
+        if (candidates.length < 5 && tokenGroups.length > 1) {
+          try {
+            const orWhereClauses = []
+            const orBindParams = {}
+            let orIdx = 0
+
+            for (let gi = 0; gi < tokenGroups.length; gi++) {
+              const variants = tokenGroups[gi]
+              for (let vi = 0; vi < variants.length; vi++) {
+                const vTerm = variants[vi]
+                if (!vTerm || vTerm.length < 2) continue
+                const likeVars = buildLikeVariants(vTerm)
+                for (let lvi = 0; lvi < likeVars.length; lvi++) {
+                  const pKey = 'orp_' + orIdx++
+                  orBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
+                  orWhereClauses.push(
+                    '(name LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR sku LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR brand LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR barcode LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR description LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\")',
+                  )
+                }
+              }
+            }
+
+            if (orWhereClauses.length > 0) {
+              const orSql =
+                'SELECT * FROM products WHERE is_active = 1 AND (' +
+                orWhereClauses.join(' OR ') +
+                ') LIMIT 200'
+              const orResult = arrayOf(new Record(colProdutos))
+              $app.db().newQuery(orSql).bind(orBindParams).all(orResult)
+              if (orResult && orResult.length > 0) {
+                for (let ori = 0; ori < orResult.length; ori++) {
+                  const r = orResult[ori]
+                  if (!candidateIds[r.id]) {
+                    candidates.push(r)
+                    candidateIds[r.id] = true
+                    allFetchedRecs[r.id] = r
+                    phase2Count++
+                    if (candidates.length >= 200) break
+                  }
+                }
+              }
+            }
+          } catch (orErr) {
+            console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(orErr))
+          }
+        }
+=======
+=======
+              }
+            }
+=======
+
+        // Log em linha própria de groupHits por token e contagem da interseção SQL
+        const groupHitsLogSummary =
+          groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+          ' | interseção=' +
+          phase1Count
+        console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+=======
+=======
+            phase1Count
+          console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+        }
+=======
+
+        // Log em linha própria de groupHits por token e contagem da interseção SQL
+        const groupHitsLogSummary =
+          groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+          ' | interseção=' +
+          phase1Count
+        console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+
+        // Aviso explícito se o resultado SQL atingiu o limite de 2000 hits (truncamento detectado)
+        if (anyTruncated) {
+          console.log(
+            '[TOOL-BUSCAR-PRODUTOS-TRUNCATION-WARNING]',
+            'Pool de candidatos atingiu o limite de 2000 hits (truncamento no LIMIT 2000).',
+          )
+        }
+
+        // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, busca candidatos que casam com pelo menos 1 conceito via SQL OR)
+        if (candidates.length < 5 && tokenGroups.length > 1) {
+          try {
+            const orWhereClauses = []
+            const orBindParams = {}
+            let orIdx = 0
+
+            for (let gi = 0; gi < tokenGroups.length; gi++) {
+              const variants = tokenGroups[gi]
+              for (let vi = 0; vi < variants.length; vi++) {
+                const vTerm = variants[vi]
+                if (!vTerm || vTerm.length < 2) continue
+                const likeVars = buildLikeVariants(vTerm)
+                for (let lvi = 0; lvi < likeVars.length; lvi++) {
+                  const pKey = 'orp_' + orIdx++
+                  orBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
+                  orWhereClauses.push(
+                    '(name LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR sku LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR brand LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR barcode LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR description LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\")',
+                  )
+                }
+              }
+            }
+
+            if (orWhereClauses.length > 0) {
+              const orSql =
+                'SELECT * FROM products WHERE is_active = 1 AND (' +
+                orWhereClauses.join(' OR ') +
+                ') LIMIT 200'
+              const orResult = arrayOf(new Record(colProdutos))
+              $app.db().newQuery(orSql).bind(orBindParams).all(orResult)
+              if (orResult && orResult.length > 0) {
+                for (let ori = 0; ori < orResult.length; ori++) {
+                  const r = orResult[ori]
+                  if (!candidateIds[r.id]) {
+                    candidates.push(r)
+                    candidateIds[r.id] = true
+                    allFetchedRecs[r.id] = r
+                    phase2Count++
+                    if (candidates.length >= 200) break
+                  }
+                }
+              }
+            }
+          } catch (orErr) {
+            console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(orErr))
+          }
+        }
+=======
+        } catch (sqlErr) {
+          console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(sqlErr))
+          console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=0 (erro fase 1)')
+        }
+=======
                 if (queryResult && queryResult.length > 0) {
                   for (let ri = 0; ri < queryResult.length; ri++) {
                     const r = queryResult[ri]
@@ -1579,51 +1824,81 @@ onRecordAfterCreateSuccess((e) => {
                     phase1Count++
                   }
                 }
-              }
 
-            } catch (sqlErr) {
-              console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(sqlErr))
-              console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=0 (erro fase 1)')
-            }
-
-
-            // Medição e contagem de hits por conceito para manter o log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS]
-            // (antes via SELECT COUNT(*) + DynamicModel/.one — agora findRecordsByFilter)
-            for (let gi = 0; gi < tokenGroups.length; gi++) {
-              const variants = tokenGroups[gi]
-              const primaryTok = searchTokens[gi] || (variants && variants[0]) || 'grupo' + gi
-              try {
-                const built = buildConceptOrGroup(variants, ['name', 'sku'], 'gh' + gi + '_')
-                if (built) {
+                // GUARDA n=0: consulta grande válida não trouxe nada → variante POR CONCEITO
+                // (uma consulta pequena por conceito + interseção em memória por id).
+                if ((queryResult || []).length === 0) {
                   console.log(
-                    '[TOOL-BUSCAR-PRODUTOS-SQL-START]',
-                    'fase=group-hit token=' + primaryTok,
+                    '[TOOL-BUSCAR-PRODUTOS-PHASE1-EMPTY]',
+                    'consulta unica n=0 — acionando variante por conceito',
                   )
-                  const gRecs = $app.findRecordsByFilter(
-                    'products',
-                    'is_active = true && ' + built.clause,
-                    '',
-                    5000,
-                    0,
-                    built.params,
-                  )
+                  const perConceptRecs = []
+                  let perConceptFailed = false
+                  for (let pci = 0; pci < conceptClauses.length; pci++) {
+                    const cFilter = 'is_active = true && ' + conceptClauses[pci]
+                    const cParams = {}
+                    for (const pk in bindParams) {
+                      if (String(pk).indexOf('p' + pci + '_') === 0) cParams[pk] = bindParams[pk]
+                    }
+                    console.log(
+                      '[TOOL-BUSCAR-PRODUTOS-SQL-START]',
+                      'fase=1-conceito filtro=' + cFilter,
+                    )
+                    let cRecs = []
+                    try {
+                      cRecs = $app.findRecordsByFilter('products', cFilter, '', 2000, 0, cParams)
+                    } catch (cQErr) {
+                      console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(cQErr))
+                      cRecs = []
+                      perConceptFailed = true
+                    }
+                    console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=' + (cRecs || []).length)
+                    perConceptRecs.push(cRecs || [])
+                  }
 
-                  console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=' + (gRecs || []).length)
-                  groupHitCounts.push({ token: primaryTok, hits: (gRecs || []).length })
-                } else {
-                  groupHitCounts.push({ token: primaryTok, hits: 0 })
+                  if (!perConceptFailed && perConceptRecs.length === conceptClauses.length) {
+                    const baseRecs = perConceptRecs[0]
+                    for (let bi = 0; bi < baseRecs.length; bi++) {
+                      const rid = baseRecs[bi].id
+                      let inAllConcepts = true
+                      for (let sci = 1; sci < perConceptRecs.length; sci++) {
+                        let found = false
+                        for (let rj = 0; rj < perConceptRecs[sci].length; rj++) {
+                          if (perConceptRecs[sci][rj].id === rid) {
+                            found = true
+                            break
+                          }
+                        }
+                        if (!found) {
+                          inAllConcepts = false
+                          break
+                        }
+                      }
+                      if (inAllConcepts && !candidateIds[rid]) {
+                        candidates.push(baseRecs[bi])
+                        candidateIds[rid] = true
+                        allFetchedRecs[rid] = baseRecs[bi]
+                        phase1Count++
+                      }
+                    }
+                    console.log(
+                      '[TOOL-BUSCAR-PRODUTOS-PHASE1-CONCEITO-OK]',
+                      'intersecaoPorConceito=' + phase1Count,
+                    )
+                  }
                 }
-              } catch (gErr) {
-                console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=? (erro group-hit ' + primaryTok + ')')
-                groupHitCounts.push({ token: primaryTok, hits: phase1Count })
               }
             }
-          }
-
-          // Log em linha própria de groupHits por token e contagem da interseção SQL
-          const groupHitsLogSummary =
-            groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
-            ' | interseção=' +
+        } catch (sqlErr) {
+          console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(sqlErr))
+          console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=0 (erro fase 1)')
+        }
+=======
+=======
+            phase1Count
+          console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+        }
+=======
 
         // Log em linha própria de groupHits por token e contagem da interseção SQL
         const groupHitsLogSummary =
@@ -1631,6 +1906,280 @@ onRecordAfterCreateSuccess((e) => {
           ' | interseção=' +
           phase1Count
         console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+
+        // Aviso explícito se o resultado SQL atingiu o limite de 2000 hits (truncamento detectado)
+        if (anyTruncated) {
+          console.log(
+            '[TOOL-BUSCAR-PRODUTOS-TRUNCATION-WARNING]',
+            'Pool de candidatos atingiu o limite de 2000 hits (truncamento no LIMIT 2000).',
+          )
+        }
+
+        // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, busca candidatos que casam com pelo menos 1 conceito via SQL OR)
+        if (candidates.length < 5 && tokenGroups.length > 1) {
+          try {
+            const orWhereClauses = []
+            const orBindParams = {}
+            let orIdx = 0
+
+            for (let gi = 0; gi < tokenGroups.length; gi++) {
+              const variants = tokenGroups[gi]
+              for (let vi = 0; vi < variants.length; vi++) {
+                const vTerm = variants[vi]
+                if (!vTerm || vTerm.length < 2) continue
+                const likeVars = buildLikeVariants(vTerm)
+                for (let lvi = 0; lvi < likeVars.length; lvi++) {
+                  const pKey = 'orp_' + orIdx++
+                  orBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
+                  orWhereClauses.push(
+                    '(name LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR sku LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR brand LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR barcode LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR description LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\")',
+                  )
+                }
+              }
+            }
+
+            if (orWhereClauses.length > 0) {
+              const orSql =
+                'SELECT * FROM products WHERE is_active = 1 AND (' +
+                orWhereClauses.join(' OR ') +
+                ') LIMIT 200'
+              const orResult = arrayOf(new Record(colProdutos))
+              $app.db().newQuery(orSql).bind(orBindParams).all(orResult)
+              if (orResult && orResult.length > 0) {
+                for (let ori = 0; ori < orResult.length; ori++) {
+                  const r = orResult[ori]
+                  if (!candidateIds[r.id]) {
+                    candidates.push(r)
+                    candidateIds[r.id] = true
+                    allFetchedRecs[r.id] = r
+                    phase2Count++
+                    if (candidates.length >= 200) break
+                  }
+                }
+              }
+            }
+          } catch (orErr) {
+            console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(orErr))
+          }
+        }
+=======
+=======
+              }
+            }
+=======
+
+        // Log em linha própria de groupHits por token e contagem da interseção SQL
+        const groupHitsLogSummary =
+          groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+          ' | interseção=' +
+          phase1Count
+        console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+=======
+=======
+            phase1Count
+          console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+        }
+=======
+
+        // Log em linha própria de groupHits por token e contagem da interseção SQL
+        const groupHitsLogSummary =
+          groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+          ' | interseção=' +
+          phase1Count
+        console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+
+        // Aviso explícito se o resultado SQL atingiu o limite de 2000 hits (truncamento detectado)
+        if (anyTruncated) {
+          console.log(
+            '[TOOL-BUSCAR-PRODUTOS-TRUNCATION-WARNING]',
+            'Pool de candidatos atingiu o limite de 2000 hits (truncamento no LIMIT 2000).',
+          )
+        }
+
+        // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, busca candidatos que casam com pelo menos 1 conceito via SQL OR)
+        if (candidates.length < 5 && tokenGroups.length > 1) {
+          try {
+            const orWhereClauses = []
+            const orBindParams = {}
+            let orIdx = 0
+
+            for (let gi = 0; gi < tokenGroups.length; gi++) {
+              const variants = tokenGroups[gi]
+              for (let vi = 0; vi < variants.length; vi++) {
+                const vTerm = variants[vi]
+                if (!vTerm || vTerm.length < 2) continue
+                const likeVars = buildLikeVariants(vTerm)
+                for (let lvi = 0; lvi < likeVars.length; lvi++) {
+                  const pKey = 'orp_' + orIdx++
+                  orBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
+                  orWhereClauses.push(
+                    '(name LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR sku LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR brand LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR barcode LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\" OR description LIKE {:' +
+                      pKey +
+                      '} ESCAPE "\\")',
+                  )
+                }
+              }
+            }
+
+            if (orWhereClauses.length > 0) {
+              const orSql =
+                'SELECT * FROM products WHERE is_active = 1 AND (' +
+                orWhereClauses.join(' OR ') +
+                ') LIMIT 200'
+              const orResult = arrayOf(new Record(colProdutos))
+              $app.db().newQuery(orSql).bind(orBindParams).all(orResult)
+              if (orResult && orResult.length > 0) {
+                for (let ori = 0; ori < orResult.length; ori++) {
+                  const r = orResult[ori]
+                  if (!candidateIds[r.id]) {
+                    candidates.push(r)
+                    candidateIds[r.id] = true
+                    allFetchedRecs[r.id] = r
+                    phase2Count++
+                    if (candidates.length >= 200) break
+                  }
+                }
+              }
+            }
+          } catch (orErr) {
+            console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(orErr))
+          }
+        }
+=======
+        } catch (sqlErr) {
+          console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(sqlErr))
+          console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=0 (erro fase 1)')
+        }
+
+        // Medição e contagem de hits por conceito para manter o log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS]
+        // (antes via SELECT COUNT(*) + DynamicModel/.one — agora findRecordsByFilter)
+        for (let gi = 0; gi < tokenGroups.length; gi++) {
+          const variants = tokenGroups[gi]
+          const primaryTok = searchTokens[gi] || (variants && variants[0]) || 'grupo' + gi
+          try {
+            const built = buildConceptOrGroup(variants, ['name', 'sku'], 'gh' + gi + '_')
+            if (built) {
+              console.log(
+                '[TOOL-BUSCAR-PRODUTOS-SQL-START]',
+                'fase=group-hit token=' + primaryTok,
+              )
+              const gRecs = $app.findRecordsByFilter(
+                'products',
+                'is_active = true && ' + built.clause,
+                '',
+                5000,
+                0,
+                built.params,
+              )
+              console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=' + (gRecs || []).length)
+              groupHitCounts.push({ token: primaryTok, hits: (gRecs || []).length })
+            } else {
+              groupHitCounts.push({ token: primaryTok, hits: 0 })
+            }
+          } catch (gErr) {
+            console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=? (erro group-hit ' + primaryTok + ')')
+            groupHitCounts.push({ token: primaryTok, hits: 0 })
+          }
+        }
+      }
+
+      // Log em linha própria de groupHits por token e contagem da interseção SQL
+      const groupHitsLogSummary =
+        groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+        ' | interseção=' +
+        phase1Count
+      console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+
+      // Aviso explícito se o resultado SQL atingiu o limite de 2000 hits (truncamento detectado)
+      if (anyTruncated) {
+        console.log(
+          '[TOOL-BUSCAR-PRODUTOS-TRUNCATION-WARNING]',
+          'Pool de candidatos atingiu o limite de 2000 hits (truncamento no LIMIT 2000).',
+        )
+      }
+
+      // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, busca candidatos que casam com
+      // pelo menos 1 conceito via findRecordsByFilter — substitui o newQuery/new Record legado,
+      // que travava o JSVM em silêncio)
+      if (candidates.length < 5 && tokenGroups.length > 1) {
+        try {
+          const orClauses = []
+          const orBindParams = {}
+          let orIdx = 0
+          const OR_FIELDS = ['name', 'sku', 'brand', 'barcode', 'description']
+
+          for (let gi = 0; gi < tokenGroups.length; gi++) {
+            const variants = tokenGroups[gi]
+            for (let vi = 0; vi < variants.length; vi++) {
+              const vTerm = variants[vi]
+              if (!vTerm || vTerm.length < 2) continue
+              const likeVars = buildLikeVariants(vTerm)
+              for (let lvi = 0; lvi < likeVars.length; lvi++) {
+                const pKey = 'orp' + orIdx++
+                orBindParams[pKey] = likeVars[lvi]
+                const orFieldClauses = []
+                for (let ofi = 0; ofi < OR_FIELDS.length; ofi++) {
+                  orFieldClauses.push(OR_FIELDS[ofi] + ' ~ {:' + pKey + '}')
+                }
+                orClauses.push('(' + orFieldClauses.join(' || ') + ')')
+              }
+            }
+          }
+
+          if (orClauses.length > 0) {
+            const orFilter = 'is_active = true && (' + orClauses.join(' || ') + ')'
+            console.log('[TOOL-BUSCAR-PRODUTOS-SQL-START]', 'fase=2-or filtro=' + orFilter)
+            let orRecords = []
+            try {
+              orRecords = $app.findRecordsByFilter(
+                'products',
+                orFilter,
+                '',
+                200,
+                0,
+                orBindParams,
+              )
+            } catch (orQErr) {
+              console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(orQErr))
+              orRecords = []
+            }
+            console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=' + (orRecords || []).length)
+
+            if (orRecords && orRecords.length > 0) {
+              for (let ori = 0; ori < orRecords.length; ori++) {
+                const r = orRecords[ori]
+                if (!candidateIds[r.id]) {
+                  candidates.push(r)
+                  candidateIds[r.id] = true
+                  allFetchedRecs[r.id] = r
+                  phase2Count++
+                  if (candidates.length >= 200) break
+                }
+              }
+            }
+          }
+        } catch (orErr) {
+          console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(orErr))
+        }
+      }
 =======
             phase1Count
           console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
@@ -1714,6 +2263,7 @@ onRecordAfterCreateSuccess((e) => {
         let fallbackCount = 0
         if ((!candidates || candidates.length === 0) && rawTerm.length >= 2) {
           try {
+            console.log('[TOOL-BUSCAR-PRODUTOS-SQL-START]', 'fase=fallback termo=' + rawTerm)
             const fallbackRecs = $app.findRecordsByFilter(
               'products',
               'name ~ {:rt} || sku ~ {:rt} || brand ~ {:rt} || barcode ~ {:rt}',
@@ -1728,6 +2278,7 @@ onRecordAfterCreateSuccess((e) => {
                 fallbackCount++
               }
             }
+            console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=' + (fallbackRecs || []).length)
           } catch (fbErr) {
             console.log('[TOOL-BUSCAR-PRODUTOS-FALLBACK-ERR]', String(fbErr))
           }
