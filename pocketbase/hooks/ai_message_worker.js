@@ -1436,23 +1436,18 @@ onRecordAfterCreateSuccess((e) => {
         let phase2Count = 0
         const allFetchedRecs = {}
 
-        // PLANO B DA BUSCA — SQL DIRETO COM $app.db().newQuery:
-        // Resolve truncamento definitivo (tokens comuns como "bucha" e "band" ultrapassam 1000 produtos individualmente).
-        // Em vez de consultar por token e fazer interseção em memória, executa UMA query única no SQLite:
-        // WHERE is_active = 1 AND ((name LIKE %c1% OR name LIKE %a1%...)) AND ((name LIKE %c2%...))
-        // (1) Parênteses explícitos por conceito; aliases em OR dentro dos parênteses; conceitos unidos por AND.
-        // (2) bind() obrigatório para todo valor (prevenção total contra SQL injection).
-        // (3) Escape de % e _ nos tokens antes de envolver com %...%.
-        // (4) LIKE duplo por token/alias: variante com acento e sem acento para cobrir nomes acentuados no banco.
-        // (5) Anos e stopwords já foram removidos de searchTokens antes de montar os parâmetros.
-        // (6) Sem ORDER BY (ranking sofisticado em memória preservado).
-        // (7) LIMIT 2000 de segurança + TRUNCATION-WARNING se o pool atingir o cap.
-        // (8) Mantém allowlist, exclusões, ranking, fallback e log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS].
-        const escapeSqlLike = (str) => {
-          if (!str) return ''
-          return String(str).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
-        }
-
+        // PLANO B DA BUSCA — $app.findRecordsByFilter (API PROVADA neste hook):
+        // A consulta anterior via $app.db().newQuery(...).all(arrayOf(new Record(col))) TRAVA o JSVM
+        // em silêncio (sem exceção, sem log, processing eterno). findRecordsByFilter é a mesma API
+        // usada dezenas de vezes por mensagem neste hook — mantém a MESMA semântica:
+        // (1) is_active = true; grupos por conceito com aliases em OR dentro de parênteses;
+        //     conceitos unidos por && (interseção, sem truncamento por token).
+        // (2) Operador ~ (contains) com bind {:pN} para todo valor.
+        // (3) Variante com/sem acento por token/alias para cobrir nomes acentuados no banco.
+        // (4) Anos e stopwords já removidos de searchTokens antes de montar os parâmetros.
+        // (5) Sem sort (ranking sofisticado em memória preservado).
+        // (6) LIMIT 2000 de segurança + TRUNCATION-WARNING se o pool atingir o cap.
+        // (7) Mantém allowlist, exclusões, ranking, fallback e log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS].
         const buildLikeVariants = (term) => {
           const raw = String(term || '')
             .trim()
@@ -1465,111 +1460,174 @@ onRecordAfterCreateSuccess((e) => {
           return set
         }
 
+        // Monta um grupo de cláusulas "(campo ~ {:k0} || campo ~ {:k1} ...)" para uma lista de
+        // variantes de termo, sobre os campos informados. Retorna { clause, params }.
+        const buildConceptOrGroup = (variants, fields, keyPrefix) => {
+          const params = {}
+          const clauses = []
+          let kIdx = 0
+          for (let vi = 0; vi < (variants || []).length; vi++) {
+            const vTerm = variants[vi]
+            if (!vTerm || vTerm.length < 2) continue
+            const likeVars = buildLikeVariants(vTerm)
+            for (let lvi = 0; lvi < likeVars.length; lvi++) {
+              const pKey = keyPrefix + kIdx++
+              params[pKey] = likeVars[lvi]
+              const fieldClauses = []
+              for (let fi = 0; fi < fields.length; fi++) {
+                fieldClauses.push(fields[fi] + ' ~ {:' + pKey + '}')
+              }
+              clauses.push('(' + fieldClauses.join(' || ') + ')')
+            }
+          }
+          if (clauses.length === 0) return null
+          return { clause: '(' + clauses.join(' || ') + ')', params: params }
+        }
+
+        // GUARDA DE SINTAXE DO FILTRO: parênteses balanceados, ~ presente, binds {:p} declarados.
+        // Validação pura de string (a prova de ar continua sendo SQL-START/END nos logs de hooks).
+        const validateFilterSyntax = (filterStr, params) => {
+          if (typeof filterStr !== 'string' || filterStr.length === 0) return false
+          let depth = 0
+          for (let cI = 0; cI < filterStr.length; cI++) {
+            if (filterStr.charAt(cI) === '(') depth++
+            else if (filterStr.charAt(cI) === ')') depth--
+            if (depth < 0) return false
+          }
+          if (depth !== 0) return false
+          if (filterStr.indexOf('~') === -1) return false
+          // todo {:pX} presente no filtro deve existir nos params
+          const bindRe = /\{:([A-Za-z0-9_]+)\}/g
+          let m
+          while ((m = bindRe.exec(filterStr)) !== null) {
+            if (!params || params[m[1]] === undefined) return false
+          }
+          return true
+        }
+
         const groupHitCounts = []
         let anyTruncated = false
 
         if (tokenGroups.length > 0) {
+          // FASE 1 — UMA consulta única: is_active = true && (conceito1) && (conceito2) && ...
           try {
-            const sqlWhereGroups = []
+            const conceptClauses = []
             const bindParams = {}
             let pIdx = 0
+            const FIELDS = ['name', 'sku', 'brand', 'barcode', 'description']
 
             for (let gi = 0; gi < tokenGroups.length; gi++) {
-              const variants = tokenGroups[gi]
-              const variantClauses = []
-              for (let vi = 0; vi < variants.length; vi++) {
-                const vTerm = variants[vi]
-                if (!vTerm || vTerm.length < 2) continue
-                const likeVars = buildLikeVariants(vTerm)
-                for (let lvi = 0; lvi < likeVars.length; lvi++) {
-                  const pKey = 'p_' + pIdx++
-                  bindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
-                  variantClauses.push(
-                    '(name LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR sku LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR brand LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR barcode LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR description LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\")',
-                  )
+              const built = buildConceptOrGroup(
+                tokenGroups[gi],
+                FIELDS,
+                'p' + gi + '_',
+              )
+              if (built) {
+                for (const pk in built.params) {
+                  bindParams[gi + '_' + pk] = built.params[pk]
                 }
-              }
-              if (variantClauses.length > 0) {
-                sqlWhereGroups.push('(' + variantClauses.join(' OR ') + ')')
-              }
-            }
-
-            let whereSql = 'is_active = 1'
-            if (sqlWhereGroups.length > 0) {
-              whereSql += ' AND ' + sqlWhereGroups.join(' AND ')
-            }
-
-            const sql = 'SELECT * FROM products WHERE ' + whereSql + ' LIMIT 2000'
-            const queryResult = arrayOf(new Record(colProdutos))
-            $app.db().newQuery(sql).bind(bindParams).all(queryResult)
-
-            if (queryResult && queryResult.length > 0) {
-              if (queryResult.length >= 2000) {
-                anyTruncated = true
-              }
-              for (let ri = 0; ri < queryResult.length; ri++) {
-                const r = queryResult[ri]
-                candidates.push(r)
-                candidateIds[r.id] = true
-                allFetchedRecs[r.id] = r
-                phase1Count++
-              }
-            }
-          } catch (sqlErr) {
-            console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(sqlErr))
-          }
-
-          // Medição e contagem de hits por conceito para manter o log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS]
-          for (let gi = 0; gi < tokenGroups.length; gi++) {
-            const variants = tokenGroups[gi]
-            const primaryTok = searchTokens[gi] || (variants && variants[0]) || 'grupo' + gi
-            try {
-              const groupClauses = []
-              const gBindParams = {}
-              let gIdx = 0
-              for (let vi = 0; vi < variants.length; vi++) {
-                const vTerm = variants[vi]
-                if (!vTerm || vTerm.length < 2) continue
-                const likeVars = buildLikeVariants(vTerm)
-                for (let lvi = 0; lvi < likeVars.length; lvi++) {
-                  const pKey = 'gp_' + gIdx++
-                  gBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
-                  groupClauses.push(
-                    '(name LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR sku LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\")',
-                  )
+                // renomeia as chaves do filtro para os params renomeados
+                let clause = built.clause
+                for (const pk in built.params) {
+                  clause = clause.split('{:' + pk + '}').join('{:' + gi + '_' + pk + '}')
                 }
+                conceptClauses.push(clause)
               }
-              if (groupClauses.length > 0) {
-                const countSql =
-                  'SELECT COUNT(*) as total FROM products WHERE is_active = 1 AND (' +
-                  groupClauses.join(' OR ') +
-                  ')'
-                const countRes = new DynamicModel({ total: 0 })
-                $app.db().newQuery(countSql).bind(gBindParams).one(countRes)
-                const gHits = Number(countRes.total) || 0
-                groupHitCounts.push({ token: primaryTok, hits: gHits })
+            }
+
+            if (conceptClauses.length > 0) {
+              let filterEquivalente = 'is_active = true'
+              for (let cci = 0; cci < conceptClauses.length; cci++) {
+                filterEquivalente += ' && ' + conceptClauses[cci]
+              }
+
+              console.log('[TOOL-BUSCAR-PRODUTOS-SQL-START]', 'fase=1 filtro=' + filterEquivalente)
+              if (!validateFilterSyntax(filterEquivalente, bindParams)) {
+                console.log(
+                  '[TOOL-BUSCAR-PRODUTOS-SQL-ERR]',
+                  'filtro inválido (sintaxe/binds) — pulando consulta fase 1',
+                )
               } else {
-                groupHitCounts.push({ token: primaryTok, hits: 0 })
+                // VAR B: UMA consulta grande (fase 1 original do Plano B)
+                let queryResult = []
+                try {
+                  queryResult = $app.findRecordsByFilter(
+                    'products',
+                    filterEquivalente,
+                    '',
+                    2000,
+                    0,
+                    bindParams,
+                  )
+                } catch (qErr) {
+                  console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(qErr))
+                  queryResult = []
+                }
+
+                console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=' + (queryResult || []).length)
+
+                if (queryResult && queryResult.length >= 2000) {
+                  anyTruncated = true
+                }
+
+                if (queryResult && queryResult.length > 0) {
+                  for (let ri = 0; ri < queryResult.length; ri++) {
+                    const r = queryResult[ri]
+                    candidates.push(r)
+                    candidateIds[r.id] = true
+                    allFetchedRecs[r.id] = r
+                    phase1Count++
+                  }
+                }
               }
-            } catch (gErr) {
-              groupHitCounts.push({ token: primaryTok, hits: phase1Count })
+
+            } catch (sqlErr) {
+              console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(sqlErr))
+              console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=0 (erro fase 1)')
+            }
+
+
+            // Medição e contagem de hits por conceito para manter o log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS]
+            // (antes via SELECT COUNT(*) + DynamicModel/.one — agora findRecordsByFilter)
+            for (let gi = 0; gi < tokenGroups.length; gi++) {
+              const variants = tokenGroups[gi]
+              const primaryTok = searchTokens[gi] || (variants && variants[0]) || 'grupo' + gi
+              try {
+                const built = buildConceptOrGroup(variants, ['name', 'sku'], 'gh' + gi + '_')
+                if (built) {
+                  console.log(
+                    '[TOOL-BUSCAR-PRODUTOS-SQL-START]',
+                    'fase=group-hit token=' + primaryTok,
+                  )
+                  const gRecs = $app.findRecordsByFilter(
+                    'products',
+                    'is_active = true && ' + built.clause,
+                    '',
+                    5000,
+                    0,
+                    built.params,
+                  )
+
+                  console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=' + (gRecs || []).length)
+                  groupHitCounts.push({ token: primaryTok, hits: (gRecs || []).length })
+                } else {
+                  groupHitCounts.push({ token: primaryTok, hits: 0 })
+                }
+              } catch (gErr) {
+                console.log('[TOOL-BUSCAR-PRODUTOS-SQL-END]', 'n=? (erro group-hit ' + primaryTok + ')')
+                groupHitCounts.push({ token: primaryTok, hits: phase1Count })
+              }
             }
           }
-        }
+
+          // Log em linha própria de groupHits por token e contagem da interseção SQL
+          const groupHitsLogSummary =
+            groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
+            ' | interseção=' +
+            phase1Count
+          console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
+   >>>>>>> REPLACE
+=======
 
         // Log em linha própria de groupHits por token e contagem da interseção SQL
         const groupHitsLogSummary =

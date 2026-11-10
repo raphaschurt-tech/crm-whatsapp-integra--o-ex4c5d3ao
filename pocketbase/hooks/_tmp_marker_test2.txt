@@ -1,0 +1,7 @@
+depois
+ >>>>>>> REPLACE
+REMOVIDO-A
+ >>>>>>> REPLACE
+=======
+depois
+mais
