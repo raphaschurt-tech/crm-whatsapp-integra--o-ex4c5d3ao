@@ -1153,6 +1153,8 @@ onRecordAfterCreateSuccess((e) => {
 
     // Executores locais das ferramentas
     const executeBuscarProdutos = (termo) => {
+      console.log('[TOOL-BUSCAR-PRODUTOS-OFFLINE] busca desligada — handoff direto')
+      return []
       try {
         const colProdutos = $app.findCollectionByNameOrId('products')
         const rawTerm = String(termo || '').trim()
