@@ -1083,7 +1083,7 @@ onRecordAfterCreateSuccess((e) => {
           preco: 1, valor: 1, saber: 1, quero: 1, gostaria: 1, favor: 1, por: 1,
           obrigado: 1, obrigada: 1, ola: 1, bom: 1, dia: 1, tarde: 1, noite: 1,
         }
-        const searchWords = words.filter((w) => !stopSimples[w])
+                const searchWords = words.filter((w) => !stopSimples[w] && !/^(19|20)\d{2}$/.test(w))
         const years = []
         for (let yi = 0; yi < words.length; yi++) {
           if (/^(19|20)\d{2}$/.test(words[yi])) years.push(parseInt(words[yi].slice(2), 10))
