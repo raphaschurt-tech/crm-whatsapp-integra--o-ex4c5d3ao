@@ -6,7 +6,6 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
     if (s && s.get('chat_summaries_migrated')) {
       return // Migração já concluída
     }
-
     const computeCanonicalPhone = (p) => {
       if (!p) return ''
       const str = String(p).trim()
@@ -18,7 +17,6 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
       }
       return digits
     }
-
     // Carregar mapa de leituras
     const readStatesMap = new Map()
     try {
@@ -33,7 +31,6 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
         }
       }
     } catch (_) {}
-
     const existingSummariesSet = new Set()
     try {
       let existingSums = []
@@ -47,11 +44,9 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
         if (cPhone) existingSummariesSet.add(cPhone)
       }
     } catch (_) {}
-
     const convMap = new Map()
     let page = 1
     const batchSize = 1000
-
     while (true) {
       let records = []
       try {
@@ -66,7 +61,6 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
         break
       }
       if (!records || records.length === 0) break
-
       for (let i = 0; i < records.length; i++) {
         const rec = records[i]
         let rawPhone = ''
@@ -89,11 +83,9 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
             else if (sp && typeof sp === 'object' && sp.phone) rawPhone = String(sp.phone)
           } catch (_) {}
         }
-
         const canonicalPhone = computeCanonicalPhone(rawPhone)
         if (!canonicalPhone || canonicalPhone.length < 8) continue
         if (existingSummariesSet.has(canonicalPhone)) continue
-
         let conv = convMap.get(canonicalPhone)
         if (!conv) {
           conv = {
@@ -110,11 +102,9 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
           }
           convMap.set(canonicalPhone, conv)
         }
-
         const msgId = String(rec.getString('messageId') || rec.id || '').trim()
         const isFromMe = Boolean(rec.get('fromMe'))
         const direction = isFromMe ? 'outbound' : 'inbound'
-
         let msgDate
         const momentVal = Number(rec.get('moment'))
         if (momentVal && momentVal > 0) {
@@ -127,11 +117,9 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
           ? msgDate.toISOString()
           : new Date().toISOString()
         const msgDateTime = msgDate.getTime()
-
         if (!conv.firstMessageAt) {
           conv.firstMessageAt = msgDateIso
         }
-
         let text = ''
         try {
           const rawText = rec.getString('text') || ''
@@ -156,11 +144,9 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
           }
         } catch (_) {}
         const textStr = String(text || '').trim()
-
         const isAudio = Boolean(rec.get('is_audio')) || Boolean(rec.get('audio_url'))
         const attachType = String(rec.getString('attachment_type') || '').toLowerCase()
         const attachUrl = String(rec.getString('attachment_url') || '').trim()
-
         let preview = 'Mensagem'
         if (isAudio) {
           preview = '🎤 Áudio'
@@ -191,7 +177,6 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
           else if (lower.includes('contato:') || lower.includes('vcard')) preview = '👤 Contato'
           else preview = textStr.length > 90 ? textStr.slice(0, 90) + '...' : textStr
         }
-
         const prevLastTime = conv.lastMessageAt ? new Date(conv.lastMessageAt).getTime() : 0
         if (msgDateTime >= prevLastTime) {
           conv.lastMessageAt = msgDateIso
@@ -199,14 +184,12 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
           conv.lastMessageDirection = direction
           conv.lastMessageId = msgId
         }
-
         if (msgId && !conv.lastSeenIds.includes(msgId)) {
           conv.lastSeenIds.push(msgId)
           if (conv.lastSeenIds.length > 50) {
             conv.lastSeenIds = conv.lastSeenIds.slice(-50)
           }
         }
-
         const lastRead = readStatesMap.get(canonicalPhone)
         if (direction === 'inbound') {
           if (typeof lastRead === 'number' && lastRead > 0) {
@@ -218,17 +201,13 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
           }
         }
       }
-
       if (records.length < batchSize) break
       page++
     }
-
     const summaryCol = $app.findCollectionByNameOrId('chat_summaries')
     let createdCount = 0
-
     convMap.forEach((conv, canonicalPhone) => {
       if (existingSummariesSet.has(canonicalPhone)) return
-
       try {
         const newRec = new Record(summaryCol)
         newRec.set('canonical_phone', conv.canonicalPhone)
@@ -250,7 +229,6 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
         console.log('[BACKFILL-CRON-SAVE-ERR]', canonicalPhone, saveErr.message || String(saveErr))
       }
     })
-
     if (s) {
       s.set('chat_summaries_migrated', true)
       $app.save(s)
@@ -262,7 +240,6 @@ cronAdd('backfill_chat_summaries_job', '*/1 * * * *', () => {
     console.log('[BACKFILL-CRON-ERR]', err.message || String(err))
   }
 })
-
 cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
   try {
     const validConfigs = $app.findRecordsByFilter(
@@ -274,18 +251,14 @@ cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
     )
     if (!validConfigs || validConfigs.length === 0) return
     const validConfigRec = validConfigs[0]
-
     const autoCloseMin = Number(validConfigRec.get('ai_auto_close_minutes')) || 0
     if (autoCloseMin <= 0) return // 0 = desativado
-
     const autoCloseMsg =
       String(validConfigRec.getString('ai_auto_close_message') || '').trim() ||
       'Atendimento encerrado por inatividade. Se precisar de algo, me chame aqui que continuo te ajudando! 🙂'
-
     const zapiInstance = String(validConfigRec.get('zapi_instance_id') || '')
     const zapiToken = String(validConfigRec.get('zapi_token') || '')
     const zapiClientToken = String(validConfigRec.get('zapi_client_token') || '')
-
     const activeHumanControls = $app.findRecordsByFilter(
       'chat_control',
       'human_mode = true',
@@ -293,18 +266,48 @@ cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
       50,
       0,
     )
-
     if (!activeHumanControls || activeHumanControls.length === 0) return
-
     const nowMs = Date.now()
     const timeoutMs = autoCloseMin * 60 * 1000
-
     for (let hci = 0; hci < activeHumanControls.length; hci++) {
       const ctrl = activeHumanControls[hci]
       const ctrlPhone = ctrl.getString('phone')
       if (!ctrlPhone) continue
-
-      // Encontrar última interação (cliente OU atendente)
+            // RETOMADA RAPIDA: cliente digitou /a (ou /ia, !a) e a IA volta a atender sem esperar o tempo
+      try {
+        const cleanR = ctrlPhone.replace(/'/g, "\\'")
+        const lastIn = $app.findRecordsByFilter(
+          'webhook_received',
+          "(phone.phone = '" + cleanR + "' || chat.phone = '" + cleanR + "') && fromMe = false",
+          '-created',
+          1,
+          0,
+        )
+        if (lastIn && lastIn.length > 0) {
+          let rawT = ''
+          try {
+            const parsedT = JSON.parse(String(lastIn[0].getString('text') || ''))
+            rawT =
+              parsedT && typeof parsedT === 'object'
+                ? String(parsedT.message || parsedT.text || '')
+                : String(parsedT)
+          } catch (_) {
+            rawT = String(lastIn[0].getString('text') || '')
+          }
+          rawT = rawT.trim().toLowerCase()
+          if (rawT === '/a' || rawT === '/ia' || rawT === '!a') {
+            ctrl.set('human_mode', false)
+            ctrl.set('paused_by', '')
+            ctrl.set('paused_reason', '')
+            $app.save(ctrl)
+            console.log(
+              '[QUICK-RESUME]',
+              'IA reativada: ' + ctrlPhone.slice(0, 4) + '****' + ctrlPhone.slice(-2),
+            )
+            continue
+          }
+        }
+      } catch (_) {}
       let lastInteractionTimeMs = 0
       try {
         const cleanP = ctrlPhone.replace(/'/g, "\\'")
@@ -322,14 +325,12 @@ cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
           }
         }
       } catch (_) {}
-
       if (!lastInteractionTimeMs) {
         const ctrlUp = new Date(ctrl.getString('updated') || ctrl.updated)
         if (!isNaN(ctrlUp.getTime())) {
           lastInteractionTimeMs = ctrlUp.getTime()
         }
       }
-
       const elapsedMs = nowMs - lastInteractionTimeMs
       if (elapsedMs >= timeoutMs) {
         console.log(
@@ -341,7 +342,6 @@ cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
             timeoutMinutes: autoCloseMin,
           }),
         )
-
         // 1. Enviar aviso de encerramento via Z-API ao cliente
         if (zapiInstance && zapiToken && zapiClientToken) {
           try {
@@ -367,7 +367,6 @@ cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
             console.log('[AUTO-CLOSE-SEND-ERR]', String(sendCloseErr))
           }
         }
-
         // Gravar aviso em webhook_received como fromMe=true para constar no chat sem apagar nada
         try {
           const colW = $app.findCollectionByNameOrId('webhook_received')
@@ -383,12 +382,10 @@ cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
           recW.set('moment', Math.floor(Date.now() / 1000))
           $app.save(recW)
         } catch (_) {}
-
         // 2. Reativar a IA (human_mode = false) LIMPANDO a marcação de motivo (paused_by)
         ctrl.set('human_mode', false)
         ctrl.set('paused_by', '')
         $app.save(ctrl)
-
         console.log(
           '[AUTO-CLOSE-COMPLETED]',
           JSON.stringify({
@@ -404,26 +401,21 @@ cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
     console.log('[AUTO-CLOSE-GLOBAL-ERR]', String(err))
   }
 })
-
 // Hook assíncrono acionado após inserção bem-sucedida em message_processing
 // Processa mensagens com IA (gpt-4o-mini) e envia resposta via Z-API com idempotência estrita
 onRecordAfterCreateSuccess((e) => {
   // Limite configurável de interações anteriores a carregar do histórico (ex.: 20 registros = 10 do cliente + 10 da IA)
   const MAX_HISTORY_INTERACTIONS = 20
-
   const record = e.record
   const status = record.getString('status')
   const replySent = Boolean(record.get('replySent'))
-
   if (status !== 'received' || replySent) {
     return e.next()
   }
-
   const recordId = record.id
   const messageId = record.getString('messageId')
   const phone = record.getString('phone')
   const incomingText = record.getString('incomingText')
-
   // Blindagem estrita: rejeitar phones que sejam @lid ou inválidos (não responder a grupos ou LIDs)
   const isLidOrInvalid = (p) => {
     if (!p) return true
@@ -433,7 +425,6 @@ onRecordAfterCreateSuccess((e) => {
     if (d.length < 10 || d.length > 13) return true
     return false
   }
-
   if (isLidOrInvalid(phone)) {
     console.log(
       '[AI-REJECTED-LID-OR-INVALID-PHONE]',
@@ -451,13 +442,11 @@ onRecordAfterCreateSuccess((e) => {
     } catch (_) {}
     return e.next()
   }
-
   // Mascarar telefone para logs sanitizados
   let maskedPhone = '****'
   if (phone && phone.length > 6) {
     maskedPhone = phone.slice(0, 4) + '****' + phone.slice(-2)
   }
-
   // 1. Transição atômica de estado para 'processing'
   let procRecord = null
   try {
@@ -479,11 +468,9 @@ onRecordAfterCreateSuccess((e) => {
     )
     return e.next()
   }
-
   // 2. Ler e validar estritamente configurações ativas
   let validConfigRec = null
   let configError = ''
-
   try {
     const validConfigs = $app.findRecordsByFilter(
       'settings',
@@ -492,7 +479,6 @@ onRecordAfterCreateSuccess((e) => {
       10,
       0,
     )
-
     if (!validConfigs || validConfigs.length === 0) {
       configError = 'Nenhuma configuração válida encontrada (credenciais Z-API incompletas)'
     } else if (validConfigs.length > 1) {
@@ -506,7 +492,6 @@ onRecordAfterCreateSuccess((e) => {
   } catch (err) {
     configError = 'Erro ao consultar configurações: ' + (err.message || String(err))
   }
-
   if (configError || !validConfigRec) {
     console.log(
       '[SETTINGS-INVALID]',
@@ -523,7 +508,6 @@ onRecordAfterCreateSuccess((e) => {
     } catch (_) {}
     return e.next()
   }
-
   const maskedInst = validConfigRec.getString('zapi_instance_id').slice(0, 4) + '****'
   console.log(
     '[SETTINGS-VALID]',
@@ -535,7 +519,6 @@ onRecordAfterCreateSuccess((e) => {
       aiEnabled: Boolean(validConfigRec.get('ai_enabled')),
     }),
   )
-
   const iaEnabled = Boolean(validConfigRec.get('ai_enabled'))
   const authorizedPhone = String(validConfigRec.get('authorized_test_phone') || '').replace(
     /\D/g,
@@ -545,7 +528,6 @@ onRecordAfterCreateSuccess((e) => {
   const zapiInstance = String(validConfigRec.get('zapi_instance_id') || '')
   const zapiToken = String(validConfigRec.get('zapi_token') || '')
   const zapiClientToken = String(validConfigRec.get('zapi_client_token') || '')
-
   // 3. Verificações de segurança no momento da execução
   if (!iaEnabled) {
     console.log(
@@ -563,7 +545,6 @@ onRecordAfterCreateSuccess((e) => {
     } catch (_) {}
     return e.next()
   }
-
   // Execução de checagem defensiva de auto-close para este telefone específico (se estava em modo humano)
   // protegida por try/catch absoluto para que QUALQUER falha nunca derrube o processamento da mensagem.
   try {
@@ -583,7 +564,6 @@ onRecordAfterCreateSuccess((e) => {
           thisChatCtrl = foundCtrl[0]
         }
       } catch (_) {}
-
       if (thisChatCtrl) {
         const ctrlUp = new Date(thisChatCtrl.getString('updated') || thisChatCtrl.updated)
         const ctrlTime = !isNaN(ctrlUp.getTime()) ? ctrlUp.getTime() : 0
@@ -607,14 +587,12 @@ onRecordAfterCreateSuccess((e) => {
   } catch (autoCloseErr) {
     console.log('[AUTO-CLOSE-SAFE-IGNORED]', String(autoCloseErr))
   }
-
   // Blindagem estrita de allowlist: com a IA LIGADA, ela responde APENAS ao telefone de teste
   // autorizado gravado em settings (authorized_test_phone) e a NINGUÉM mais.
   // Mensagens de outros números são ignoradas (registradas no log como ignoradas, sem resposta,
   // sem gastar tokens da OpenAI ou provedor).
   const cleanPhoneDigits = String(phone || '').replace(/\D/g, '')
   const cleanAuthPhoneDigits = String(authorizedPhone || '').replace(/\D/g, '')
-
   // Comparação tolerante com ou sem DDI 55
   const phoneWithoutDdi =
     cleanPhoneDigits.startsWith('55') && cleanPhoneDigits.length >= 12
@@ -624,11 +602,9 @@ onRecordAfterCreateSuccess((e) => {
     cleanAuthPhoneDigits.startsWith('55') && cleanAuthPhoneDigits.length >= 12
       ? cleanAuthPhoneDigits.slice(2)
       : cleanAuthPhoneDigits
-
   const isAuthorizedNumber =
     Boolean(cleanAuthPhoneDigits) &&
     (cleanPhoneDigits === cleanAuthPhoneDigits || phoneWithoutDdi === authWithoutDdi)
-
   if (!isAuthorizedNumber) {
     console.log(
       '[UNAUTHORIZED-PHONE-IGNORED]',
@@ -646,9 +622,7 @@ onRecordAfterCreateSuccess((e) => {
     } catch (_) {}
     return e.next()
   }
-
   console.log('[WORKER-STEP] 1. Authorized allowlist check passed for phone=' + maskedPhone)
-
   try {
     // 4. Formatação de data/hora atual no fuso America/Sao_Paulo (horário de Brasília)
     let dateTimeSP = ''
@@ -671,11 +645,9 @@ onRecordAfterCreateSuccess((e) => {
         dateTimeSP = new Date().toISOString()
       } catch (_) {}
     }
-
     const timeContextLine = dateTimeSP
       ? '\n\nData/hora atual: ' + dateTimeSP + ' (horário de Brasília).'
       : ''
-
     // 4.1 Identificação do cliente pelo telefone canônico para saudação personalizada
     let identifiedCustomerName = ''
     try {
@@ -704,7 +676,6 @@ onRecordAfterCreateSuccess((e) => {
     } catch (custIdentErr) {
       console.log('[CUSTOMER-IDENT-ERR]', custIdentErr.message || String(custIdentErr))
     }
-
     // 5. Verificar se é a primeira resposta da IA na conversa para este telefone
     let isFirstAiReplyInConversation = false
     try {
@@ -722,7 +693,6 @@ onRecordAfterCreateSuccess((e) => {
     } catch (firstReplyCheckErr) {
       console.log('[FIRST-REPLY-CHECK-ERR]', String(firstReplyCheckErr))
     }
-
     let greetingInstruction = ''
     if (identifiedCustomerName) {
       greetingInstruction =
@@ -744,9 +714,7 @@ onRecordAfterCreateSuccess((e) => {
         ? '\n\nEsta é a sua primeira resposta nesta conversa: cumprimente o cliente e apresente-se como assistente da RPA AUTO PARTS antes de responder.'
         : ''
     }
-
     const firstReplyInstruction = greetingInstruction
-
     // 6. Configurar systemPrompt a partir de settings ou fallback mínimo cordial
     let configuredPrompt = String(validConfigRec.getString('ai_system_prompt') || '').trim()
     if (configuredPrompt) {
@@ -756,19 +724,16 @@ onRecordAfterCreateSuccess((e) => {
         .replace(/\[REGRA CR[ÍI]TICA DE PRE[ÇC]OS E ESTOQUE\][\s\S]*?(?=\n\n|$)/gi, '')
         .trim()
     }
-
     const fallbackPrompt =
       'Você é o assistente virtual da RPA AUTO PARTS, especializada em peças automotivas. ' +
       'Seja cordial, objetivo e atencioso. ' +
       'NÃO invente preços, estoque, prazos ou especificações técnicas.'
-
     // Meios de pagamento configurados
     const paymentMethodsConfig = String(validConfigRec.getString('ai_payment_methods') || '').trim()
     const effectivePaymentMethods =
       paymentMethodsConfig.length > 0
         ? paymentMethodsConfig
         : 'Pagamento via link enviado no orçamento'
-
     // Regras de ferramentas, preços, estoque, apresentação das opções, disponibilidade e fluxo de interesse de compra
     const toolsAndPriceRules =
       '\n\n[FERRAMENTAS DE CONSULTA E REGRAS DE PREÇO/ESTOQUE/DISPONIBILIDADE]\n' +
@@ -791,12 +756,11 @@ onRecordAfterCreateSuccess((e) => {
       '- GATILHO: Dispare APENAS quando o cliente declarar expressamente a intenção de comprar/fechar (ex.: "quero o item 1 e 2", "vou ficar com o 1", "fechar", "me manda", "quero levar"). Perguntas de curiosidade ou mera cotação de preço ("quanto custa?", "tem?") NÃO disparam este fluxo.\n' +
       '- COLETA: Ao detectar intenção declarada de compra, confirme quais itens o cliente quer (citando o nome e a aplicação), pergunte a quantidade de cada item e confirme se a aplicação/ano do veículo está correto. Você tem no MÁXIMO 2 rodadas de perguntas para coletar essas informações caso ainda não tenham sido ditas.\n' +
       '- CONFIRMAÇÃO FINAL: Antes do handoff para a equipe, envie UMA confirmação final resumindo os itens + quantidade + aplicação coletados, iniciando obrigatoriamente por: "Só confirmando: ..." (ex.: "Só confirmando: item 1 (Bucha Diant Freelander 2 06/15) - 2 unidades, para Freelander 2 ano 2011."). Essa confirmação não conta no limite das 2 rodadas.\n' +
-      '- HANDOFF: Assim que o cliente confirmar o resumo final (ou se a intenção e os dados já estiverem todos claros na mesma mensagem), transfira para a equipe de atendimento humano: responda exatamente incluindo a mensagem "Estou passando para uma atendente, ela retorna em instantes com preço e disponibilidade" e adicione no final da sua resposta o marcador [INTERESSE-COMPRA: itens=<descreva os itens>, qtd=<quantidades>, app=<aplicacao/veiculo>] seguido de [TRANSFERIR-HUMANO]. O marcador acionará a criação/atualização do card na coluna Lead do Pipeline e a transferência humana.\n' +
+      '- HANDOFF: Assim que o cliente confirmar o resumo final (ou se a intenção e os dados já estiverem todos claros na mesma mensagem), transfira para a equipe de atendimento humano: responda exatamente incluindo a mensagem "Vou transferir para um dos nossos atendentes, eles te retornam em instantes com preço e disponibilidade" e adicione no final da sua resposta o marcador [INTERESSE-COMPRA: itens=<descreva os itens>, qtd=<quantidades>, app=<aplicacao/veiculo>] seguido de [TRANSFERIR-HUMANO]. O marcador acionará a criação/atualização do card na coluna Lead do Pipeline e a transferência humana.\n' +
       '6. MEIOS DE PAGAMENTO: Ao perguntarem sobre como pagar, formas de pagamento, parcelamento ou condições comerciais, responda com: "' +
       effectivePaymentMethods.replace(/"/g, "'") +
       '".\n' +
       '7. REGRA DE NÃO AUTO-TRANSFERÊNCIA: Você NÃO deve transferir para atendimento humano apenas porque o cliente perguntou preço ou estoque. Responda com os dados das ferramentas e continue o atendimento normalmente. O marcador [TRANSFERIR-HUMANO] é estritamente reservado para a conclusão do fluxo de interesse de compra, pedido expresso de atendente pelo cliente, ou reclamações graves.'
-
     const effectiveSystemPrompt =
       (configuredPrompt.length > 0 ? configuredPrompt : fallbackPrompt) +
       firstReplyInstruction +
@@ -814,7 +778,6 @@ onRecordAfterCreateSuccess((e) => {
         "' && replySent = true && aiReplyText != '' && id != '" +
         recordId +
         "'"
-
       historyRecords = $app.findRecordsByFilter(
         'message_processing',
         historyFilter,
@@ -834,19 +797,15 @@ onRecordAfterCreateSuccess((e) => {
       )
       historyRecords = []
     }
-
     // Reverter para ordem cronológica (created ASC)
     const chronologicalHistory = (historyRecords || []).slice().reverse()
-
     // Montar array messages: system -> histórico (user / assistant) -> mensagem atual do cliente
     const chatMessages = [{ role: 'system', content: effectiveSystemPrompt }]
     let historyTurnsCount = 0
-
     for (let i = 0; i < chronologicalHistory.length; i++) {
       const histItem = chronologicalHistory[i]
       const histUserText = histItem.getString('incomingText')
       const histAiText = histItem.getString('aiReplyText')
-
       if (histUserText && histUserText.trim()) {
         chatMessages.push({ role: 'user', content: histUserText.trim() })
         historyTurnsCount++
@@ -856,10 +815,8 @@ onRecordAfterCreateSuccess((e) => {
         historyTurnsCount++
       }
     }
-
     // Mensagem atual do usuário como último turno
     chatMessages.push({ role: 'user', content: incomingText })
-
     // ==========================================
     // DETECÇÃO AUTOMÁTICA DE NOME DO CLIENTE PELA IA / REFINAMENTO DE CADASTRO
     // ==========================================
@@ -870,7 +827,6 @@ onRecordAfterCreateSuccess((e) => {
       if (withoutDdi.startsWith('55') && withoutDdi.length >= 12) {
         withoutDdi = withoutDdi.slice(2)
       }
-
       let customerRecord = null
       try {
         const foundList = $app.findRecordsByFilter(
@@ -885,7 +841,6 @@ onRecordAfterCreateSuccess((e) => {
           customerRecord = foundList[0]
         }
       } catch (_) {}
-
       const nowIsoWorker = new Date().toISOString()
       // Se o cliente não existir (por exemplo se a mensagem foi enfileirada diretamente), cria agora
       if (!customerRecord) {
@@ -919,7 +874,6 @@ onRecordAfterCreateSuccess((e) => {
           }
           customerRecord.set('last_interaction_at', nowIsoWorker)
           custNeedsSave = true
-
           if (custNeedsSave) {
             try {
               $app.save(customerRecord)
@@ -927,23 +881,19 @@ onRecordAfterCreateSuccess((e) => {
           }
         }
       }
-
       // Se o nome atual do cliente for provisório (apenas dígitos numéricos ou igual ao telefone)
       // tenta extrair da mensagem se o cliente se apresentou (ex: "Meu nome é Lucas", "Aqui é o Marcos", "Sou a Renata")
       if (customerRecord) {
         const currentCustName = String(customerRecord.getString('name') || '').trim()
         const isDigitsOnly = /^[0-9+\s()-]+$/.test(currentCustName)
-
         if (isDigitsOnly || currentCustName === phone) {
           // 1. Tentar extração rápida via regex em português
           let detectedName = ''
           const textSample = incomingText.trim()
-
           const namePatterns = [
             /(?:meu\s+nome\s+é|me\s+chamo|chamo-me|sou\s+o|sou\s+a|aqui\s+é\s+o|aqui\s+é\s+a|falo\s+com|aqui\s+quem\s+fala\s+é\s+o|aqui\s+quem\s+fala\s+é\s+a)\s+([A-ZÀ-Úa-zà-ú]{2,}(?:\s+[A-ZÀ-Úa-zà-ú]{2,})?)/i,
             /(?:olá|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,\s]+(?:eu\s+sou\s+o|eu\s+sou\s+a|sou\s+o|sou\s+a|meu\s+nome\s+é|aqui\s+é)\s+([A-ZÀ-Úa-zà-ú]{2,}(?:\s+[A-ZÀ-Úa-zà-ú]{2,})?)/i,
           ]
-
           for (let np = 0; np < namePatterns.length; np++) {
             const match = textSample.match(namePatterns[np])
             if (match && match[1]) {
@@ -980,7 +930,6 @@ onRecordAfterCreateSuccess((e) => {
               }
             }
           }
-
           // Se regex não pegou, mas o texto contém indícios fortes de apresentação,
           // podemos pedir à IA uma extração rápida estruturada caso openaiKey ou skipAi esteja disponível
           if (
@@ -998,7 +947,6 @@ onRecordAfterCreateSuccess((e) => {
                 },
                 { role: 'user', content: textSample },
               ]
-
               let aiNameResp = ''
               if (openaiKey) {
                 const resAi = $http.send({
@@ -1033,7 +981,6 @@ onRecordAfterCreateSuccess((e) => {
                   aiNameResp = String(resAi.choices[0].message.content || '').trim()
                 }
               }
-
               if (
                 aiNameResp &&
                 !aiNameResp.toUpperCase().includes('NAO') &&
@@ -1047,7 +994,6 @@ onRecordAfterCreateSuccess((e) => {
               // Falha silenciosa na IA auxiliar, mantém o provisório
             }
           }
-
           // Se detectou nome válido, atualiza o registro do cliente
           if (detectedName) {
             customerRecord.set('name', detectedName)
@@ -1067,7 +1013,6 @@ onRecordAfterCreateSuccess((e) => {
     } catch (custDetectErr) {
       console.log('[CUSTOMER-NAME-DETECTION-ERROR]', custDetectErr.message || String(custDetectErr))
     }
-
     // 7. Definição de ferramentas (Function Calling)
     const availableTools = [
       {
@@ -1150,830 +1095,177 @@ onRecordAfterCreateSuccess((e) => {
         },
       },
     ]
-
     // Executores locais das ferramentas
+    // BUSCA SIMPLES via API nativa do PocketBase (findRecordsByFilter) — substitui o caminho SQL direto que derrubava o worker.
+    // Mesma função, mesma resposta; o motor velho foi aposentado de propósito.
     const executeBuscarProdutos = (termo) => {
-      console.log('[TOOL-BUSCAR-PRODUTOS-OFFLINE] busca desligada — handoff direto')
-      return []
+      console.log('[TOOL-BUSCAR-PRODUTOS-SIMPLES] iniciando')
       try {
-        const colProdutos = $app.findCollectionByNameOrId('products')
-        const rawTerm = String(termo || '').trim()
-        if (!rawTerm) return { total: 0, produtos: [] }
-
-        // Leitura dinâmica ao vivo de configurações (SKUs excluídos e Famílias permitidas)
-        let excludedSkusSet = {}
-        let allowedFamiliesList = []
-        let hasAllowedFamiliesFilter = false
-
-        try {
-          const liveSetting = $app.findFirstRecordByFilter('settings', "id != ''")
-          if (liveSetting) {
-            const rawExcluded = String(liveSetting.getString('ai_excluded_skus') || '').trim()
-            if (rawExcluded) {
-              const splitted = rawExcluded.split(',')
-              for (let sIdx = 0; sIdx < splitted.length; sIdx++) {
-                const skuClean = splitted[sIdx].trim().toLowerCase()
-                if (skuClean) {
-                  excludedSkusSet[skuClean] = true
-                }
-              }
-            }
-
-            // allowed_families pode ser armazenado como JSON string (array) ou string separada por vírgula
-            const rawAllowedFamilies = liveSetting.get('allowed_families')
-            if (rawAllowedFamilies) {
-              if (Array.isArray(rawAllowedFamilies)) {
-                allowedFamiliesList = rawAllowedFamilies
-                  .map((f) => String(f).trim())
-                  .filter(Boolean)
-              } else if (typeof rawAllowedFamilies === 'string' && rawAllowedFamilies.trim()) {
-                const strTrimmed = rawAllowedFamilies.trim()
-                if (strTrimmed.startsWith('[') && strTrimmed.endsWith(']')) {
-                  try {
-                    const parsed = JSON.parse(strTrimmed)
-                    if (Array.isArray(parsed)) {
-                      allowedFamiliesList = parsed.map((f) => String(f).trim()).filter(Boolean)
-                    }
-                  } catch (_) {
-                    allowedFamiliesList = strTrimmed
-                      .replace(/^\[|\]$/g, '')
-                      .split(',')
-                      .map((f) => f.trim().replace(/^['"]|['"]$/g, ''))
-                      .filter(Boolean)
-                  }
-                } else {
-                  allowedFamiliesList = strTrimmed
-                    .split(',')
-                    .map((f) => f.trim())
-                    .filter(Boolean)
-                }
-              }
-            }
-
-            // GUARDA DA LISTA VAZIA:
-            // Se allowed_families estiver vazio -> hasAllowedFamiliesFilter = false (comportamento atual mantido)
-            // Se tiver ao menos uma família -> hasAllowedFamiliesFilter = true
-            hasAllowedFamiliesFilter = allowedFamiliesList.length > 0
-          }
-        } catch (exErr) {
-          console.log('[AI-SETTINGS-READ-ERR]', String(exErr))
-        }
-
-        // Lista de stopwords estritas em português conforme especificação
-        const stopWordsSet = {
-          de: true,
-          do: true,
-          da: true,
-          dos: true,
-          das: true,
-          para: true,
-          em: true,
-          um: true,
-          uma: true,
-          tem: true,
-          temos: true,
-          você: true,
-          voce: true,
-          qual: true,
-          quanto: true,
-          custa: true,
-          o: true,
-          a: true,
-          e: true,
-          é: true,
-          ano: true,
-          anos: true,
-          modelo: true,
-          peca: true,
-          peça: true,
-          pecas: true,
-          peças: true,
-          pra: true,
-          pro: true,
-          // Stopwords de pergunta de preço e cotação (ex.: "Qual valor da bucha bandeja fox 2014")
-          preco: true,
-          preço: true,
-          precos: true,
-          preços: true,
-          valor: true,
-          valores: true,
-          cotacao: true,
-          cotação: true,
-          orcamento: true,
-          orçamento: true,
-          saber: true,
-          quero: true,
-          gostaria: true,
-          favor: true,
-          por: true,
-          obrigado: true,
-          obrigada: true,
-          ola: true,
-          olá: true,
-          bom: true,
-          dia: true,
-          tarde: true,
-          noite: true,
-        }
-
-        // Normalização de diacríticos/acentos e extração de tokens
-        // Remove acentos (facão -> facao, tração -> tracao, elétrico -> eletrico)
-        // Mantém letras, números e remove pontuação como ?, !, ,, ;, :, etc.
-        const removeAccents = (str) => {
-          if (!str) return ''
-          return String(str)
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-        }
-
-        const rawWords = removeAccents(rawTerm)
+        const rawTermSimple = String(termo || '').trim()
+        if (!rawTermSimple) return { total: 0, produtos: [] }
+        const words = String(rawTermSimple)
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
           .toLowerCase()
-          .replace(/[?!,;:()[\]{}"'\\/]/g, ' ')
-          .split(/\s+/)
-          .map((w) => w.trim())
-          .filter((w) => w.length > 0)
-
-        const usefulTokens = []
-        const detectedYears = [] // Anos de 2 dígitos (00-99) ou 4 dígitos (ex: 1991 -> 91)
-
-        for (let wi = 0; wi < rawWords.length; wi++) {
-          const token = rawWords[wi]
-          if (!token) continue
-
-          // Ignorar se for stopword (a menos que seja o único termo do usuário)
-          if (stopWordsSet[token]) continue
-
-          // Detecção e tratamento de anos:
-          // Caso A: 4 dígitos (ex.: "1991", "2005") -> ano de veículo
-          if (/^(19|20)\d{2}$/.test(token)) {
-            const twoDigit = parseInt(token.slice(2), 10)
-            if (!isNaN(twoDigit)) detectedYears.push(twoDigit)
-            continue // Descartar token de 4 dígitos da busca direta de texto
-          }
-
-          // Caso B: 2 dígitos isolados (ex.: "91", "97")
-          // Nota: modelos com letras e dígitos como "d21", "l200", "f1000", "147" não entram aqui
-          if (/^\d{2}$/.test(token)) {
-            const twoDigit = parseInt(token, 10)
-            if (!isNaN(twoDigit)) detectedYears.push(twoDigit)
-            continue // Descartar token de 2 dígitos isolado da busca direta de texto
-          }
-
-          // Token útil preservado (ex.: "bucha", "amortecedor", "d21", "dianteiro")
-          if (token.length >= 2) {
-            usefulTokens.push(token)
-          }
+          .replace(/[^a-z0-9]+/g, ' ')
+          .split(' ')
+          .filter((w) => w.length >= 2)
+        const stopSimples = {
+          de: 1, do: 1, da: 1, dos: 1, das: 1, para: 1, em: 1, um: 1, uma: 1, tem: 1,
+          voce: 1, voces: 1, qual: 1, quanto: 1, custa: 1, o: 1, a: 1, e: 1,
+          ano: 1, anos: 1, modelo: 1, peca: 1, pecas: 1, pra: 1, pro: 1,
+          preco: 1, valor: 1, saber: 1, quero: 1, gostaria: 1, favor: 1, por: 1,
+          obrigado: 1, obrigada: 1, ola: 1, bom: 1, dia: 1, tarde: 1, noite: 1,
         }
-
-        // Fallback: se todos os tokens foram stopwords ou anos, usa os rawWords com len >= 2
-        const searchTokens =
-          usefulTokens.length > 0 ? usefulTokens : rawWords.filter((w) => w.length >= 2)
-
-        if (searchTokens.length === 0) {
-          // Horário de Brasília UTC-3 para log de diagnóstico
-          let nowBrasiliaIso = ''
+                const searchWords = words.filter((w) => !stopSimples[w] && !/^(19|20)\d{2}$/.test(w))
+        const years = []
+        for (let yi = 0; yi < words.length; yi++) {
+          if (/^(19|20)\d{2}$/.test(words[yi])) years.push(parseInt(words[yi].slice(2), 10))
+        }
+        const useWords = searchWords.length > 0 ? searchWords : words
+        if (useWords.length === 0) return { total: 0, produtos: [] }
+        const candidates = []
+        const seenIds = {}
+        const pull = (filter, params, limit) => {
           try {
-            const bDate = new Date(Date.now() - 3 * 3600 * 1000)
-            nowBrasiliaIso = bDate.toISOString().replace('Z', '-03:00')
-          } catch (_) {
-            nowBrasiliaIso = new Date().toISOString()
-          }
-
-          console.log(
-            '[TOOL-BUSCAR-PRODUTOS-ZERO-RESULTS]',
-            JSON.stringify({
-              horarioBrasilia: nowBrasiliaIso,
-              termoOriginal: rawTerm,
-              tokensUsados: searchTokens,
-              anosDetectados: detectedYears,
-              motivo: 'Nenhum token útil após remoção de stopwords/anos',
-            }),
-          )
-
-          return { total: 0, produtos: [] }
-        }
-
-        // Tabela fixa e determinística de apelidos e abreviações do ERP SOU.IS
-        // Mapeamento bidirecional determinístico palavra completa <-> abreviação do catálogo
-        // NUNCA usar prefixo genérico arbitrário para evitar falsos positivos (ex: "volante" nunca casa com "VOLVO")
-        const TOKEN_ALIASES_MAP = {
-          bandeja: ['band'],
-          bandejas: ['band'],
-          band: ['bandeja'],
-          dianteira: ['diant'],
-          dianteiro: ['diant'],
-          dianteiras: ['diant'],
-          dianteiros: ['diant'],
-          diant: ['dianteira', 'dianteiro'],
-          traseira: ['tras'],
-          traseiro: ['tras'],
-          traseiras: ['tras'],
-          traseiros: ['tras'],
-          tras: ['traseira', 'traseiro'],
-          amortecedor: ['amort'],
-          amortecedores: ['amort'],
-          amort: ['amortecedor'],
-          estabilizadora: ['estab'],
-          estabilizador: ['estab'],
-          estab: ['estabilizadora', 'estabilizador'],
-          superior: ['sup'],
-          superiores: ['sup'],
-          sup: ['superior'],
-          inferior: ['inf'],
-          inferiores: ['inf'],
-          inf: ['inferior'],
-          facao: ['facao'],
-          facao: ['facao'],
-          direcao: ['dir'],
-          dir: ['direcao'],
-          articulacao: ['artic'],
-          articulador: ['artic'],
-          artic: ['articulacao', 'articulador'],
-          hidraulica: ['hidr'],
-          hidraulico: ['hidr'],
-          hidr: ['hidraulica', 'hidraulico'],
-          esquerda: ['esq'],
-          esquerdo: ['esq'],
-          esq: ['esquerda', 'esquerdo'],
-          direita: ['dir'],
-          direito: ['dir'],
-          homocinetica: ['homoc'],
-          homoc: ['homocinetica'],
-          travessa: ['trav'],
-          trav: ['travessa'],
-          tensor: ['tens'],
-          tens: ['tensor'],
-          rolamento: ['rol'],
-          rol: ['rolamento'],
-          transversal: ['trans'],
-          trans: ['transversal'],
-        }
-
-        // Função que expande cada token para o conjunto de termos equivalentes [token, ...aliases]
-        const getEquivalentsForToken = (tok) => {
-          const cleanTok = String(tok || '')
-            .toLowerCase()
-            .trim()
-          if (!cleanTok) return []
-          const aliasList = TOKEN_ALIASES_MAP[cleanTok] || []
-          const result = [cleanTok]
-          for (let ai = 0; ai < aliasList.length; ai++) {
-            const alias = aliasList[ai]
-            if (!result.includes(alias)) {
-              result.push(alias)
+            const recs = $app.findRecordsByFilter('products', filter, '-stock_quantity,name', limit, 0, params)
+            for (let ri = 0; ri < (recs || []).length; ri++) {
+              const r = recs[ri]
+              if (!seenIds[r.id]) { seenIds[r.id] = true; candidates.push(r) }
             }
-          }
-          return result
-        }
-
-        // Grupos de tokens equivalentes para busca (cada posição representa 1 conceito da busca do usuário)
-        const tokenGroups = []
-        for (let sti = 0; sti < searchTokens.length; sti++) {
-          tokenGroups.push(getEquivalentsForToken(searchTokens[sti]))
-        }
-
-        let candidates = []
-        const candidateIds = {}
-        let phase1Count = 0
-        let phase2Count = 0
-        const allFetchedRecs = {}
-
-        // PLANO B DA BUSCA — SQL DIRETO COM $app.db().newQuery:
-        // Resolve truncamento definitivo (tokens comuns como "bucha" e "band" ultrapassam 1000 produtos individualmente).
-        // Em vez de consultar por token e fazer interseção em memória, executa UMA query única no SQLite:
-        // WHERE is_active = 1 AND ((name LIKE %c1% OR name LIKE %a1%...)) AND ((name LIKE %c2%...))
-        // (1) Parênteses explícitos por conceito; aliases em OR dentro dos parênteses; conceitos unidos por AND.
-        // (2) bind() obrigatório para todo valor (prevenção total contra SQL injection).
-        // (3) Escape de % e _ nos tokens antes de envolver com %...%.
-        // (4) LIKE duplo por token/alias: variante com acento e sem acento para cobrir nomes acentuados no banco.
-        // (5) Anos e stopwords já foram removidos de searchTokens antes de montar os parâmetros.
-        // (6) Sem ORDER BY (ranking sofisticado em memória preservado).
-        // (7) LIMIT 2000 de segurança + TRUNCATION-WARNING se o pool atingir o cap.
-        // (8) Mantém allowlist, exclusões, ranking, fallback e log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS].
-        const escapeSqlLike = (str) => {
-          if (!str) return ''
-          return String(str).replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
-        }
-
-        const buildLikeVariants = (term) => {
-          const raw = String(term || '')
-            .trim()
-            .toLowerCase()
-          const unaccented = removeAccents(raw).toLowerCase()
-          const set = [raw]
-          if (unaccented && unaccented !== raw && set.indexOf(unaccented) === -1) {
-            set.push(unaccented)
-          }
-          return set
-        }
-
-        const groupHitCounts = []
-        let anyTruncated = false
-
-        if (tokenGroups.length > 0) {
-          try {
-            const sqlWhereGroups = []
-            const bindParams = {}
-            let pIdx = 0
-
-            for (let gi = 0; gi < tokenGroups.length; gi++) {
-              const variants = tokenGroups[gi]
-              const variantClauses = []
-              for (let vi = 0; vi < variants.length; vi++) {
-                const vTerm = variants[vi]
-                if (!vTerm || vTerm.length < 2) continue
-                const likeVars = buildLikeVariants(vTerm)
-                for (let lvi = 0; lvi < likeVars.length; lvi++) {
-                  const pKey = 'p_' + pIdx++
-                  bindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
-                  variantClauses.push(
-                    '(name LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR sku LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR brand LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR barcode LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR description LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\")',
-                  )
-                }
-              }
-              if (variantClauses.length > 0) {
-                sqlWhereGroups.push('(' + variantClauses.join(' OR ') + ')')
-              }
-            }
-
-            let whereSql = 'is_active = 1'
-            if (sqlWhereGroups.length > 0) {
-              whereSql += ' AND ' + sqlWhereGroups.join(' AND ')
-            }
-
-            const sql = 'SELECT * FROM products WHERE ' + whereSql + ' LIMIT 2000'
-            const queryResult = arrayOf(new Record(colProdutos))
-            $app.db().newQuery(sql).bind(bindParams).all(queryResult)
-
-            if (queryResult && queryResult.length > 0) {
-              if (queryResult.length >= 2000) {
-                anyTruncated = true
-              }
-              for (let ri = 0; ri < queryResult.length; ri++) {
-                const r = queryResult[ri]
-                candidates.push(r)
-                candidateIds[r.id] = true
-                allFetchedRecs[r.id] = r
-                phase1Count++
-              }
-            }
-          } catch (sqlErr) {
-            console.log('[TOOL-BUSCAR-PRODUTOS-SQL-ERR]', String(sqlErr))
-          }
-
-          // Medição e contagem de hits por conceito para manter o log [TOOL-BUSCAR-PRODUTOS-GROUP-HITS]
-          for (let gi = 0; gi < tokenGroups.length; gi++) {
-            const variants = tokenGroups[gi]
-            const primaryTok = searchTokens[gi] || (variants && variants[0]) || 'grupo' + gi
-            try {
-              const groupClauses = []
-              const gBindParams = {}
-              let gIdx = 0
-              for (let vi = 0; vi < variants.length; vi++) {
-                const vTerm = variants[vi]
-                if (!vTerm || vTerm.length < 2) continue
-                const likeVars = buildLikeVariants(vTerm)
-                for (let lvi = 0; lvi < likeVars.length; lvi++) {
-                  const pKey = 'gp_' + gIdx++
-                  gBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
-                  groupClauses.push(
-                    '(name LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR sku LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\")',
-                  )
-                }
-              }
-              if (groupClauses.length > 0) {
-                const countSql =
-                  'SELECT COUNT(*) as total FROM products WHERE is_active = 1 AND (' +
-                  groupClauses.join(' OR ') +
-                  ')'
-                const countRes = new DynamicModel({ total: 0 })
-                $app.db().newQuery(countSql).bind(gBindParams).one(countRes)
-                const gHits = Number(countRes.total) || 0
-                groupHitCounts.push({ token: primaryTok, hits: gHits })
-              } else {
-                groupHitCounts.push({ token: primaryTok, hits: 0 })
-              }
-            } catch (gErr) {
-              groupHitCounts.push({ token: primaryTok, hits: phase1Count })
-            }
+          } catch (pullErr) {
+            console.log('[TOOL-BUSCAR-PRODUTOS-SIMPLES-PULL-ERR]', String(pullErr))
           }
         }
-
-        // Log em linha própria de groupHits por token e contagem da interseção SQL
-        const groupHitsLogSummary =
-          groupHitCounts.map((gh) => 'token=' + gh.token + ' hits=' + gh.hits).join(' | ') +
-          ' | interseção=' +
-          phase1Count
-        console.log('[TOOL-BUSCAR-PRODUTOS-GROUP-HITS]', groupHitsLogSummary)
-
-        // Aviso explícito se o resultado SQL atingiu o limite de 2000 hits (truncamento detectado)
-        if (anyTruncated) {
-          console.log(
-            '[TOOL-BUSCAR-PRODUTOS-TRUNCATION-WARNING]',
-            'Pool de candidatos atingiu o limite de 2000 hits (truncamento no LIMIT 2000).',
-          )
+        const paramsAnd = {}
+        const andParts = []
+        const paramsOr = {}
+        const orParts = []
+        for (let wi = 0; wi < useWords.length; wi++) {
+          paramsAnd['w' + wi] = '*' + useWords[wi] + '*'
+          paramsOr['w' + wi] = '*' + useWords[wi] + '*'
+          const grp = '(name ~ {:w' + wi + '} || sku ~ {:w' + wi + '} || brand ~ {:w' + wi + '})'
+          andParts.push(grp)
+          orParts.push(grp)
         }
-
-        // Fase 2: OR amplo (se Fase 1 trouxe menos de 5 produtos, busca candidatos que casam com pelo menos 1 conceito via SQL OR)
-        if (candidates.length < 5 && tokenGroups.length > 1) {
-          try {
-            const orWhereClauses = []
-            const orBindParams = {}
-            let orIdx = 0
-
-            for (let gi = 0; gi < tokenGroups.length; gi++) {
-              const variants = tokenGroups[gi]
-              for (let vi = 0; vi < variants.length; vi++) {
-                const vTerm = variants[vi]
-                if (!vTerm || vTerm.length < 2) continue
-                const likeVars = buildLikeVariants(vTerm)
-                for (let lvi = 0; lvi < likeVars.length; lvi++) {
-                  const pKey = 'orp_' + orIdx++
-                  orBindParams[pKey] = '%' + escapeSqlLike(likeVars[lvi]) + '%'
-                  orWhereClauses.push(
-                    '(name LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR sku LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR brand LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR barcode LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\" OR description LIKE {:' +
-                      pKey +
-                      '} ESCAPE "\\")',
-                  )
-                }
+        pull(andParts.join(' && '), paramsAnd, 50)
+        pull(orParts.join(' || '), paramsOr, 300)
+        console.log('[TOOL-BUSCAR-PRODUTOS-SIMPLES] candidatos=' + candidates.length)
+        const excludedSet = {}
+        const allowedFam = []
+        try {
+          const liveSet = $app.findFirstRecordByFilter('settings', "id != ''")
+          if (liveSet) {
+            const rawEx = String(liveSet.getString('ai_excluded_skus') || '').trim()
+            if (rawEx) {
+              const exList = rawEx.split(',')
+              for (let ei = 0; ei < exList.length; ei++) {
+                const k = exList[ei].trim().toLowerCase()
+                if (k) excludedSet[k] = 1
               }
             }
-
-            if (orWhereClauses.length > 0) {
-              const orSql =
-                'SELECT * FROM products WHERE is_active = 1 AND (' +
-                orWhereClauses.join(' OR ') +
-                ') LIMIT 200'
-              const orResult = arrayOf(new Record(colProdutos))
-              $app.db().newQuery(orSql).bind(orBindParams).all(orResult)
-              if (orResult && orResult.length > 0) {
-                for (let ori = 0; ori < orResult.length; ori++) {
-                  const r = orResult[ori]
-                  if (!candidateIds[r.id]) {
-                    candidates.push(r)
-                    candidateIds[r.id] = true
-                    allFetchedRecs[r.id] = r
-                    phase2Count++
-                    if (candidates.length >= 200) break
-                  }
-                }
+            const rawFam = liveSet.get('allowed_families')
+            if (Array.isArray(rawFam)) {
+              for (let fi = 0; fi < rawFam.length; fi++) {
+                const k = String(rawFam[fi]).trim().toLowerCase()
+                if (k) allowedFam.push(k)
+              }
+            } else if (typeof rawFam === 'string' && rawFam.trim()) {
+              const famList = rawFam.trim().split(',')
+              for (let fi = 0; fi < famList.length; fi++) {
+                const k = famList[fi].trim().toLowerCase()
+                if (k) allowedFam.push(k)
               }
             }
-          } catch (orErr) {
-            console.log('[TOOL-BUSCAR-PRODUTOS-PHASE2-ERR]', String(orErr))
           }
-        }
-
-        // Fallback amplo pelo termo cru caso nada tenha sido encontrado
-        let fallbackCount = 0
-        if ((!candidates || candidates.length === 0) && rawTerm.length >= 2) {
-          try {
-            const fallbackRecs = $app.findRecordsByFilter(
-              'products',
-              'name ~ {:rt} || sku ~ {:rt} || brand ~ {:rt} || barcode ~ {:rt}',
-              '-stock_quantity,name',
-              20,
-              0,
-              { rt: rawTerm },
-            )
-            if (fallbackRecs && fallbackRecs.length > 0) {
-              for (let fbi = 0; fbi < fallbackRecs.length; fbi++) {
-                candidates.push(fallbackRecs[fbi])
-                fallbackCount++
-              }
-            }
-          } catch (fbErr) {
-            console.log('[TOOL-BUSCAR-PRODUTOS-FALLBACK-ERR]', String(fbErr))
-          }
-        }
-
-        console.log(
-          '[TOOL-BUSCAR-PRODUTOS-STEP]',
-          'totalCandidatosBanco=' + (candidates ? candidates.length : 0),
-        )
-        console.log('[TOOL-BUSCAR-PRODUTOS-STEP]', 'phase1Count=' + phase1Count)
-        console.log('[TOOL-BUSCAR-PRODUTOS-STEP]', 'phase2Count=' + phase2Count)
-        console.log('[TOOL-BUSCAR-PRODUTOS-STEP]', 'fallbackCount=' + fallbackCount)
-
-        // Helper para checar se uma faixa de anos no nome do produto (ex.: "88/97", "92/04")
-        // contempla os anos pesquisados (ex.: 91 está entre 88 e 97)
-        const matchesYearRange = (text, year2Digit) => {
-          if (!text || year2Digit === undefined || year2Digit === null) return false
-          // Procura padrões como "88/97", "93/03", "92-04", "88/1997"
-          const rangeRegex = /\b(\d{2}|\d{4})\s*[/-]\s*(\d{2}|\d{4})\b/g
-          let match
-          while ((match = rangeRegex.exec(text)) !== null) {
-            let startY = parseInt(match[1], 10)
-            let endY = parseInt(match[2], 10)
-            if (startY > 1000) startY = startY % 100
-            if (endY > 1000) endY = endY % 100
-
-            if (!isNaN(startY) && !isNaN(endY)) {
-              if (startY <= endY) {
-                if (year2Digit >= startY && year2Digit <= endY) return true
-              } else {
-                // Transição de século ex.: 95/05 (1995 a 2005)
-                if (year2Digit >= startY || year2Digit <= endY) return true
-              }
+        } catch (_) {}
+        const unacc = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+        const yearInName = (nm) => {
+          if (years.length === 0) return false
+          const re = /\b(\d{2}|\d{4})\s*[/-]\s*(\d{2}|\d{4})\b/g
+          let m
+          while ((m = re.exec(nm)) !== null) {
+            const y1 = parseInt(m[1], 10) % 100
+            const y2 = parseInt(m[2], 10) % 100
+            for (let i = 0; i < years.length; i++) {
+              const y = years[i]
+              if (y1 <= y2 ? (y >= y1 && y <= y2) : (y >= y1 || y <= y2)) return true
             }
           }
           return false
         }
-
-        // Helper para extrair faixa de anos formatada do nome do produto (ex.: "88/97", "06/15")
-        const extractYearRangeString = (text) => {
-          if (!text) return ''
-          const rangeRegex = /\b(\d{2}|\d{4})\s*[/-]\s*(\d{2}|\d{4})\b/g
-          const match = rangeRegex.exec(text)
-          if (match) {
-            let y1 = match[1]
-            let y2 = match[2]
-            if (y1.length === 4) y1 = y1.slice(2)
-            if (y2.length === 4) y2 = y2.slice(2)
-            return y1 + '/' + y2
-          }
-          return ''
-        }
-
-        // Sistema de pontuação e relevância com suporte a apelidos do ERP:
-        // ORDEM DO SCORE (conforme item 2 da especificação):
-        // 1º: Número de tokens casados (ordem primária: peça com mais tokens nunca perde para peça com menos tokens)
-        // 2º: Bônus stock_quantity > 0
-        // 3º: Bônus de faixa de anos
-        const scoredCandidates = []
-
-        for (let ci = 0; ci < (candidates || []).length; ci++) {
+        const scored = []
+        for (let ci = 0; ci < candidates.length; ci++) {
           const rec = candidates[ci]
-          const pSku = String(rec.getString('sku') || '').toLowerCase()
-
-          // 1. Filtrar produtos inativos: só produtos is_active !== false (se is_active for undefined/null em legados manuais, aceita, mas se is_active === false descarta)
-          const isActive = rec.get('is_active')
-          if (isActive === false) {
-            continue
-          }
-
-          // 2. Excluir SKUs configurados em ai_excluded_skus (insumos puros — prevalece sobre allowlist)
-          if (excludedSkusSet[pSku] || excludedSkusSet[pSku.trim()]) {
-            continue
-          }
-
-          // 3. GUARDA DA LISTA VAZIA: se allowed_families preenchida, só produtos cuja sou_family está na lista
-          if (hasAllowedFamiliesFilter) {
-            const pFamily = String(rec.getString('sou_family') || '').trim()
-            let familyAllowed = false
-            for (let afi = 0; afi < allowedFamiliesList.length; afi++) {
-              if (pFamily.toLowerCase() === allowedFamiliesList[afi].toLowerCase()) {
-                familyAllowed = true
-                break
-              }
+          const skuLow = String(rec.getString('sku') || '').toLowerCase()
+          if (excludedSet[skuLow] || excludedSet[skuLow.trim()]) continue
+          if (allowedFam.length > 0) {
+            const fam = unacc(rec.getString('sou_family'))
+            let famOk = false
+            for (let fi = 0; fi < allowedFam.length; fi++) {
+              if (fam === unacc(allowedFam[fi])) { famOk = true; break }
             }
-            if (!familyAllowed) {
-              continue
-            }
+            if (!famOk) continue
           }
-
-          const pName = removeAccents(rec.getString('name') || '').toLowerCase()
-          const pBrand = removeAccents(rec.getString('brand') || '').toLowerCase()
-          const pBarcode = removeAccents(rec.getString('barcode') || '').toLowerCase()
-          const pDesc = removeAccents(rec.getString('description') || '').toLowerCase()
-          const fullSearchable = pName + ' ' + pSku + ' ' + pBrand + ' ' + pBarcode + ' ' + pDesc
-          const nameSkuSearchable = pName + ' ' + pSku
-
-          let matchedTokenCount = 0
-          let matchedNameSkuCount = 0
-
-          // Cada conceito de busca pode casar via seu token direto ou via qualquer apelido configurado
-          for (let gi = 0; gi < tokenGroups.length; gi++) {
-            const variants = tokenGroups[gi]
-            let groupMatchedFull = false
-            let groupMatchedNameSku = false
-
-            for (let vi = 0; vi < variants.length; vi++) {
-              const vTok = variants[vi]
-              if (fullSearchable.includes(vTok)) {
-                groupMatchedFull = true
-              }
-              if (nameSkuSearchable.includes(vTok)) {
-                groupMatchedNameSku = true
-              }
-            }
-
-            if (groupMatchedFull) {
-              matchedTokenCount++
-            }
-            if (groupMatchedNameSku) {
-              matchedNameSkuCount++
-            }
+          if (rec.get('is_active') === false) continue
+          const hay = unacc(rec.getString('name')) + ' ' + unacc(rec.getString('sku')) + ' ' + unacc(rec.getString('brand'))
+          let matched = 0
+          for (let wi = 0; wi < useWords.length; wi++) {
+            if (hay.includes(useWords[wi])) matched++
           }
-
-          // Se o produto não casou com nenhum conceito, desconsidera
-          if (matchedTokenCount === 0 && tokenGroups.length > 0) continue
-
-          // Base score: 1000 pontos por conceito/token casado (peso dominante para que mais tokens sempre vençam)
-          let score = matchedTokenCount * 1000
-
-          // Bônus se casou com TODOS os tokens da pesquisa (match perfeito)
-          if (matchedTokenCount === tokenGroups.length && tokenGroups.length > 1) {
-            score += 100
-          }
-
-          // Bônus de SKU exato
-          if (pSku === removeAccents(rawTerm).toLowerCase()) {
-            score += 5000
-          }
-
-          // Bônus se o estoque é positivo (critério secundário de desempate: vem após número de tokens)
+          if (matched === 0) continue
           const stockQty = Number(rec.get('stock_quantity')) || 0
-          if (stockQty > 0) {
-            score += 20
-          }
-
-          // Bônus se casou na faixa de anos (critério terciário: após estoque)
-          let yearMatched = false
-          if (detectedYears.length > 0) {
-            for (let yi = 0; yi < detectedYears.length; yi++) {
-              if (matchesYearRange(pName, detectedYears[yi])) {
-                yearMatched = true
-                break
-              }
-            }
-            if (yearMatched) {
-              score += 10
-            }
-          }
-
-          scoredCandidates.push({
-            rec: rec,
-            score: score,
-            matchedTokenCount: matchedTokenCount,
-            matchedNameSkuCount: matchedNameSkuCount,
-            yearMatched: yearMatched,
-          })
+          let score = matched * 1000
+          if (stockQty > 0) score += 20
+          if (yearInName(unacc(rec.getString('name')))) score += 10
+          scored.push({ rec: rec, score: score })
         }
-
-        // Ordenar decrescente:
-        // 1. score total (onde matchedTokenCount domina por ter peso 1000, depois stockQty bônus 20, depois yearMatched 10)
-        // 2. desempate: matchedTokenCount
-        // 3. desempate: stock_quantity (>0 antes de <=0)
-        // 4. desempate: nome alfabético
-        scoredCandidates.sort((a, b) => {
-          if (b.score !== a.score) return b.score - a.score
-          if (b.matchedTokenCount !== a.matchedTokenCount)
-            return b.matchedTokenCount - a.matchedTokenCount
-          const stockA = Number(a.rec.get('stock_quantity')) || 0
-          const stockB = Number(b.rec.get('stock_quantity')) || 0
-          if (stockB !== stockA) return stockB - stockA
-          return a.rec.getString('name').localeCompare(b.rec.getString('name'))
-        })
-
-        // GUARDA DO DESCARTE E FALLBACK:
-        // A regra "descartar quem casa com menos de 2 termos significativos" só vale
-        // quando a busca TEM 2+ termos significativos (tokenGroups.length >= 2).
-        // Se a busca tem apenas 1 termo significativo, mantém todos os casamentos ordenados por relevância.
-        // Além disso, se o filtro de 2+ termos resultar em MENOS de 3 produtos, usar fallback:
-        // incluir também os candidatos que casaram com 1 termo (ao final da lista), em vez de devolver resposta vazia.
-        let filteredRanked = scoredCandidates
-        if (tokenGroups.length >= 2) {
-          const strictMatch = scoredCandidates.filter((item) => item.matchedNameSkuCount >= 2)
-          if (strictMatch.length >= 3) {
-            filteredRanked = strictMatch
-          } else {
-            // Fallback: produtos com 2+ termos primeiro, complementados pelos com 1 termo ao final
-            const partialMatch = scoredCandidates.filter((item) => item.matchedNameSkuCount < 2)
-            filteredRanked = strictMatch.concat(partialMatch)
-          }
-        }
-
-        console.log(
-          '[TOOL-BUSCAR-PRODUTOS-STEP]',
-          'scoredCandidatesCount=' + scoredCandidates.length,
-        )
-        console.log('[TOOL-BUSCAR-PRODUTOS-STEP]', 'filteredRankedCount=' + filteredRanked.length)
-
-        // Limitar aos top 5
-        const topSelected = filteredRanked.slice(0, 5)
-
-        // Montar contrato atual de retorno com description e years enriquecidos
-        const results = topSelected.map((item) => {
+        scored.sort((a, b) => b.score - a.score)
+        const top5 = scored.slice(0, 5)
+        const results = top5.map((item) => {
           const rec = item.rec
           const pPrice = Number(rec.get('price')) || 0
           const pStock = Number(rec.get('stock_quantity')) || 0
           const pSku = rec.getString('sku')
           const pName = rec.getString('name')
-          const pBrand = rec.getString('brand') || ''
-          const pBarcode = rec.getString('barcode') || ''
           const pDesc = String(rec.getString('description') || '').trim()
-          const pYears = extractYearRangeString(pName)
-
-          let statusConsulta = ''
-          if (pStock > 0 && pPrice > 0) {
-            statusConsulta = 'R$ ' + pPrice.toFixed(2) + ' (' + pStock + ' un.)'
-          } else if (pStock <= 0 && pPrice <= 0) {
-            statusConsulta = 'Sob consulta - disponível em até 48 horas'
-          } else if (pStock <= 0) {
-            statusConsulta = 'R$ ' + pPrice.toFixed(2) + ' - disponível em até 48 horas'
-          } else {
-            statusConsulta = 'Sob consulta (' + pStock + ' un.)'
-          }
-
-          const prodObj = {
+          let status = ''
+          if (pStock > 0 && pPrice > 0) status = 'R$ ' + pPrice.toFixed(2) + ' (' + pStock + ' un.)'
+          else if (pStock <= 0 && pPrice <= 0) status = 'Sob consulta - disponível em até 48 horas'
+          else if (pStock <= 0) status = 'R$ ' + pPrice.toFixed(2) + ' - disponível em até 48 horas'
+          else status = 'Sob consulta (' + pStock + ' un.)'
+          const obj = {
             sku: pSku,
             nome: pName,
-            marca: pBrand,
-            codigo_barras: pBarcode,
+            marca: String(rec.getString('brand') || ''),
             preco: pPrice,
             estoque: pStock,
             disponivel: pStock > 0,
-            disponibilidade_info:
-              pStock <= 0 ? 'disponível em até 48 horas' : pStock + ' un. em estoque',
-            status_consulta: statusConsulta,
+            disponibilidade_info: pStock <= 0 ? 'disponível em até 48 horas' : pStock + ' un. em estoque',
+            status_consulta: status,
           }
-
-          // Limpar boilerplate do description: só incluir se NÃO começar com "Produto SOU.IS sincronizado"
-          if (pDesc && !pDesc.startsWith('Produto SOU.IS sincronizado')) {
-            prodObj.description = pDesc
+          if (pDesc && !pDesc.startsWith('Produto SOU.IS sincronizado')) obj.description = pDesc
+          const mm = /\b(\d{2}|\d{4})\s*[/-]\s*(\d{2}|\d{4})\b/.exec(pName)
+          if (mm) {
+            let y1 = mm[1]
+            let y2 = mm[2]
+            if (y1.length === 4) y1 = y1.slice(2)
+            if (y2.length === 4) y2 = y2.slice(2)
+            obj.years = y1 + '/' + y2
           }
-          if (pYears) {
-            prodObj.years = pYears
-          }
-
-          return prodObj
+          return obj
         })
-
-        // Horário de Brasília UTC-3 para logs padronizados (sem UTC)
-        let nowBrasiliaIso = ''
-        try {
-          const bDate = new Date(Date.now() - 3 * 3600 * 1000)
-          nowBrasiliaIso = bDate.toISOString().replace('Z', '-03:00')
-        } catch (_) {
-          nowBrasiliaIso = new Date().toISOString()
-        }
-
-        if (results.length === 0) {
-          console.log(
-            '[TOOL-BUSCAR-PRODUTOS-ZERO-RESULTS]',
-            JSON.stringify({
-              horarioBrasilia: nowBrasiliaIso,
-              termoOriginal: rawTerm,
-              tokensUsados: searchTokens,
-              anosDetectados: detectedYears,
-              totalCandidatosBanco: (candidates || []).length,
-            }),
-          )
-        } else {
-          console.log(
-            '[TOOL-BUSCAR-PRODUTOS-EXECUTED]',
-            JSON.stringify({
-              horarioBrasilia: nowBrasiliaIso,
-              termo: rawTerm,
-              tokensUsados: searchTokens,
-              totalEncontrados: results.length,
-              skus: results.map((r) => r.sku),
-            }),
-          )
-        }
-
-        return {
-          termo: rawTerm,
-          total: results.length,
-          produtos: results,
-        }
-      } catch (err) {
-        console.error(
-          '[TOOL-BUSCAR-PRODUTOS-ERROR]',
-          err && err.stack ? String(err.stack) : String(err),
-        )
-        return []
+        console.log('[TOOL-BUSCAR-PRODUTOS-SIMPLES] resultados=' + results.length + ' skus=' + results.map((r) => r.sku).join(','))
+        return { termo: rawTermSimple, total: results.length, produtos: results }
+      } catch (simplesErr) {
+        console.error('[TOOL-BUSCAR-PRODUTOS-SIMPLES-ERR]', String(simplesErr))
+        return { termo: String(termo || ''), total: 0, produtos: [] }
       }
     }
-
     const executeConsultarEstoqueAoVivo = (sku) => {
       try {
         const cleanSku = String(sku || '').trim()
         if (!cleanSku) return { sku: '', estoque: 0, erro: 'SKU não fornecido' }
-
         // 1. Tentar ler do endpoint interno GET /backend/v1/stock/lookup?sku=
         let liveQuantity = null
         let apiUpdated = false
@@ -1985,13 +1277,11 @@ onRecordAfterCreateSuccess((e) => {
               stockApiUrl = setting.getString('stock_api_url')
             }
           } catch (_) {}
-
           const res = $http.send({
             url: stockApiUrl + '?search=' + encodeURIComponent(cleanSku),
             method: 'GET',
             timeout: 10,
           })
-
           if (res.statusCode === 200 && res.json) {
             const data = res.json
             if (data.products && Array.isArray(data.products) && data.products.length > 0) {
@@ -2005,7 +1295,6 @@ onRecordAfterCreateSuccess((e) => {
         } catch (httpEx) {
           console.log('[TOOL-ESTOQUE-AO-VIVO-HTTP-ERR]', String(httpEx))
         }
-
         // 2. Se a API externa retornou valor numérico, atualiza no banco local
         if (liveQuantity !== null && !isNaN(liveQuantity)) {
           try {
@@ -2014,7 +1303,6 @@ onRecordAfterCreateSuccess((e) => {
             $app.save(localProduct)
           } catch (_) {}
         }
-
         // 3. Consulta o registro do produto local para retornar status completo
         let productInfo = null
         try {
@@ -2031,7 +1319,6 @@ onRecordAfterCreateSuccess((e) => {
           } else {
             statusAoVivo = 'Sob consulta (' + curStock + ' un.)'
           }
-
           productInfo = {
             sku: cleanSku,
             nome: prod.getString('name'),
@@ -2055,7 +1342,6 @@ onRecordAfterCreateSuccess((e) => {
             nao_encontrado: true,
           }
         }
-
         console.log(
           '[TOOL-CONSULTAR-ESTOQUE-AO-VIVO-EXECUTED]',
           JSON.stringify({
@@ -2065,23 +1351,19 @@ onRecordAfterCreateSuccess((e) => {
             preco: productInfo.preco,
           }),
         )
-
         return productInfo
       } catch (err) {
         console.log('[TOOL-CONSULTAR-ESTOQUE-ERROR]', String(err))
         return { sku: sku, estoque: 0, erro: String(err) }
       }
     }
-
     // 7.1. Busca determinística pré-IA (para garantir que termos como "bucha bandeja fox 2014"
     // nunca recebam "não encontrei", e injetar produtos reais encontrados no contexto da IA)
     let preSearchProductResults = null
     let isPieceOrProductQuery = false
-
     try {
       const rawCustomerQuery = String(incomingText || '').trim()
       const lowerCustQuery = rawCustomerQuery.toLowerCase()
-
       // Palavras-chave indicativas de busca de produto / peça
       const productKeywords = [
         'bucha',
@@ -2125,14 +1407,12 @@ onRecordAfterCreateSuccess((e) => {
         'valor',
         'custa',
       ]
-
       for (let pki = 0; pki < productKeywords.length; pki++) {
         if (lowerCustQuery.includes(productKeywords[pki])) {
           isPieceOrProductQuery = true
           break
         }
       }
-
       // Pré-busca determinística: executa sempre que houver 3+ caracteres
       if (rawCustomerQuery.length >= 3) {
         const searchRes = executeBuscarProdutos(rawCustomerQuery)
@@ -2144,7 +1424,6 @@ onRecordAfterCreateSuccess((e) => {
     } catch (preSearchErr) {
       console.log('[PRE-SEARCH-PRODUCT-ERR]', String(preSearchErr))
     }
-
     // 7.1.1 Pré-consulta determinística de status de pedido / orçamento
     // Se o cliente pergunta sobre orçamento ou pedido ("já faz tempo que pedi um orçamento", "status do pedido", etc.)
     // roda status_pedido antes da IA para injetar o orçamento real direto no contexto.
@@ -2161,7 +1440,6 @@ onRecordAfterCreateSuccess((e) => {
         rawQueryForStatus.includes('comprar') ||
         rawQueryForStatus.includes('cotacao') ||
         rawQueryForStatus.includes('cotação')
-
       if (
         isStatusQuery &&
         typeof globalThis !== 'undefined' &&
@@ -2179,7 +1457,6 @@ onRecordAfterCreateSuccess((e) => {
     } catch (preStatusErr) {
       console.log('[PRE-STATUS-PEDIDO-ERR]', String(preStatusErr))
     }
-
     if (preStatusPedidoResult) {
       const quoteData = preStatusPedidoResult.data.quote
       const orderData = preStatusPedidoResult.data.order
@@ -2207,13 +1484,11 @@ onRecordAfterCreateSuccess((e) => {
         'Mensagem formatada sugerida da ferramenta: "' + (preStatusPedidoResult.reply || '') + '"\n'
       statusNotice +=
         'REGRA MANDATÓRIA: O cliente possui orçamento/pedido ativo no sistema com os dados acima. NUNCA diga "não consegui localizar o seu orçamento" ou "problema no sistema". Responda informando o número exato do orçamento/pedido e seu status atual.'
-
       chatMessages.push({
         role: 'system',
         content: statusNotice,
       })
     }
-
     // Se a busca determinística pré-IA encontrou produtos no banco, injeta no contexto como mensagem de sistema prioritária
     if (
       preSearchProductResults &&
@@ -2237,19 +1512,16 @@ onRecordAfterCreateSuccess((e) => {
           ')'
         )
       })
-
       const preSearchNotice =
         '[PRODUTOS REAIS ENCONTRADOS DETERMINISTICAMENTE NO CATÁLOGO DO ERP]:\n' +
         'A busca determinística pré-IA já consultou o banco para a mensagem do cliente e encontrou os seguintes produtos correspondentes:\n' +
         preFoundList.join('\n') +
         '\n\nREGRA MANDATÓRIA: Os produtos acima EXISTEM em nosso estoque/catálogo. NUNCA responda "não encontrei", "não temos" ou "não trabalho com isso". Apresente os itens encontrados informando os valores e prazos (se estoque 0 ou preço 0, informe "Sob consulta — disponível em até 48h" ou sob encomenda).'
-
       chatMessages.push({
         role: 'system',
         content: preSearchNotice,
       })
     }
-
     // Despachante genérico de tool calls
     const dispatchToolCall = (toolName, toolArgs) => {
       if (toolName === 'buscar_produtos') {
@@ -2313,7 +1585,6 @@ onRecordAfterCreateSuccess((e) => {
       }
       return { erro: 'Ferramenta desconhecida: ' + toolName }
     }
-
     // 8. Início do processamento de IA com suporte a Function Calling
     const usedModel = 'gpt-4o-mini'
     console.log('[WORKER-STEP] 2. AI chat call START model=' + usedModel)
@@ -2330,21 +1601,17 @@ onRecordAfterCreateSuccess((e) => {
         toolsEnabled: true,
       }),
     )
-
     let aiReply = ''
     let aiError = ''
     let usedProvider = ''
-
     // Função para executar loop de chamadas com ferramentas via OpenAI
     const runOpenAiWithTools = () => {
       let currentMessages = chatMessages.slice()
       const MAX_TOOL_ROUNDS = 4
       let rounds = 0
       let didExecuteTool = false
-
       while (rounds < MAX_TOOL_ROUNDS) {
         rounds++
-
         // Se é mensagem claramente de produto/peça, não houve tool_call na 1ª rodada e não há produtos pré-injetados,
         // força tool_choice: { type: 'function', function: { name: 'buscar_produtos' } } na 2ª tentativa
         let currentToolChoice = 'auto'
@@ -2361,7 +1628,6 @@ onRecordAfterCreateSuccess((e) => {
             function: { name: 'buscar_produtos' },
           }
         }
-
         const openAiRes = $http.send({
           url: 'https://api.openai.com/v1/chat/completions',
           method: 'POST',
@@ -2379,7 +1645,6 @@ onRecordAfterCreateSuccess((e) => {
           }),
           timeout: 20,
         })
-
         if (openAiRes.statusCode < 200 || openAiRes.statusCode >= 300) {
           const errBody = openAiRes.json || openAiRes.body || {}
           throw new Error(
@@ -2391,14 +1656,11 @@ onRecordAfterCreateSuccess((e) => {
                 : 'Falha na requisição'),
           )
         }
-
         const parsed = openAiRes.json
         if (!parsed || !parsed.choices || !parsed.choices[0] || !parsed.choices[0].message) {
           throw new Error('Resposta da OpenAI sem choices válidas')
         }
-
         const choiceMsg = parsed.choices[0].message
-
         // Se a IA solicitou chamadas de ferramentas (tool_calls)
         if (
           choiceMsg.tool_calls &&
@@ -2406,7 +1668,6 @@ onRecordAfterCreateSuccess((e) => {
           choiceMsg.tool_calls.length > 0
         ) {
           currentMessages.push(choiceMsg)
-
           didExecuteTool = true
           for (let t = 0; t < choiceMsg.tool_calls.length; t++) {
             const tCall = choiceMsg.tool_calls[t]
@@ -2417,7 +1678,6 @@ onRecordAfterCreateSuccess((e) => {
             } catch (_) {
               fnArgs = {}
             }
-
             console.log(
               '[OPENAI-TOOL-CALL-RECEIVED]',
               JSON.stringify({
@@ -2428,35 +1688,28 @@ onRecordAfterCreateSuccess((e) => {
                 args: fnArgs,
               }),
             )
-
             const toolResult = dispatchToolCall(fnName, fnArgs)
-
             currentMessages.push({
               role: 'tool',
               tool_call_id: tCall.id,
               content: JSON.stringify(toolResult),
             })
           }
-
           // Continua no loop para a IA sintetizar a resposta com o resultado das ferramentas
           continue
         }
-
         // Resposta de texto final atingida
         if (choiceMsg.content) {
           return choiceMsg.content.trim()
         }
       }
-
       throw new Error('Limite de rodadas de ferramentas excedido sem resposta final')
     }
-
     // Função para executar loop com ferramentas via Skip Gateway ($ai.chat)
     const runSkipGatewayWithTools = () => {
       let currentMessages = chatMessages.slice()
       const MAX_TOOL_ROUNDS = 4
       let rounds = 0
-
       while (rounds < MAX_TOOL_ROUNDS) {
         rounds++
         const chatRes = $ai.chat({
@@ -2465,20 +1718,16 @@ onRecordAfterCreateSuccess((e) => {
           tools: availableTools,
           tool_choice: 'auto',
         })
-
         if (!chatRes || !chatRes.choices || !chatRes.choices[0] || !chatRes.choices[0].message) {
           throw new Error('Skip AI gateway retornou resposta vazia')
         }
-
         const choiceMsg = chatRes.choices[0].message
-
         if (
           choiceMsg.tool_calls &&
           Array.isArray(choiceMsg.tool_calls) &&
           choiceMsg.tool_calls.length > 0
         ) {
           currentMessages.push(choiceMsg)
-
           for (let t = 0; t < choiceMsg.tool_calls.length; t++) {
             const tCall = choiceMsg.tool_calls[t]
             const fnName = tCall.function ? tCall.function.name : ''
@@ -2488,7 +1737,6 @@ onRecordAfterCreateSuccess((e) => {
             } catch (_) {
               fnArgs = {}
             }
-
             console.log(
               '[SKIP-GATEWAY-TOOL-CALL-RECEIVED]',
               JSON.stringify({
@@ -2499,27 +1747,21 @@ onRecordAfterCreateSuccess((e) => {
                 args: fnArgs,
               }),
             )
-
             const toolResult = dispatchToolCall(fnName, fnArgs)
-
             currentMessages.push({
               role: 'tool',
               tool_call_id: tCall.id,
               content: JSON.stringify(toolResult),
             })
           }
-
           continue
         }
-
         if (choiceMsg.content) {
           return choiceMsg.content.trim()
         }
       }
-
       throw new Error('Limite de rodadas no Skip Gateway excedido')
     }
-
     // Execução com fallback
     if (openaiKey) {
       try {
@@ -2551,7 +1793,6 @@ onRecordAfterCreateSuccess((e) => {
         aiError = skipEx.message || String(skipEx)
       }
     }
-
     // 5. Validação do resultado da IA
     if (!aiReply || aiError) {
       console.log(
@@ -2564,18 +1805,15 @@ onRecordAfterCreateSuccess((e) => {
           error: aiError || 'Falha ao gerar resposta pela IA',
         }),
       )
-
       try {
         procRecord.set('status', 'failed')
         procRecord.set('errorMessage', aiError || 'AI processing returned empty reply')
         procRecord.set('aiModel', usedModel)
         $app.save(procRecord)
       } catch (_) {}
-
       // Não envia resposta automática se a IA falhar
       return e.next()
     }
-
     console.log(
       '[WORKER-STEP] 5. AI chat call FINISHED provider=' +
         usedProvider +
@@ -2592,7 +1830,6 @@ onRecordAfterCreateSuccess((e) => {
         senderPhone: maskedPhone,
       }),
     )
-
     // ==========================================
     // DETECÇÃO E PROCESSAMENTO DE MARCADORES (INTERESSE-COMPRA E TRANSFERIR-HUMANO)
     // ==========================================
@@ -2608,11 +1845,9 @@ onRecordAfterCreateSuccess((e) => {
         app: (purchaseMatch[3] || '').trim(),
       }
     }
-
     // 2. Extração do marcador de transferência para humano [TRANSFERIR-HUMANO]
     const transferMarkerRegex = /\[\s*TRANSFERIR\s*-\s*HUMANO\s*\]/gi
     const hasTransferMarker = transferMarkerRegex.test(aiReply) || Boolean(interestDetails)
-
     // 3. Limpeza completa dos marcadores para que o cliente NUNCA os veja
     // Preserva quebras de linha (\n) da formatação da IA, colapsando apenas espaços/tabs horizontais
     // e normalizando sequências excessivas de quebras de linha e \r\n
@@ -2623,7 +1858,6 @@ onRecordAfterCreateSuccess((e) => {
       .replace(/[^\S\r\n]{2,}/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
-
     if (interestDetails || hasTransferMarker) {
       console.log(
         '[HUMAN-TRANSFER-DETECTED]',
@@ -2636,19 +1870,15 @@ onRecordAfterCreateSuccess((e) => {
         }),
       )
     }
-
     // 6. Envio da resposta pela Z-API
     const zapiHeaders = {
       'Content-Type': 'application/json',
       'Client-Token': zapiClientToken,
     }
-
     let zapiHttpStatus = 0
     let zapiSuccess = false
     let zapiErrorDetail = ''
-
     console.log('[WORKER-STEP] 6. Z-API send reply START to=' + maskedPhone)
-
     try {
       const zapiSendUrl =
         'https://api.z-api.io/instances/' +
@@ -2656,7 +1886,6 @@ onRecordAfterCreateSuccess((e) => {
         '/token/' +
         encodeURIComponent(zapiToken) +
         '/send-text'
-
       const zapiRes = $http.send({
         url: zapiSendUrl,
         method: 'POST',
@@ -2667,7 +1896,6 @@ onRecordAfterCreateSuccess((e) => {
         }),
         timeout: 15,
       })
-
       zapiHttpStatus = zapiRes.statusCode
       if (zapiRes.statusCode >= 200 && zapiRes.statusCode < 300) {
         zapiSuccess = true
@@ -2682,7 +1910,6 @@ onRecordAfterCreateSuccess((e) => {
     } catch (zapiErr) {
       zapiErrorDetail = zapiErr.message || String(zapiErr)
     }
-
     // 7. Atualização final de estado e logs sanitizados de envio
     if (zapiSuccess) {
       console.log(
@@ -2694,7 +1921,6 @@ onRecordAfterCreateSuccess((e) => {
           httpStatus: zapiHttpStatus,
         }),
       )
-
       try {
         procRecord.set('status', 'completed')
         procRecord.set('replySent', true)
@@ -2706,7 +1932,6 @@ onRecordAfterCreateSuccess((e) => {
       } catch (saveCompletedErr) {
         console.log('[COMPLETED-SAVE-ERR]', saveCompletedErr.message || String(saveCompletedErr))
       }
-
       // Se houve transferência para humano, ativar human_mode na collection chat_control
       if (hasTransferMarker && phone) {
         try {
@@ -2751,7 +1976,6 @@ onRecordAfterCreateSuccess((e) => {
               transferReason = 'aplicacao'
             }
           }
-
           let chatControlRec = null
           try {
             const foundControls = $app.findRecordsByFilter(
@@ -2766,7 +1990,6 @@ onRecordAfterCreateSuccess((e) => {
               chatControlRec = foundControls[0]
             }
           } catch (_) {}
-
           if (chatControlRec) {
             chatControlRec.set('human_mode', true)
             chatControlRec.set('paused_by', 'ia_transfer')
@@ -2781,7 +2004,6 @@ onRecordAfterCreateSuccess((e) => {
             newCtrl.set('paused_reason', transferReason)
             $app.save(newCtrl)
           }
-
           // Montar pacote de handoff estruturado para o atendente
           const handoffHelper =
             (typeof globalThis !== 'undefined' &&
@@ -2799,7 +2021,6 @@ onRecordAfterCreateSuccess((e) => {
               console.log('[AI-HANDOFF-PACKET-BUILD-ERR]', hErr.message || String(hErr))
             }
           }
-
           console.log(
             '[HUMAN-MODE-ON]',
             JSON.stringify({
@@ -2810,7 +2031,6 @@ onRecordAfterCreateSuccess((e) => {
               handoff_packet: handoffPacket,
             }),
           )
-
           // NOTIFICAÇÃO ADICIONAL DE ESCALADA VIA WHATSAPP (11947518805)
           // Dispara para qualquer motivo de transferência humana na Camada 3 (reclamacao, nota, cobranca, aplicacao, etc.)
           // Tolerante a erro: nunca bloqueia nem atrasa a escalada
@@ -2825,7 +2045,6 @@ onRecordAfterCreateSuccess((e) => {
                 typeof globalThis.notifyEscalation === 'function' &&
                 globalThis.notifyEscalation) ||
               null
-
             if (fn) {
               fn({
                 $app: $app,
@@ -2845,7 +2064,6 @@ onRecordAfterCreateSuccess((e) => {
           )
         }
       }
-
       // ==========================================
       // CRIAÇÃO / ATUALIZAÇÃO DE CARD NA COLUNA LEAD (DEDUPE POR TELEFONE)
       // ==========================================
@@ -2860,7 +2078,6 @@ onRecordAfterCreateSuccess((e) => {
         } catch (_) {
           brasiliaTimeStr = new Date().toISOString()
         }
-
         const summaryLog = {
           horarioBrasilia: brasiliaTimeStr,
           telefone: phone,
@@ -2869,16 +2086,13 @@ onRecordAfterCreateSuccess((e) => {
           aplicacao: interestDetails ? interestDetails.app : 'Não especificado',
           origem: 'IA (WhatsApp)',
         }
-
         console.log('[INTERESSE-COMPRA-RESUMO]', JSON.stringify(summaryLog))
-
         try {
           const cleanP = String(phone || '').replace(/\D/g, '')
           let pWithoutDdi = cleanP
           if (pWithoutDdi.startsWith('55') && pWithoutDdi.length >= 12) {
             pWithoutDdi = pWithoutDdi.slice(2)
           }
-
           let existingCustomer = null
           try {
             const foundCusts = $app.findRecordsByFilter(
@@ -2895,7 +2109,6 @@ onRecordAfterCreateSuccess((e) => {
           } catch (findErr) {
             console.log('[CUSTOMER-FIND-FOR-LEAD-ERR]', String(findErr))
           }
-
           const buildInterestNote = (prevNotes) => {
             const timestampHeader = '[' + brasiliaTimeStr + ' - Interesse IA]'
             let noteLine = timestampHeader
@@ -2910,16 +2123,13 @@ onRecordAfterCreateSuccess((e) => {
               noteLine +=
                 ' Cliente solicitou cotação/compra via WhatsApp e foi transferido para atendente.'
             }
-
             if (prevNotes && prevNotes.trim()) {
               return noteLine + '\n---\n' + prevNotes.trim()
             }
             return noteLine
           }
-
           if (existingCustomer) {
             const currentCol = String(existingCustomer.getString('pipeline_status') || '').trim()
-
             // DEDUPE: se já está na coluna Lead (novo_lead), atualiza o card existente:
             // acrescenta itens/quantidade, marca como não visto para piscar vermelho e atualiza timestamp
             if (!currentCol || currentCol === 'novo_lead') {
@@ -2928,7 +2138,6 @@ onRecordAfterCreateSuccess((e) => {
               existingCustomer.set('lead_viewed', false)
               existingCustomer.set('notes', buildInterestNote(existingCustomer.getString('notes')))
               $app.save(existingCustomer)
-
               console.log(
                 '[PIPELINE-LEAD-UPDATED]',
                 JSON.stringify({
@@ -2944,7 +2153,6 @@ onRecordAfterCreateSuccess((e) => {
               // loga e NÃO move automaticamente para não quebrar o funil do vendedor
               existingCustomer.set('notes', buildInterestNote(existingCustomer.getString('notes')))
               $app.save(existingCustomer)
-
               console.log(
                 '[PIPELINE-LEAD-MAINTAINED-OTHER-COLUMN]',
                 JSON.stringify({
@@ -2970,7 +2178,6 @@ onRecordAfterCreateSuccess((e) => {
               newLead.set('lead_viewed', false)
               newLead.set('notes', buildInterestNote(''))
               $app.save(newLead)
-
               console.log(
                 '[PIPELINE-LEAD-CREATED]',
                 JSON.stringify({
@@ -3000,7 +2207,6 @@ onRecordAfterCreateSuccess((e) => {
           error: zapiErrorDetail || 'Falha no envio Z-API',
         }),
       )
-
       try {
         procRecord.set('status', 'failed')
         procRecord.set('replySent', false)
@@ -3013,7 +2219,6 @@ onRecordAfterCreateSuccess((e) => {
         console.log('[FAILED-SAVE-ERR]', saveFailedErr.message || String(saveFailedErr))
       }
     }
-
     console.log('[WORKER-STEP] 7. Worker pipeline complete replySent=' + zapiSuccess)
   } catch (fatalWorkerErr) {
     const fatalErrMsg =
@@ -3021,7 +2226,6 @@ onRecordAfterCreateSuccess((e) => {
     const fatalErrStack =
       fatalWorkerErr && fatalWorkerErr.stack ? String(fatalWorkerErr.stack) : fatalErrMsg
     console.error('[WORKER-FATAL] Falha fatal no worker da IA:\n' + fatalErrStack)
-
     // Atualizar status para failed com errorMessage para NUNCA deixar status=processing eterno
     try {
       if (procRecord) {
@@ -3039,11 +2243,10 @@ onRecordAfterCreateSuccess((e) => {
     } catch (persistFatalErr) {
       console.error('[WORKER-FATAL-PERSIST-ERR]', String(persistFatalErr))
     }
-
     // Se o erro permitir responder ao cliente na allowlist (e Z-API configurada), envia o handoff gracioso
     // A allowlist continua FECHADA: só responde se o número estiver na allowlist
     try {
-      const fallbackMsg = 'Deixa eu verificar com um atendente e já te volto 👍'
+      const fallbackMsg = 'Vou transferir para um dos nossos atendentes 🙂'
       if (zapiInstance && zapiToken && zapiClientToken && phone) {
         console.log('[WORKER-STEP] 8. Sending graceful error fallback to client=' + maskedPhone)
         $http.send({
@@ -3064,7 +2267,6 @@ onRecordAfterCreateSuccess((e) => {
           }),
           timeout: 10,
         })
-
         // Transferir chat_control para modo humano
         try {
           let chatControlRec = null
@@ -3097,6 +2299,5 @@ onRecordAfterCreateSuccess((e) => {
       console.error('[WORKER-FALLBACK-SEND-ERR]', String(fallbackSendErr))
     }
   }
-
   return e.next()
 }, 'message_processing')
