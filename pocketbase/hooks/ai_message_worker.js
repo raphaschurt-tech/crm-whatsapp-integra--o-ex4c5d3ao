@@ -273,7 +273,7 @@ cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
       const ctrl = activeHumanControls[hci]
       const ctrlPhone = ctrl.getString('phone')
       if (!ctrlPhone) continue
-            // RETOMADA RAPIDA: cliente digitou /a (ou /ia, !a) e a IA volta a atender sem esperar o tempo
+      // RETOMADA RAPIDA: cliente digitou /a (ou /ia, !a) e a IA volta a atender sem esperar o tempo
       try {
         const cleanR = ctrlPhone.replace(/'/g, "\\'")
         const lastIn = $app.findRecordsByFilter(
@@ -1111,13 +1111,47 @@ onRecordAfterCreateSuccess((e) => {
           .split(' ')
           .filter((w) => w.length >= 2)
         const stopSimples = {
-          de: 1, do: 1, da: 1, dos: 1, das: 1, para: 1, em: 1, um: 1, uma: 1, tem: 1,
-          voce: 1, voces: 1, qual: 1, quanto: 1, custa: 1, o: 1, a: 1, e: 1,
-          ano: 1, anos: 1, modelo: 1, peca: 1, pecas: 1, pra: 1, pro: 1,
-          preco: 1, valor: 1, saber: 1, quero: 1, gostaria: 1, favor: 1, por: 1,
-          obrigado: 1, obrigada: 1, ola: 1, bom: 1, dia: 1, tarde: 1, noite: 1,
+          de: 1,
+          do: 1,
+          da: 1,
+          dos: 1,
+          das: 1,
+          para: 1,
+          em: 1,
+          um: 1,
+          uma: 1,
+          tem: 1,
+          voce: 1,
+          voces: 1,
+          qual: 1,
+          quanto: 1,
+          custa: 1,
+          o: 1,
+          a: 1,
+          e: 1,
+          ano: 1,
+          anos: 1,
+          modelo: 1,
+          peca: 1,
+          pecas: 1,
+          pra: 1,
+          pro: 1,
+          preco: 1,
+          valor: 1,
+          saber: 1,
+          quero: 1,
+          gostaria: 1,
+          favor: 1,
+          por: 1,
+          obrigado: 1,
+          obrigada: 1,
+          ola: 1,
+          bom: 1,
+          dia: 1,
+          tarde: 1,
+          noite: 1,
         }
-                const searchWords = words.filter((w) => !stopSimples[w] && !/^(19|20)\d{2}$/.test(w))
+        const searchWords = words.filter((w) => !stopSimples[w] && !/^(19|20)\d{2}$/.test(w))
         const years = []
         for (let yi = 0; yi < words.length; yi++) {
           if (/^(19|20)\d{2}$/.test(words[yi])) years.push(parseInt(words[yi].slice(2), 10))
@@ -1128,10 +1162,20 @@ onRecordAfterCreateSuccess((e) => {
         const seenIds = {}
         const pull = (filter, params, limit) => {
           try {
-            const recs = $app.findRecordsByFilter('products', filter, '-stock_quantity,name', limit, 0, params)
+            const recs = $app.findRecordsByFilter(
+              'products',
+              filter,
+              '-stock_quantity,name',
+              limit,
+              0,
+              params,
+            )
             for (let ri = 0; ri < (recs || []).length; ri++) {
               const r = recs[ri]
-              if (!seenIds[r.id]) { seenIds[r.id] = true; candidates.push(r) }
+              if (!seenIds[r.id]) {
+                seenIds[r.id] = true
+                candidates.push(r)
+              }
             }
           } catch (pullErr) {
             console.log('[TOOL-BUSCAR-PRODUTOS-SIMPLES-PULL-ERR]', String(pullErr))
@@ -1164,7 +1208,7 @@ onRecordAfterCreateSuccess((e) => {
                 if (k) excludedSet[k] = 1
               }
             }
-                        const rawFam = liveSet.get('allowed_families')
+            const rawFam = liveSet.get('allowed_families')
             let famList = []
             if (Array.isArray(rawFam)) {
               famList = rawFam
@@ -1191,7 +1235,11 @@ onRecordAfterCreateSuccess((e) => {
             }
           }
         } catch (_) {}
-        const unacc = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+        const unacc = (s) =>
+          String(s || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
         const yearInName = (nm) => {
           if (years.length === 0) return false
           const re = /\b(\d{2}|\d{4})\s*[/-]\s*(\d{2}|\d{4})\b/g
@@ -1201,7 +1249,7 @@ onRecordAfterCreateSuccess((e) => {
             const y2 = parseInt(m[2], 10) % 100
             for (let i = 0; i < years.length; i++) {
               const y = years[i]
-              if (y1 <= y2 ? (y >= y1 && y <= y2) : (y >= y1 || y <= y2)) return true
+              if (y1 <= y2 ? y >= y1 && y <= y2 : y >= y1 || y <= y2) return true
             }
           }
           return false
@@ -1215,12 +1263,20 @@ onRecordAfterCreateSuccess((e) => {
             const fam = unacc(rec.getString('sou_family'))
             let famOk = false
             for (let fi = 0; fi < allowedFam.length; fi++) {
-              if (fam === unacc(allowedFam[fi])) { famOk = true; break }
+              if (fam === unacc(allowedFam[fi])) {
+                famOk = true
+                break
+              }
             }
             if (!famOk) continue
           }
           if (rec.get('is_active') === false) continue
-          const hay = unacc(rec.getString('name')) + ' ' + unacc(rec.getString('sku')) + ' ' + unacc(rec.getString('brand'))
+          const hay =
+            unacc(rec.getString('name')) +
+            ' ' +
+            unacc(rec.getString('sku')) +
+            ' ' +
+            unacc(rec.getString('brand'))
           let matched = 0
           for (let wi = 0; wi < useWords.length; wi++) {
             if (hay.includes(useWords[wi])) matched++
@@ -1253,7 +1309,8 @@ onRecordAfterCreateSuccess((e) => {
             preco: pPrice,
             estoque: pStock,
             disponivel: pStock > 0,
-            disponibilidade_info: pStock <= 0 ? 'disponível em até 48 horas' : pStock + ' un. em estoque',
+            disponibilidade_info:
+              pStock <= 0 ? 'disponível em até 48 horas' : pStock + ' un. em estoque',
             status_consulta: status,
           }
           if (pDesc && !pDesc.startsWith('Produto SOU.IS sincronizado')) obj.description = pDesc
@@ -1267,7 +1324,12 @@ onRecordAfterCreateSuccess((e) => {
           }
           return obj
         })
-        console.log('[TOOL-BUSCAR-PRODUTOS-SIMPLES] resultados=' + results.length + ' skus=' + results.map((r) => r.sku).join(','))
+        console.log(
+          '[TOOL-BUSCAR-PRODUTOS-SIMPLES] resultados=' +
+            results.length +
+            ' skus=' +
+            results.map((r) => r.sku).join(','),
+        )
         return { termo: rawTermSimple, total: results.length, produtos: results }
       } catch (simplesErr) {
         console.error('[TOOL-BUSCAR-PRODUTOS-SIMPLES-ERR]', String(simplesErr))
