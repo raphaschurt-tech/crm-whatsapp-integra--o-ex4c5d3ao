@@ -273,7 +273,41 @@ cronAdd('ai_human_chat_auto_close_cron', '*/2 * * * *', () => {
       const ctrl = activeHumanControls[hci]
       const ctrlPhone = ctrl.getString('phone')
       if (!ctrlPhone) continue
-      // Encontrar última interação (cliente OU atendente)
+            // RETOMADA RAPIDA: cliente digitou /a (ou /ia, !a) e a IA volta a atender sem esperar o tempo
+      try {
+        const cleanR = ctrlPhone.replace(/'/g, "\\'")
+        const lastIn = $app.findRecordsByFilter(
+          'webhook_received',
+          "(phone.phone = '" + cleanR + "' || chat.phone = '" + cleanR + "') && fromMe = false",
+          '-created',
+          1,
+          0,
+        )
+        if (lastIn && lastIn.length > 0) {
+          let rawT = ''
+          try {
+            const parsedT = JSON.parse(String(lastIn[0].getString('text') || ''))
+            rawT =
+              parsedT && typeof parsedT === 'object'
+                ? String(parsedT.message || parsedT.text || '')
+                : String(parsedT)
+          } catch (_) {
+            rawT = String(lastIn[0].getString('text') || '')
+          }
+          rawT = rawT.trim().toLowerCase()
+          if (rawT === '/a' || rawT === '/ia' || rawT === '!a') {
+            ctrl.set('human_mode', false)
+            ctrl.set('paused_by', '')
+            ctrl.set('paused_reason', '')
+            $app.save(ctrl)
+            console.log(
+              '[QUICK-RESUME]',
+              'IA reativada: ' + ctrlPhone.slice(0, 4) + '****' + ctrlPhone.slice(-2),
+            )
+            continue
+          }
+        }
+      } catch (_) {}
       let lastInteractionTimeMs = 0
       try {
         const cleanP = ctrlPhone.replace(/'/g, "\\'")
@@ -722,7 +756,7 @@ onRecordAfterCreateSuccess((e) => {
       '- GATILHO: Dispare APENAS quando o cliente declarar expressamente a intenção de comprar/fechar (ex.: "quero o item 1 e 2", "vou ficar com o 1", "fechar", "me manda", "quero levar"). Perguntas de curiosidade ou mera cotação de preço ("quanto custa?", "tem?") NÃO disparam este fluxo.\n' +
       '- COLETA: Ao detectar intenção declarada de compra, confirme quais itens o cliente quer (citando o nome e a aplicação), pergunte a quantidade de cada item e confirme se a aplicação/ano do veículo está correto. Você tem no MÁXIMO 2 rodadas de perguntas para coletar essas informações caso ainda não tenham sido ditas.\n' +
       '- CONFIRMAÇÃO FINAL: Antes do handoff para a equipe, envie UMA confirmação final resumindo os itens + quantidade + aplicação coletados, iniciando obrigatoriamente por: "Só confirmando: ..." (ex.: "Só confirmando: item 1 (Bucha Diant Freelander 2 06/15) - 2 unidades, para Freelander 2 ano 2011."). Essa confirmação não conta no limite das 2 rodadas.\n' +
-      '- HANDOFF: Assim que o cliente confirmar o resumo final (ou se a intenção e os dados já estiverem todos claros na mesma mensagem), transfira para a equipe de atendimento humano: responda exatamente incluindo a mensagem "Estou passando para uma atendente, ela retorna em instantes com preço e disponibilidade" e adicione no final da sua resposta o marcador [INTERESSE-COMPRA: itens=<descreva os itens>, qtd=<quantidades>, app=<aplicacao/veiculo>] seguido de [TRANSFERIR-HUMANO]. O marcador acionará a criação/atualização do card na coluna Lead do Pipeline e a transferência humana.\n' +
+      '- HANDOFF: Assim que o cliente confirmar o resumo final (ou se a intenção e os dados já estiverem todos claros na mesma mensagem), transfira para a equipe de atendimento humano: responda exatamente incluindo a mensagem "Vou transferir para um dos nossos atendentes, eles te retornam em instantes com preço e disponibilidade" e adicione no final da sua resposta o marcador [INTERESSE-COMPRA: itens=<descreva os itens>, qtd=<quantidades>, app=<aplicacao/veiculo>] seguido de [TRANSFERIR-HUMANO]. O marcador acionará a criação/atualização do card na coluna Lead do Pipeline e a transferência humana.\n' +
       '6. MEIOS DE PAGAMENTO: Ao perguntarem sobre como pagar, formas de pagamento, parcelamento ou condições comerciais, responda com: "' +
       effectivePaymentMethods.replace(/"/g, "'") +
       '".\n' +
@@ -2212,7 +2246,7 @@ onRecordAfterCreateSuccess((e) => {
     // Se o erro permitir responder ao cliente na allowlist (e Z-API configurada), envia o handoff gracioso
     // A allowlist continua FECHADA: só responde se o número estiver na allowlist
     try {
-      const fallbackMsg = 'Deixa eu verificar com um atendente e já te volto 👍'
+      const fallbackMsg = 'Vou transferir para um dos nossos atendentes 🙂'
       if (zapiInstance && zapiToken && zapiClientToken && phone) {
         console.log('[WORKER-STEP] 8. Sending graceful error fallback to client=' + maskedPhone)
         $http.send({
