@@ -1205,6 +1205,35 @@ onRecordAfterCreateSuccess((e) => {
             .toLowerCase()
         const squeezeFam = (s) => unacc(s).replace(/\s+/g, ' ').trim()
         try {
+          // Leitura tolerante de campo JSON: o runtime Goja pode devolver campo JSON
+          // como array de bytes ([]byte UTF-8), array de strings, string JSON ou vazio.
+          // Para bytes, percent-encode CADA byte e decodificar de volta como UTF-8
+          // (decodeURIComponent) — NUNCA String.fromCharCode byte a byte, que quebra acentos.
+          const readJsonArrayField = (val) => {
+            try {
+              if (val === null || val === undefined) return []
+              if (Array.isArray(val) && (val.length === 0 || typeof val[0] === 'string')) return val
+              if (Array.isArray(val) && typeof val[0] === 'number') {
+                let pct = ''
+                for (let i = 0; i < val.length; i++) {
+                  const b = Number(val[i]) & 0xff
+                  pct += '%' + (b < 16 ? '0' : '') + b.toString(16)
+                }
+                const text = decodeURIComponent(pct)
+                const parsed = JSON.parse(text)
+                return Array.isArray(parsed) ? parsed : []
+              }
+              if (typeof val === 'string') {
+                const s = val.trim()
+                if (!s) return []
+                const parsed = JSON.parse(s)
+                return Array.isArray(parsed) ? parsed : []
+              }
+            } catch (e) {
+              return []
+            }
+            return []
+          }
           const liveSet = $app.findFirstRecordByFilter('settings', "id != ''")
           if (liveSet) {
             const rawEx = String(liveSet.getString('ai_excluded_skus') || '').trim()
@@ -1215,24 +1244,7 @@ onRecordAfterCreateSuccess((e) => {
                 if (k) excludedSet[k] = 1
               }
             }
-            const rawFam = liveSet.get('allowed_families')
-            let famList = []
-            if (Array.isArray(rawFam)) {
-              famList = rawFam
-            } else if (typeof rawFam === 'string' && rawFam.trim()) {
-              const rawFamStr = rawFam.trim()
-              if (rawFamStr.startsWith('[')) {
-                try {
-                  const parsedFam = JSON.parse(rawFamStr)
-                  if (Array.isArray(parsedFam)) famList = parsedFam
-                } catch (_) {
-                  famList = rawFamStr.replace(/[\[\]"]/g, '').split(',')
-                }
-              } else {
-                famList = rawFamStr.split(',')
-              }
-            }
-            if (!Array.isArray(famList)) famList = []
+            const famList = readJsonArrayField(liveSet.get('allowed_families'))
             for (let fi = 0; fi < famList.length; fi++) {
               const k = String(famList[fi])
                 .trim()
@@ -1241,24 +1253,7 @@ onRecordAfterCreateSuccess((e) => {
               if (k) allowedFam.push(k)
             }
             // Parte 2: famílias de insumo bloqueadas (editável em settings.ai_blocked_families)
-            const rawBlocked = liveSet.get('ai_blocked_families')
-            let blockedList = []
-            if (Array.isArray(rawBlocked)) {
-              blockedList = rawBlocked
-            } else if (typeof rawBlocked === 'string' && rawBlocked.trim()) {
-              const rb = rawBlocked.trim()
-              if (rb.startsWith('[')) {
-                try {
-                  const pb = JSON.parse(rb)
-                  if (Array.isArray(pb)) blockedList = pb
-                } catch (_) {
-                  blockedList = rb.replace(/[\[\]"]/g, '').split(',')
-                }
-              } else {
-                blockedList = rb.split(',')
-              }
-            }
-            if (!Array.isArray(blockedList)) blockedList = []
+            const blockedList = readJsonArrayField(liveSet.get('ai_blocked_families'))
             for (let bi = 0; bi < blockedList.length; bi++) {
               const k = squeezeFam(blockedList[bi])
               if (k) blockedFamSet[k] = 1
