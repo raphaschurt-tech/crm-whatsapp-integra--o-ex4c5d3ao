@@ -1306,13 +1306,54 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         verbose: true,
       })
     } catch (connErr) {
+      // Correção 6: nunca engolir o erro do conector — log completo com contexto
+      // e, se o erro for DEFINITIVO (caixa/conector não existe mais, ex.: SkipConnectorsError:
+      // Not Found), marca TODOS os registros pendentes como erro_final para nunca mais reprocessar.
+      const connErrStr = String(connErr)
       console.log(
         '[NFE-EMAIL-FETCH-ERR]',
         JSON.stringify({
           horarioBrasilia: horarioBrasilia,
-          error: String(connErr),
+          error: connErrStr,
+          definitivo: /not found|não encontrado|invalid_grant|unauthorized|forbidden|404/i.test(
+            connErrStr,
+          ),
         }),
       )
+      if (/not found|não encontrado|invalid_grant|unauthorized|forbidden|404/i.test(connErrStr)) {
+        try {
+          const inboxColErr = $app.findCollectionByNameOrId('nfe_email_inbox')
+          const pending = $app.findRecordsByFilter(
+            'nfe_email_inbox',
+            "status = 'pendente'",
+            '-created',
+            500,
+            0,
+          )
+          let markedFinal = 0
+          for (let pi = 0; pi < pending.length; pi++) {
+            const rec = pending[pi]
+            try {
+              rec.set('status', 'erro_final')
+              rec.set('error_message', 'Erro definitivo do conector: ' + connErrStr)
+              rec.set('processed_at', horarioBrasilia)
+              $app.save(rec)
+              markedFinal++
+            } catch (_) {}
+          }
+          console.log(
+            '[NFE-EMAIL-ERRO-FINAL-MARKED]',
+            JSON.stringify({
+              horarioBrasilia: horarioBrasilia,
+              motivo: 'SkipConnectorsError definitivo (caixa/conector indisponível)',
+              markedFinal: markedFinal,
+              error: connErrStr,
+            }),
+          )
+        } catch (markErr) {
+          console.log('[NFE-EMAIL-ERRO-FINAL-MARK-ERR]', String(markErr))
+        }
+      }
       return
     }
 
@@ -1339,10 +1380,54 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
       messages = rawData.data.messages
     }
 
+    // Correção 6: pré-dedupe por messageId — mensagens já registradas com status terminal
+    // ('processado', 'sem_xml', 'erro_final') são removidas do lote ANTES do processamento,
+    // de modo que uma caixa já processada registra messagesFound: 0 e nada é reprocessado.
+    // Status 'erro' NÃO é terminal: passa adiante para respeitar a lógica de retry (máx. 3).
+    const fetchedTotal = messages.length
+    let skippedDedupe = 0
+    if (messages.length > 0) {
+      let inboxColPre = null
+      try {
+        inboxColPre = $app.findCollectionByNameOrId('nfe_email_inbox')
+      } catch (_) {}
+      if (inboxColPre) {
+        const freshMessages = []
+        for (let p = 0; p < messages.length; p++) {
+          const pMsg = messages[p] || {}
+          const pId = String(pMsg.id || pMsg.message_id || pMsg.messageId || '').trim()
+          if (!pId) continue
+          let alreadyRec = null
+          try {
+            alreadyRec = $app.findFirstRecordByFilter(
+              'nfe_email_inbox',
+              'gmail_message_id = {:mid}',
+              { mid: pId },
+            )
+          } catch (_) {}
+          if (alreadyRec) {
+            const preStatus = alreadyRec.getString('status')
+            if (
+              preStatus === 'processado' ||
+              preStatus === 'sem_xml' ||
+              preStatus === 'erro_final'
+            ) {
+              skippedDedupe++
+              continue
+            }
+          }
+          freshMessages.push(pMsg)
+        }
+        messages = freshMessages
+      }
+    }
+
     console.log(
       '[NFE-EMAIL-INBOX-POLL]',
       JSON.stringify({
         horarioBrasilia: horarioBrasilia,
+        fetchedTotal: fetchedTotal,
+        skippedDedupe: skippedDedupe,
         messagesFound: messages.length,
       }),
     )
@@ -2183,11 +2268,16 @@ cronAdd('nfe-email-inbox-poller', '* * * * *', () => {
         inboxRec.set('xml_keys', extractedKeys)
         inboxRec.set('processed_at', horarioBrasilia)
 
+        // Correção 6: erro DEFINITIVO do conector (caixa removida, acesso revogado,
+        // SkipConnectorsError: Not Found, 404) nunca vira retry — marca erro_final já na 1ª ocorrência
+        const isDefinitiveIngestErr = ingestErrors.some((ie) =>
+          /not found|não encontrado|invalid_grant|unauthorized|forbidden|404/i.test(ie),
+        )
         if (xmlList.length > 0 || pdfProcessedCount > 0) {
           if (ingestErrors.length > 0) {
             const nextRetry = currentRetry + 1
             inboxRec.set('retry_count', nextRetry)
-            inboxRec.set('status', nextRetry >= 3 ? 'erro_final' : 'erro')
+            inboxRec.set('status', isDefinitiveIngestErr || nextRetry >= 3 ? 'erro_final' : 'erro')
             inboxRec.set('error_detail', ingestErrors.join(' | '))
           } else {
             inboxRec.set('status', 'processado')
@@ -3492,6 +3582,18 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       verbose: true,
     })
   } catch (connErr) {
+    // Correção 6 (rota manual): nunca engolir o erro do conector — log completo antes de responder
+    console.log(
+      '[NFE-EMAIL-FETCH-ERR]',
+      JSON.stringify({
+        horarioBrasilia: horarioBrasilia,
+        origem: 'rota_manual_sync',
+        error: String(connErr),
+        definitivo: /not found|não encontrado|invalid_grant|unauthorized|forbidden|404/i.test(
+          String(connErr),
+        ),
+      }),
+    )
     return e.json(502, {
       success: false,
       error: String(connErr),
@@ -4340,11 +4442,16 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       inboxRec.set('xml_keys', extractedKeys)
       inboxRec.set('processed_at', horarioBrasilia)
 
+      // Correção 6: erro DEFINITIVO do conector (caixa removida, acesso revogado,
+      // SkipConnectorsError: Not Found, 404) nunca vira retry — marca erro_final já na 1ª ocorrência
+      const isDefinitiveIngestErr = ingestErrors.some((ie) =>
+        /not found|não encontrado|invalid_grant|unauthorized|forbidden|404/i.test(ie),
+      )
       if (xmlList.length > 0 || pdfProcessedCount > 0) {
         if (ingestErrors.length > 0) {
-          const nextRetry = syncCurrentRetry + 1
+          const nextRetry = currentRetry + 1
           inboxRec.set('retry_count', nextRetry)
-          inboxRec.set('status', nextRetry >= 3 ? 'erro_final' : 'erro')
+          inboxRec.set('status', isDefinitiveIngestErr || nextRetry >= 3 ? 'erro_final' : 'erro')
           inboxRec.set('error_detail', ingestErrors.join(' | '))
         } else {
           inboxRec.set('status', 'processado')
@@ -4353,7 +4460,6 @@ routerAdd('POST', '/backend/v1/nfe/email-inbox/sync', (e) => {
       } else {
         inboxRec.set('status', 'sem_xml')
       }
-
       $app.save(inboxRec)
       processedCount++
     } catch (saveInboxErr) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus,
@@ -55,6 +55,15 @@ export default function ProductList() {
 
   // Restaura estado salvo da aba se existir
   const [search, setSearch] = useState<string>(() => (activeTab?.state?.search as string) || '')
+  // Correção 5: debounce da busca — 'search' é o valor digitado; 'searchInput' (debounced)
+  // é o que efetivamente dispara a requisição. 350ms evita refetch a cada tecla.
+  const [searchInput, setSearchInput] = useState<string>(
+    () => (activeTab?.state?.search as string) || '',
+  )
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchInput(search), 350)
+    return () => clearTimeout(timer)
+  }, [search])
   const [natureFilter, setNatureFilter] = useState<'todas' | 'comprado' | 'produzido' | 'composto'>(
     () => (activeTab?.state?.natureFilter as any) || 'todas',
   )
@@ -63,6 +72,14 @@ export default function ProductList() {
   )
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  // Correção 5: paginação real (perPage <= 50) + controle de requisições concorrentes.
+  // Antes: getFullList com perPage=1000 em loop, gerando dezenas de 429 na abertura da tela.
+  const PAGE_SIZE = 50
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [totalItems, setTotalItems] = useState(0)
+  const requestSeqRef = useRef(0)
   const [syncing, setSyncing] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -79,23 +96,34 @@ export default function ProductList() {
   const [printModalOpen, setPrintModalOpen] = useState(false)
   const [productsToPrint, setProductsToPrint] = useState<Product[]>([])
 
-  const loadData = async () => {
-    setLoading(true)
-    setLoadError(null)
-    try {
-      const data = await getProducts()
-      setProducts(data)
-    } catch (e: any) {
-      console.error('Erro ao carregar produtos:', e)
-      setLoadError(e?.message || 'Falha ao comunicar com o servidor.')
-    } finally {
-      setLoading(false)
-    }
-  }
+  // Correção 5: loadData é estável (useCallback com deps de estado), e o useEffect
+  // depende apenas de [page, searchInput] — sem função nova por render reativando o fetch em loop.
+  const loadData = useCallback(
+    async (targetPage: number, term: string) => {
+      const seq = ++requestSeqRef.current
+      setLoading(true)
+      setLoadError(null)
+      try {
+        const data = await getProducts({ page: targetPage, perPage: PAGE_SIZE, term })
+        if (seq !== requestSeqRef.current) return // resposta antiga: descarta sem setState
+        setProducts(data.items)
+        setTotalPages(data.totalPages)
+        setTotalItems(data.totalItems)
+      } catch (e: any) {
+        if (seq !== requestSeqRef.current) return
+        console.error('Erro ao carregar produtos:', e)
+        setLoadError(e?.message || 'Falha ao comunicar com o servidor.')
+      } finally {
+        if (seq === requestSeqRef.current) setLoading(false)
+      }
+    },
+    [], // deps vazias: só usa setState e refs — função estável
+  )
 
+  // Correção 5: abre a tela com UMA requisição de lista paginada
   useEffect(() => {
-    loadData()
-  }, [])
+    loadData(page, searchInput)
+  }, [page, searchInput, loadData])
 
   // Sincroniza filtros com o estado da aba ativa e atualiza título contextual se houver termo de busca
   useEffect(() => {

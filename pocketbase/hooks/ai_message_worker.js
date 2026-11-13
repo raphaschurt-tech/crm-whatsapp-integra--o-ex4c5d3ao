@@ -1255,22 +1255,41 @@ onRecordAfterCreateSuccess((e) => {
           return false
         }
         const scored = []
+        // Correção 4: funil de filtros instrumentado — cada queda é contada e reportada
+        let droppedExcluded = 0
+        let droppedFamilia = 0
+        let droppedInativo = 0
+        let droppedSemPalavra = 0
+        const squeezeFam = (s) => unacc(s).replace(/\s+/g, ' ').trim()
         for (let ci = 0; ci < candidates.length; ci++) {
           const rec = candidates[ci]
           const skuLow = String(rec.getString('sku') || '').toLowerCase()
-          if (excludedSet[skuLow] || excludedSet[skuLow.trim()]) continue
+          if (excludedSet[skuLow] || excludedSet[skuLow.trim()]) {
+            droppedExcluded++
+            continue
+          }
           if (allowedFam.length > 0) {
-            const fam = unacc(rec.getString('sou_family'))
+            // Correção 4: 'Sem família' tratado como família vazia; comparação colapsa espaços internos
+            let fam = squeezeFam(rec.getString('sou_family'))
+            if (fam === 'sem familia') fam = ''
             let famOk = false
             for (let fi = 0; fi < allowedFam.length; fi++) {
-              if (fam === unacc(allowedFam[fi])) {
+              let af = squeezeFam(allowedFam[fi])
+              if (af === 'sem familia') af = ''
+              if (fam === af) {
                 famOk = true
                 break
               }
             }
-            if (!famOk) continue
+            if (!famOk) {
+              droppedFamilia++
+              continue
+            }
           }
-          if (rec.get('is_active') === false) continue
+          if (rec.get('is_active') === false) {
+            droppedInativo++
+            continue
+          }
           const hay =
             unacc(rec.getString('name')) +
             ' ' +
@@ -1281,7 +1300,10 @@ onRecordAfterCreateSuccess((e) => {
           for (let wi = 0; wi < useWords.length; wi++) {
             if (hay.includes(useWords[wi])) matched++
           }
-          if (matched === 0) continue
+          if (matched === 0) {
+            droppedSemPalavra++
+            continue
+          }
           const stockQty = Number(rec.get('stock_quantity')) || 0
           let score = matched * 1000
           if (stockQty > 0) score += 20
@@ -1325,7 +1347,17 @@ onRecordAfterCreateSuccess((e) => {
           return obj
         })
         console.log(
-          '[TOOL-BUSCAR-PRODUTOS-SIMPLES] resultados=' +
+          '[TOOL-BUSCAR-PRODUTOS-FILTER] total=' +
+            candidates.length +
+            ' droppedExcluded=' +
+            droppedExcluded +
+            ' droppedFamilia=' +
+            droppedFamilia +
+            ' droppedInativo=' +
+            droppedInativo +
+            ' droppedSemPalavra=' +
+            droppedSemPalavra +
+            ' retornados=' +
             results.length +
             ' skus=' +
             results.map((r) => r.sku).join(','),
@@ -1665,7 +1697,17 @@ onRecordAfterCreateSuccess((e) => {
       return { erro: 'Ferramenta desconhecida: ' + toolName }
     }
     // 8. Início do processamento de IA com suporte a Function Calling
-    const usedModel = 'gpt-4o-mini'
+    // Correção 7: modelo configurável via settings.ai_model (fallback gpt-4o-mini)
+    const usedModel = (() => {
+      try {
+        const sRec = $app.findFirstRecordByFilter('settings', "id != ''")
+        const m = sRec ? String(sRec.get('ai_model') || '').trim() : ''
+        return m || 'gpt-4o-mini'
+      } catch (modelErr) {
+        console.log('[WORKER-MODEL-FALLBACK] ' + String(modelErr))
+        return 'gpt-4o-mini'
+      }
+    })()
     console.log('[WORKER-STEP] 2. AI chat call START model=' + usedModel)
     console.log(
       '[AI-PROCESSING-START]',
@@ -1715,7 +1757,7 @@ onRecordAfterCreateSuccess((e) => {
             Authorization: 'Bearer ' + openaiKey,
           },
           body: JSON.stringify({
-            model: 'gpt-4o-mini',
+            model: usedModel,
             messages: currentMessages,
             tools: availableTools,
             tool_choice: currentToolChoice,
