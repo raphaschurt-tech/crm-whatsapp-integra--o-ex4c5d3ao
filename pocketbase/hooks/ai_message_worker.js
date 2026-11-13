@@ -1186,8 +1186,8 @@ onRecordAfterCreateSuccess((e) => {
         const paramsOr = {}
         const orParts = []
         for (let wi = 0; wi < useWords.length; wi++) {
-          paramsAnd['w' + wi] = '*' + useWords[wi] + '*'
-          paramsOr['w' + wi] = '*' + useWords[wi] + '*'
+          paramsAnd['w' + wi] = useWords[wi]
+          paramsOr['w' + wi] = useWords[wi]
           const grp = '(name ~ {:w' + wi + '} || sku ~ {:w' + wi + '} || brand ~ {:w' + wi + '})'
           andParts.push(grp)
           orParts.push(grp)
@@ -1340,44 +1340,44 @@ onRecordAfterCreateSuccess((e) => {
       try {
         const cleanSku = String(sku || '').trim()
         if (!cleanSku) return { sku: '', estoque: 0, erro: 'SKU não fornecido' }
-        // 1. Tentar ler do endpoint interno GET /backend/v1/stock/lookup?sku=
+        // 1. Consulta API externa SOMENTE se settings.stock_api_url estiver configurado
         let liveQuantity = null
         let apiUpdated = false
         try {
-          let stockApiUrl = 'https://dummyjson.com/products'
+          let stockApiUrl = ''
           try {
             const setting = $app.findFirstRecordByFilter('settings', "stock_api_url != ''")
             if (setting && setting.getString('stock_api_url')) {
               stockApiUrl = setting.getString('stock_api_url')
             }
           } catch (_) {}
-          const res = $http.send({
-            url: stockApiUrl + '?search=' + encodeURIComponent(cleanSku),
-            method: 'GET',
-            timeout: 10,
-          })
-          if (res.statusCode === 200 && res.json) {
-            const data = res.json
-            if (data.products && Array.isArray(data.products) && data.products.length > 0) {
-              liveQuantity = data.products[0].stock || data.products[0].stock_quantity || 12
-              apiUpdated = true
-            } else if (typeof data.stock === 'number') {
-              liveQuantity = data.stock
-              apiUpdated = true
+          if (stockApiUrl) {
+            const res = $http.send({
+              url: stockApiUrl + '?search=' + encodeURIComponent(cleanSku),
+              method: 'GET',
+              timeout: 10,
+            })
+            if (res.statusCode === 200 && res.json) {
+              const data = res.json
+              if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+                const st =
+                  data.products[0].stock != null
+                    ? data.products[0].stock
+                    : data.products[0].stock_quantity
+                if (typeof st === 'number' && !isNaN(st)) {
+                  liveQuantity = st
+                  apiUpdated = true
+                }
+              } else if (typeof data.stock === 'number') {
+                liveQuantity = data.stock
+                apiUpdated = true
+              }
             }
           }
         } catch (httpEx) {
           console.log('[TOOL-ESTOQUE-AO-VIVO-HTTP-ERR]', String(httpEx))
         }
-        // 2. Se a API externa retornou valor numérico, atualiza no banco local
-        if (liveQuantity !== null && !isNaN(liveQuantity)) {
-          try {
-            const localProduct = $app.findFirstRecordByData('products', 'sku', cleanSku)
-            localProduct.set('stock_quantity', liveQuantity)
-            $app.save(localProduct)
-          } catch (_) {}
-        }
-        // 3. Consulta o registro do produto local para retornar status completo
+        // 2. NUNCA grava em products.stock_quantity — apenas lê o valor da tabela products
         let productInfo = null
         try {
           const prod = $app.findFirstRecordByData('products', 'sku', cleanSku)
@@ -1628,7 +1628,10 @@ onRecordAfterCreateSuccess((e) => {
           globalThis.__aiStatusTools &&
           typeof globalThis.__aiStatusTools.executeStatusPedido === 'function'
         ) {
-          return globalThis.__aiStatusTools.executeStatusPedido(phone)
+          return globalThis.__aiStatusTools.executeStatusPedido($app, {
+            phone: phone,
+            args: toolArgs,
+          })
         }
         return {
           status: 'nao_localizado',
@@ -1640,7 +1643,7 @@ onRecordAfterCreateSuccess((e) => {
           globalThis.__aiStatusTools &&
           typeof globalThis.__aiStatusTools.executeStatusNfe === 'function'
         ) {
-          return globalThis.__aiStatusTools.executeStatusNfe(phone)
+          return globalThis.__aiStatusTools.executeStatusNfe($app, { phone: phone, args: toolArgs })
         }
         return {
           status: 'nao_localizado',
@@ -1652,8 +1655,10 @@ onRecordAfterCreateSuccess((e) => {
           globalThis.__aiStatusTools &&
           typeof globalThis.__aiStatusTools.executeSegundaViaDanfe === 'function'
         ) {
-          const key = toolArgs && toolArgs.access_key ? toolArgs.access_key : ''
-          return globalThis.__aiStatusTools.executeSegundaViaDanfe(phone, key)
+          return globalThis.__aiStatusTools.executeSegundaViaDanfe($app, {
+            phone: phone,
+            args: toolArgs,
+          })
         }
         return { status: 'erro', mensagem: 'Módulo de segunda via indisponível no momento' }
       }
