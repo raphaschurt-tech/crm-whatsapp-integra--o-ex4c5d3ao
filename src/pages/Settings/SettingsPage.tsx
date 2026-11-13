@@ -316,7 +316,9 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         ai_auto_close_minutes: Number(aiAutoCloseMinutes) || 0,
         ai_auto_close_message: aiAutoCloseMessage,
         ai_excluded_skus: aiExcludedSkus,
-        allowed_families: allowedFamilies,
+        // Correção 1.2: envia sempre um ARRAY JSON explícito — [] é um valor válido
+        // ("todas liberadas"), nunca omitir o campo nem enviar string
+        allowed_families: Array.isArray(allowedFamilies) ? allowedFamilies : [],
         company_cnpj: companyCnpj.replace(/\D/g, ''),
         family_margins: parsedFamilyMargins,
         stock_phase: stockPhase,
@@ -325,6 +327,19 @@ REGRA CRÍTICA DE PRODUTO E ESTOQUE:
         nfe_email_auto_launch: nfeEmailAutoLaunch,
         dfe_poll_interval_hours: Number(dfePollInterval) || 1,
       })
+      // Correção 1.2: prova de persistência — o valor ENVIADO e o valor RELIDO do banco
+      try {
+        const reloaded = await getSettings()
+        console.log(
+          '[SETTINGS-SAVE-ALLOWED-FAMILIES]',
+          JSON.stringify({
+            enviado: Array.isArray(allowedFamilies) ? allowedFamilies : [],
+            relido: (reloaded as any)?.allowed_families ?? null,
+          }),
+        )
+      } catch (_) {
+        /* log de verificação não deve derrubar o save */
+      }
       toast({ title: 'Configurações salvas com sucesso!' })
     } catch (err: unknown) {
       const errorDetail = getErrorMessage(err)

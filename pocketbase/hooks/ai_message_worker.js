@@ -1197,6 +1197,13 @@ onRecordAfterCreateSuccess((e) => {
         console.log('[TOOL-BUSCAR-PRODUTOS-SIMPLES] candidatos=' + candidates.length)
         const excludedSet = {}
         const allowedFam = []
+        const blockedFamSet = {}
+        const unacc = (s) =>
+          String(s || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+        const squeezeFam = (s) => unacc(s).replace(/\s+/g, ' ').trim()
         try {
           const liveSet = $app.findFirstRecordByFilter('settings', "id != ''")
           if (liveSet) {
@@ -1233,13 +1240,35 @@ onRecordAfterCreateSuccess((e) => {
                 .toLowerCase()
               if (k) allowedFam.push(k)
             }
+            // Parte 2: famílias de insumo bloqueadas (editável em settings.ai_blocked_families)
+            const rawBlocked = liveSet.get('ai_blocked_families')
+            let blockedList = []
+            if (Array.isArray(rawBlocked)) {
+              blockedList = rawBlocked
+            } else if (typeof rawBlocked === 'string' && rawBlocked.trim()) {
+              const rb = rawBlocked.trim()
+              if (rb.startsWith('[')) {
+                try {
+                  const pb = JSON.parse(rb)
+                  if (Array.isArray(pb)) blockedList = pb
+                } catch (_) {
+                  blockedList = rb.replace(/[\[\]"]/g, '').split(',')
+                }
+              } else {
+                blockedList = rb.split(',')
+              }
+            }
+            if (!Array.isArray(blockedList)) blockedList = []
+            for (let bi = 0; bi < blockedList.length; bi++) {
+              const k = squeezeFam(blockedList[bi])
+              if (k) blockedFamSet[k] = 1
+            }
           }
         } catch (_) {}
-        const unacc = (s) =>
-          String(s || '')
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .toLowerCase()
+        console.log(
+          '[TOOL-BUSCAR-PRODUTOS-BLOCKED-FAMS]',
+          JSON.stringify({ blocked: Object.keys(blockedFamSet) }),
+        )
         const yearInName = (nm) => {
           if (years.length === 0) return false
           const re = /\b(\d{2}|\d{4})\s*[/-]\s*(\d{2}|\d{4})\b/g
@@ -1262,7 +1291,6 @@ onRecordAfterCreateSuccess((e) => {
         let droppedInativo = 0
         let droppedSemPalavra = 0
         const familiasNosCandidatos = {}
-        const squeezeFam = (s) => unacc(s).replace(/\s+/g, ' ').trim()
         for (let ci = 0; ci < candidates.length; ci++) {
           const rec = candidates[ci]
           const famCountKey = squeezeFam(rec.getString('sou_family')) || '(vazia)'
@@ -1276,6 +1304,12 @@ onRecordAfterCreateSuccess((e) => {
           // Correção 4: trava de insumo (defesa em profundidade, ANTES do filtro de família) —
           // is_component=true nunca é vendido avulso ao cliente (ex. "CAPA BUCHA BANDEJA FOX")
           if (rec.get('is_component') === true) {
+            droppedInsumo++
+            continue
+          }
+          // Parte 2: família inteira bloqueada como insumo (settings.ai_blocked_families) —
+          // vale mesmo quando allowed_families está vazio ("todas liberadas")
+          if (famCountKey !== '(vazia)' && blockedFamSet[famCountKey]) {
             droppedInsumo++
             continue
           }
@@ -1363,6 +1397,7 @@ onRecordAfterCreateSuccess((e) => {
             termo: rawTermSimple,
             candidatos: candidates.length,
             allowedFam: allowedFam,
+            blockedFam: Object.keys(blockedFamSet),
             droppedExcluded: droppedExcluded,
             droppedInsumo: droppedInsumo,
             droppedFamilia: droppedFamilia,
@@ -1373,23 +1408,54 @@ onRecordAfterCreateSuccess((e) => {
             familiasNosCandidatos: familiasNosCandidatos,
           }),
         )
-        // Correção 4: quando tudo é descartado, não devolve vazio silencioso —
-        // explica à IA por que nenhum item foi liberado para venda
+        // Parte 3: results vazio + candidatos existentes → distinguir insumo explícito
+        // (cliente pediu o insumo pelo nome, famílias de ai_blocked_families) de
+        // termo que só casou com itens internos. Regra de negócio do dono:
+        // NÃO existe conjunto/kit/produto montado — o produto vendido é o acabado.
         if (results.length === 0 && candidates.length > 0) {
           const famListCand = []
           for (const fk in familiasNosCandidatos) famListCand.push(fk)
+          // palavras de bloqueio derivadas dos NOMES das famílias bloqueadas
+          // (ex. "capa bucha" → "capa", "bucha"; "servico fabrica" → "servico", "fabrica"),
+          // ignorando palavras de 2 letras ou menos
+          const palavrasBloqueio = {}
+          for (const fk in blockedFamSet) {
+            const partes = fk.split(' ')
+            for (let pi = 0; pi < partes.length; pi++) {
+              if (partes[pi].length > 2) palavrasBloqueio[partes[pi]] = true
+            }
+          }
+          let explicitouInsumo = false
+          for (let wi = 0; wi < useWords.length; wi++) {
+            if (palavrasBloqueio[useWords[wi]]) {
+              explicitouInsumo = true
+              break
+            }
+          }
           console.log(
             '[TOOL-BUSCAR-PRODUTOS-FORA-DE-VENDA]',
-            JSON.stringify({ termo: rawTermSimple, familias: famListCand }),
+            JSON.stringify({
+              termo: rawTermSimple,
+              familias: famListCand,
+              explicitouInsumo: explicitouInsumo,
+            }),
           )
+          if (explicitouInsumo) {
+            return {
+              termo: rawTermSimple,
+              total: 0,
+              produtos: [],
+              motivo: 'item_interno',
+              instrucao_para_ia:
+                'Esse item é de uso interno de fabricação e não é vendido. Responda em UMA frase curta, sem oferecer alternativa de kit, conjunto ou produto montado, e pergunte qual é o veículo, ano e posição da peça que o cliente precisa para localizar o produto acabado correto.',
+            }
+          }
           return {
             termo: rawTermSimple,
             total: 0,
             produtos: [],
-            motivo: 'fora_do_catalogo_de_venda',
-            familias_dos_candidatos: famListCand,
             instrucao_para_ia:
-              'Existem itens com esse termo, mas nenhum liberado para venda direta. Informe ao cliente que essa peça avulsa não é vendida e ofereça o conjunto ou o produto montado equivalente. Nunca diga que o catálogo está vazio.',
+              'Nenhum produto encontrado com esse termo. Pergunte ao cliente o veículo, o ano e a posição da peça e ofereça buscar novamente. Não mencione itens internos, insumos, conjunto ou kit.',
           }
         }
         return { termo: rawTermSimple, total: results.length, produtos: results }
@@ -1495,6 +1561,8 @@ onRecordAfterCreateSuccess((e) => {
     }
     // 7.1. Busca determinística pré-IA (para garantir que termos como "bucha bandeja fox 2014"
     // nunca recebam "não encontrei", e injetar produtos reais encontrados no contexto da IA)
+    // PARTE 3 (regra do dono): conjunto/kit/produto montado NÃO existe no negócio —
+    // o insumo não é vendido e só é mencionado se o cliente o pedir explicitamente.
     let preSearchProductResults = null
     let preSearchForaDeVenda = null
     let isPieceOrProductQuery = false
@@ -1557,12 +1625,14 @@ onRecordAfterCreateSuccess((e) => {
           preSearchProductResults = searchRes
           isPieceOrProductQuery = true
         }
-        // Correção 4: candidatos existem mas nenhum é liberado para venda (insumo/família)
-        // → injeta a instrução para a IA NUNCA dizer "não encontrei"/"catálogo vazio"
+        // Parte 3: termo casou só com itens internos/insumo → injeta a instrução do dono
+        // (item de uso interno não é vendido; NUNCA oferecer conjunto/kit/produto montado).
+        // Cobre tanto o motivo 'item_interno' (insumo explícito) quanto o retorno
+        // 'fora_do_catalogo_de_venda' mantido por retrocompatibilidade.
         if (
           searchRes &&
-          searchRes.motivo === 'fora_do_catalogo_de_venda' &&
-          searchRes.instrucao_para_ia
+          searchRes.instrucao_para_ia &&
+          (searchRes.motivo === 'item_interno' || searchRes.motivo === 'fora_do_catalogo_de_venda')
         ) {
           preSearchForaDeVenda = searchRes
         }
@@ -1668,8 +1738,9 @@ onRecordAfterCreateSuccess((e) => {
         content: preSearchNotice,
       })
     }
-    // Correção 4: o termo existe no catálogo, mas nada foi liberado para venda —
-    // orienta a IA a oferecer o conjunto/produto montado em vez de "não encontrei"
+    // Parte 3: termo casou só com itens internos/insumo (motivo item_interno) —
+    // orienta a IA: item de uso interno não é vendido; NUNCA oferecer
+    // conjunto/kit/produto montado; responder em UMA frase curta
     if (preSearchForaDeVenda) {
       chatMessages.push({
         role: 'system',
@@ -1678,7 +1749,7 @@ onRecordAfterCreateSuccess((e) => {
           preSearchForaDeVenda.instrucao_para_ia +
           (preSearchForaDeVenda.familias_dos_candidatos &&
           preSearchForaDeVenda.familias_dos_candidatos.length > 0
-            ? '\nFamílias dos itens encontrados (não liberadas p/ venda direta): ' +
+            ? '\nFamílias dos itens encontrados (uso interno, não vendidos): ' +
               preSearchForaDeVenda.familias_dos_candidatos.join(', ')
             : ''),
       })

@@ -199,6 +199,7 @@ export interface Settings extends RecordModel {
   ai_auto_close_message?: string
   ai_excluded_skus?: string
   allowed_families?: string[]
+  ai_blocked_families?: string[]
   sync_integrity_floor?: number
   chat_summaries_migrated?: boolean
   company_cnpj?: string
