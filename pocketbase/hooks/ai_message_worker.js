@@ -742,11 +742,15 @@ onRecordAfterCreateSuccess((e) => {
       'Pesquise por termos-chave relevantes (ex: "bucha d21", "amortecedor d21", "bucha facão ix35", SKU ou código de barras).\n' +
       '2. consultar_estoque_ao_vivo: use para obter o estoque atualizado em tempo real caso tenha o SKU do produto.\n' +
       "3. REGRA CRÍTICA DE APRESENTAÇÃO: Quando a busca encontrar produtos, SEMPRE cite as opções encontradas na resposta, com o nome completo (incluindo a faixa de anos, ex.: '88/97') e a descrição/aplicação de cada uma — mesmo quando estiverem com estoque 0 ou com preço 0. Produtos com estoque 0 NÃO devem ser omitidos nem marcados como indisponíveis. Se faltar informação essencial (ano/modelo do veículo, qual peça ou posição), pergunte ao cliente antes de buscar — nunca chute. Cumprimente o cliente na primeira mensagem da conversa.\n" +
-      'FORMATO OBRIGATÓRIO para apresentar produtos: apresente CADA produto em bloco separado, com linha em branco entre eles, usando este modelo —\n' +
+      'FORMATO OBRIGATÓRIO para apresentar produtos: apresente CADA produto em bloco separado, com linha em branco entre eles, usando EXATAMENTE este modelo —\n' +
       "'1. *Nome completo do produto (com a faixa de anos)*\n" +
-      "Marca: X | Valor: R$ 160,00 (ou 'Sob consulta') | Disponibilidade: disponível em até 48 horas (ou '6 un.')'.\n" +
+      "SKU: 3948 | Marca: X | Valor: R$ 160,00 | Disponibilidade: 6 un.'\n" +
+      'Regras do bloco: o SKU é sempre o campo `sku` retornado pela ferramenta (nunca invente, nunca use id do banco). ' +
+      'O Valor vem SEMPRE de `preco_texto`. A Disponibilidade vem SEMPRE de `disponibilidade_texto`. ' +
+      'NUNCA copie o texto de disponibilidade para o campo Valor, nem o de Valor para a Disponibilidade.\n' +
       'Máximo de 3 produtos por mensagem; se houver mais, apresente os 3 mais relevantes e diga que há outras opções. Nunca escreva dois produtos na mesma linha. Separe a resposta em: lista de produtos, e depois UMA frase de fechamento ou pergunta.\n' +
       '4. TABELA DE DISPONIBILIDADE E PREÇOS (OBRIGATÓRIO):\n' +
+      '- "Sob consulta" se aplica SOMENTE ao valor. Se a peça tem 1 unidade, a Disponibilidade é "1 un." e NUNCA "sob consulta";\n' +
       '- Estoque 0 (ou sem estoque): NUNCA use a palavra "indisponível" ou "sem estoque". Responda sempre: "disponível em até 48 horas" (pedido sob encomenda). O preço de venda deve ser informado normalmente se price > 0;\n' +
       '- Preço 0 ou sem preço: informe "Sob consulta" no lugar do valor;\n' +
       '- Caso composto (Preço 0 E Estoque 0): os dois avisos saem juntos: "Sob consulta" e "disponível em até 48 horas";\n' +
@@ -1278,6 +1282,84 @@ onRecordAfterCreateSuccess((e) => {
           }
           return false
         }
+        const PECAS_GENERICAS = {
+          bucha: 1,
+          buchas: 1,
+          capa: 1,
+          capas: 1,
+          pino: 1,
+          pinos: 1,
+          bandeja: 1,
+          bandejas: 1,
+          coxim: 1,
+          coxins: 1,
+          amortecedor: 1,
+          amortecedores: 1,
+          bieleta: 1,
+          bieletas: 1,
+          pivo: 1,
+          pivos: 1,
+          terminal: 1,
+          terminais: 1,
+          kit: 1,
+          kits: 1,
+          banda: 1,
+          batente: 1,
+          batentes: 1,
+          coifa: 1,
+          coifas: 1,
+          rolamento: 1,
+          rolamentos: 1,
+          disco: 1,
+          discos: 1,
+          pastilha: 1,
+          pastilhas: 1,
+          mola: 1,
+          molas: 1,
+          barra: 1,
+          barras: 1,
+          braco: 1,
+          bracos: 1,
+          mangueira: 1,
+          correia: 1,
+          correias: 1,
+          filtro: 1,
+          filtros: 1,
+          oleo: 1,
+          graxa: 1,
+          aditivo: 1,
+          fluido: 1,
+          tubo: 1,
+          calco: 1,
+          tulipa: 1,
+          cubo: 1,
+          pinca: 1,
+          tambor: 1,
+          sapata: 1,
+          sensor: 1,
+          bomba: 1,
+          caixa: 1,
+          caixas: 1,
+          retentor: 1,
+          flexivel: 1,
+          peca: 1,
+          pecas: 1,
+          valor: 1,
+          preco: 1,
+          quanto: 1,
+          custa: 1,
+          tem: 1,
+        }
+        // veículo = última palavra significativa do termo que não é nome de peça nem ano
+        let veiculoDetectado = ''
+        for (let vi = useWords.length - 1; vi >= 0; vi--) {
+          const w = useWords[vi]
+          if (w.length < 3) continue
+          if (PECAS_GENERICAS[w]) continue
+          if (/^(19|20)\d{2}$/.test(w)) continue
+          veiculoDetectado = w
+          break
+        }
         const scored = []
         // Correção 4: funil de filtros instrumentado — cada queda é contada e reportada
         let droppedExcluded = 0
@@ -1330,28 +1412,59 @@ onRecordAfterCreateSuccess((e) => {
             droppedInativo++
             continue
           }
-          const hay =
-            unacc(rec.getString('name')) +
-            ' ' +
-            unacc(rec.getString('sku')) +
-            ' ' +
-            unacc(rec.getString('brand'))
-          let matched = 0
+          const hayName = unacc(rec.getString('name'))
+          const hayDesc = unacc(rec.getString('description'))
+          const haySku = unacc(rec.getString('sku'))
+          const hayBrand = unacc(rec.getString('brand'))
+          let matchedName = 0
+          let matchedDesc = 0
           for (let wi = 0; wi < useWords.length; wi++) {
-            if (hay.includes(useWords[wi])) matched++
+            const w = useWords[wi]
+            if (hayName.includes(w)) matchedName++
+            else if (hayDesc.includes(w)) matchedDesc++
           }
-          if (matched === 0) {
-            droppedSemPalavra++
-            continue
+          if (matchedName === 0 && matchedDesc === 0) {
+            if (
+              haySku.includes(rawTermSimple.toLowerCase()) ||
+              hayBrand.includes(rawTermSimple.toLowerCase())
+            ) {
+              // nada: cai no cálculo abaixo com score baixo
+            } else {
+              droppedSemPalavra++
+              continue
+            }
           }
           const stockQty = Number(rec.get('stock_quantity')) || 0
-          let score = matched * 1000
+          let score = matchedName * 1000 + matchedDesc * 100
           if (stockQty > 0) score += 20
-          if (yearInName(unacc(rec.getString('name')))) score += 10
-          scored.push({ rec: rec, score: score })
+          if (yearInName(hayName)) score += 10
+          // veículo: produto que não cita o veículo buscado vai para o fim da fila
+          if (veiculoDetectado && !hayName.includes(veiculoDetectado)) score -= 5000
+          scored.push({
+            rec: rec,
+            score: score,
+            matchedName: matchedName,
+            matchedDesc: matchedDesc,
+          })
         }
         scored.sort((a, b) => b.score - a.score)
         const top5 = scored.slice(0, 5)
+        console.log(
+          '[TOOL-BUSCAR-PRODUTOS-RANKING]',
+          JSON.stringify({
+            termo: rawTermSimple,
+            veiculoDetectado: veiculoDetectado,
+            top: top5.map(function (it) {
+              return {
+                sku: it.rec.getString('sku'),
+                nome: it.rec.getString('name'),
+                matchedName: it.matchedName,
+                matchedDesc: it.matchedDesc,
+                score: it.score,
+              }
+            }),
+          }),
+        )
         const results = top5.map((item) => {
           const rec = item.rec
           const pPrice = Number(rec.get('price')) || 0
@@ -1364,6 +1477,9 @@ onRecordAfterCreateSuccess((e) => {
           else if (pStock <= 0 && pPrice <= 0) status = 'Sob consulta - disponível em até 48 horas'
           else if (pStock <= 0) status = 'R$ ' + pPrice.toFixed(2) + ' - disponível em até 48 horas'
           else status = 'Sob consulta (' + pStock + ' un.)'
+          const precoTexto =
+            pPrice > 0 ? 'R$ ' + pPrice.toFixed(2).replace('.', ',') : 'Sob consulta'
+          const disponibilidadeTexto = pStock > 0 ? pStock + ' un.' : 'disponível em até 48 horas'
           const obj = {
             sku: pSku,
             nome: pName,
@@ -1371,6 +1487,8 @@ onRecordAfterCreateSuccess((e) => {
             preco: pPrice,
             estoque: pStock,
             disponivel: pStock > 0,
+            preco_texto: precoTexto,
+            disponibilidade_texto: disponibilidadeTexto,
             disponibilidade_info:
               pStock <= 0 ? 'disponível em até 48 horas' : pStock + ' un. em estoque',
             status_consulta: status,
@@ -1714,20 +1832,18 @@ onRecordAfterCreateSuccess((e) => {
           p.nome +
           ' | Marca: ' +
           (p.marca || 'N/D') +
-          ' | Preço: ' +
-          (p.preco > 0 ? 'R$ ' + p.preco.toFixed(2) : 'Sob consulta') +
-          ' | Estoque: ' +
-          (p.estoque > 0 ? p.estoque + ' un.' : 'disponível em até 48 horas') +
-          ' (' +
-          p.status_consulta +
-          ')'
+          ' | Valor: ' +
+          (p.preco_texto || (p.preco > 0 ? 'R$ ' + p.preco.toFixed(2) : 'Sob consulta')) +
+          ' | Disponibilidade: ' +
+          (p.disponibilidade_texto ||
+            (p.estoque > 0 ? p.estoque + ' un.' : 'disponível em até 48 horas'))
         )
       })
       const preSearchNotice =
         '[PRODUTOS REAIS ENCONTRADOS DETERMINISTICAMENTE NO CATÁLOGO DO ERP]:\n' +
         'A busca determinística pré-IA já consultou o banco para a mensagem do cliente e encontrou os seguintes produtos correspondentes:\n' +
         preFoundList.join('\n') +
-        '\n\nREGRA MANDATÓRIA: Os produtos acima EXISTEM em nosso estoque/catálogo. NUNCA responda "não encontrei", "não temos" ou "não trabalho com isso". Apresente os itens encontrados informando os valores e prazos (se estoque 0 ou preço 0, informe "Sob consulta — disponível em até 48h" ou sob encomenda).'
+        '\n\nREGRA MANDATÓRIA: Os produtos acima EXISTEM em nosso estoque/catálogo. NUNCA responda "não encontrei", "não temos" ou "não trabalho com isso". Apresente os itens encontrados informando os valores e prazos (estoque 0 → "disponível em até 48 horas"; preço 0 → "Sob consulta"; os dois juntos só quando as duas condições ocorrerem). Nunca junte os dois avisos quando houver estoque.'
       chatMessages.push({
         role: 'system',
         content: preSearchNotice,
