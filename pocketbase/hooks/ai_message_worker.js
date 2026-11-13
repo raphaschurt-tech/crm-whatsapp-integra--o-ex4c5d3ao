@@ -1257,15 +1257,26 @@ onRecordAfterCreateSuccess((e) => {
         const scored = []
         // Correção 4: funil de filtros instrumentado — cada queda é contada e reportada
         let droppedExcluded = 0
+        let droppedInsumo = 0
         let droppedFamilia = 0
         let droppedInativo = 0
         let droppedSemPalavra = 0
+        const familiasNosCandidatos = {}
         const squeezeFam = (s) => unacc(s).replace(/\s+/g, ' ').trim()
         for (let ci = 0; ci < candidates.length; ci++) {
           const rec = candidates[ci]
+          const famCountKey = squeezeFam(rec.getString('sou_family')) || '(vazia)'
+          if (familiasNosCandidatos[famCountKey]) familiasNosCandidatos[famCountKey]++
+          else familiasNosCandidatos[famCountKey] = 1
           const skuLow = String(rec.getString('sku') || '').toLowerCase()
           if (excludedSet[skuLow] || excludedSet[skuLow.trim()]) {
             droppedExcluded++
+            continue
+          }
+          // Correção 4: trava de insumo (defesa em profundidade, ANTES do filtro de família) —
+          // is_component=true nunca é vendido avulso ao cliente (ex. "CAPA BUCHA BANDEJA FOX")
+          if (rec.get('is_component') === true) {
+            droppedInsumo++
             continue
           }
           if (allowedFam.length > 0) {
@@ -1347,21 +1358,40 @@ onRecordAfterCreateSuccess((e) => {
           return obj
         })
         console.log(
-          '[TOOL-BUSCAR-PRODUTOS-FILTER] total=' +
-            candidates.length +
-            ' droppedExcluded=' +
-            droppedExcluded +
-            ' droppedFamilia=' +
-            droppedFamilia +
-            ' droppedInativo=' +
-            droppedInativo +
-            ' droppedSemPalavra=' +
-            droppedSemPalavra +
-            ' retornados=' +
-            results.length +
-            ' skus=' +
-            results.map((r) => r.sku).join(','),
+          '[TOOL-BUSCAR-PRODUTOS-FILTER]',
+          JSON.stringify({
+            termo: rawTermSimple,
+            candidatos: candidates.length,
+            allowedFam: allowedFam,
+            droppedExcluded: droppedExcluded,
+            droppedInsumo: droppedInsumo,
+            droppedFamilia: droppedFamilia,
+            droppedInativo: droppedInativo,
+            droppedSemPalavra: droppedSemPalavra,
+            retornados: results.length,
+            skus: results.map((r) => r.sku),
+            familiasNosCandidatos: familiasNosCandidatos,
+          }),
         )
+        // Correção 4: quando tudo é descartado, não devolve vazio silencioso —
+        // explica à IA por que nenhum item foi liberado para venda
+        if (results.length === 0 && candidates.length > 0) {
+          const famListCand = []
+          for (const fk in familiasNosCandidatos) famListCand.push(fk)
+          console.log(
+            '[TOOL-BUSCAR-PRODUTOS-FORA-DE-VENDA]',
+            JSON.stringify({ termo: rawTermSimple, familias: famListCand }),
+          )
+          return {
+            termo: rawTermSimple,
+            total: 0,
+            produtos: [],
+            motivo: 'fora_do_catalogo_de_venda',
+            familias_dos_candidatos: famListCand,
+            instrucao_para_ia:
+              'Existem itens com esse termo, mas nenhum liberado para venda direta. Informe ao cliente que essa peça avulsa não é vendida e ofereça o conjunto ou o produto montado equivalente. Nunca diga que o catálogo está vazio.',
+          }
+        }
         return { termo: rawTermSimple, total: results.length, produtos: results }
       } catch (simplesErr) {
         console.error('[TOOL-BUSCAR-PRODUTOS-SIMPLES-ERR]', String(simplesErr))
@@ -1466,6 +1496,7 @@ onRecordAfterCreateSuccess((e) => {
     // 7.1. Busca determinística pré-IA (para garantir que termos como "bucha bandeja fox 2014"
     // nunca recebam "não encontrei", e injetar produtos reais encontrados no contexto da IA)
     let preSearchProductResults = null
+    let preSearchForaDeVenda = null
     let isPieceOrProductQuery = false
     try {
       const rawCustomerQuery = String(incomingText || '').trim()
@@ -1525,6 +1556,15 @@ onRecordAfterCreateSuccess((e) => {
         if (searchRes && searchRes.produtos && searchRes.produtos.length > 0) {
           preSearchProductResults = searchRes
           isPieceOrProductQuery = true
+        }
+        // Correção 4: candidatos existem mas nenhum é liberado para venda (insumo/família)
+        // → injeta a instrução para a IA NUNCA dizer "não encontrei"/"catálogo vazio"
+        if (
+          searchRes &&
+          searchRes.motivo === 'fora_do_catalogo_de_venda' &&
+          searchRes.instrucao_para_ia
+        ) {
+          preSearchForaDeVenda = searchRes
         }
       }
     } catch (preSearchErr) {
@@ -1626,6 +1666,21 @@ onRecordAfterCreateSuccess((e) => {
       chatMessages.push({
         role: 'system',
         content: preSearchNotice,
+      })
+    }
+    // Correção 4: o termo existe no catálogo, mas nada foi liberado para venda —
+    // orienta a IA a oferecer o conjunto/produto montado em vez de "não encontrei"
+    if (preSearchForaDeVenda) {
+      chatMessages.push({
+        role: 'system',
+        content:
+          '[AVISO DE CATÁLOGO DE VENDA]: ' +
+          preSearchForaDeVenda.instrucao_para_ia +
+          (preSearchForaDeVenda.familias_dos_candidatos &&
+          preSearchForaDeVenda.familias_dos_candidatos.length > 0
+            ? '\nFamílias dos itens encontrados (não liberadas p/ venda direta): ' +
+              preSearchForaDeVenda.familias_dos_candidatos.join(', ')
+            : ''),
       })
     }
     // Despachante genérico de tool calls

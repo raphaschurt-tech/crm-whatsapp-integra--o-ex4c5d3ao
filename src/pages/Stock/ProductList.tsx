@@ -17,7 +17,7 @@ import {
   CheckSquare,
   Square,
 } from 'lucide-react'
-import { getProducts, deleteProduct } from '@/services/products'
+import { searchProducts, deleteProduct } from '@/services/products'
 import { PrintLabelsModal } from '@/components/PrintLabelsModal'
 import { syncStock, lookupStock } from '@/services/stock'
 import { Product } from '@/types/crm'
@@ -104,7 +104,7 @@ export default function ProductList() {
       setLoading(true)
       setLoadError(null)
       try {
-        const data = await getProducts({ page: targetPage, perPage: PAGE_SIZE, term })
+        const data = await searchProducts({ page: targetPage, perPage: PAGE_SIZE, term })
         if (seq !== requestSeqRef.current) return // resposta antiga: descarta sem setState
         setProducts(data.items)
         setTotalPages(data.totalPages)
@@ -119,6 +119,11 @@ export default function ProductList() {
     },
     [], // deps vazias: só usa setState e refs — função estável
   )
+
+  // Correção 5: nova busca (debounce concluído) sempre volta para a página 1
+  useEffect(() => {
+    setPage(1)
+  }, [searchInput])
 
   // Correção 5: abre a tela com UMA requisição de lista paginada
   useEffect(() => {
@@ -144,7 +149,7 @@ export default function ProductList() {
   }, [search, natureFilter, onlyLowStock, activeTab?.id])
 
   useRealtime('products', () => {
-    loadData()
+    loadData(page, searchInput)
   })
 
   const filtered = products.filter((p) => {
@@ -173,7 +178,7 @@ export default function ProductList() {
         title: 'Sincronização Concluída',
         description: `Produtos atualizados: ${res.updated}, criados: ${res.created}`,
       })
-      loadData()
+      loadData(page, searchInput)
     } catch (_) {
       toast({ title: 'Erro ao sincronizar', variant: 'destructive' })
     } finally {
@@ -204,7 +209,7 @@ export default function ProductList() {
       toast({ title: 'Produto excluído com sucesso!' })
       setDeleteDialogOpen(false)
       setProductToDelete(null)
-      loadData()
+      loadData(page, searchInput)
     } catch (_) {
       toast({ title: 'Erro ao excluir produto', variant: 'destructive' })
     } finally {
@@ -215,6 +220,12 @@ export default function ProductList() {
   const promptDelete = (p: Product) => {
     setProductToDelete(p)
     setDeleteDialogOpen(true)
+  }
+
+  // Correção 5: navegação de página com proteção de limites
+  const goToPage = (target: number) => {
+    const clamped = Math.min(Math.max(1, target), Math.max(totalPages, 1))
+    if (clamped !== page) setPage(clamped)
   }
 
   const getStockBadge = (quantity: number, min: number = 0) => {
@@ -334,7 +345,7 @@ export default function ProductList() {
             Não foi possível carregar o catálogo de produtos.
           </p>
           <p className="text-xs text-slate-500">O servidor pode estar inicializando.</p>
-          <Button onClick={() => loadData()} variant="outline">
+          <Button onClick={() => loadData(page, searchInput)} variant="outline">
             <RefreshCw className="mr-1.5 h-4 w-4" /> Tentar novamente
           </Button>
         </div>
@@ -588,6 +599,33 @@ export default function ProductList() {
               </tbody>
             </table>
           </div>
+
+          {/* Correção 5: rodapé de paginação — Página X de Y — N itens */}
+          {!loading && !loadError && totalItems > 0 && (
+            <div className="flex items-center justify-between gap-4 border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <span className="text-xs font-medium text-slate-600">
+                Página {page} de {Math.max(totalPages, 1)} — {totalItems} itens
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page <= 1 || loading}
+                  onClick={() => goToPage(page - 1)}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page >= totalPages || loading}
+                  onClick={() => goToPage(page + 1)}
+                >
+                  Próxima
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

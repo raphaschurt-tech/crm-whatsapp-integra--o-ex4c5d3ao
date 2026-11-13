@@ -15,6 +15,53 @@ export const getProducts = async (): Promise<Product[]> => {
   }
 }
 
+// Correção 5: busca PAGINADA retrocompatível (perPage <= 50, requestKey null).
+// getProducts() continua existindo e retornando Product[] para os chamadores antigos
+// (FamilyList, combos, etiquetas) — esta função nova é usada pela tela de Produtos.
+export interface SearchProductsOptions {
+  term?: string
+  page?: number
+  perPage?: number
+}
+
+export interface SearchProductsResult {
+  items: Product[]
+  totalItems: number
+  totalPages: number
+  page: number
+  perPage: number
+}
+
+export const searchProducts = async (
+  opts: SearchProductsOptions = {},
+): Promise<SearchProductsResult> => {
+  const { term = '', page = 1, perPage = 50 } = opts
+  const filter = buildRawProductFilter(term)
+
+  try {
+    const res = await withRetry(
+      () =>
+        pb.collection<Product>('products').getList(page, perPage, {
+          filter: filter || undefined,
+          sort: 'name',
+          requestKey: null, // NUNCA deixar requestKey automático aqui
+        }),
+      { retries: 2, delayMs: 400 },
+    )
+
+    return {
+      items: res.items,
+      totalItems: res.totalItems,
+      totalPages: res.totalPages,
+      page: res.page,
+      perPage: res.perPage,
+    }
+  } catch (error) {
+    console.warn('Erro na busca paginada de produtos:', error)
+    return { items: [], totalItems: 0, totalPages: 0, page, perPage }
+  }
+}
+
 export interface SearchRawProductsOptions {
   term?: string
   family?: string
